@@ -1,0 +1,29 @@
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pino-debug.log
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Build output
+dist
+dist-server
+build
+
+# Optional npm cache clean
+.npm
+
+# Environment
+.env
+.env.test
+.env.local
+
+# Editor
+.DS_Store
+.vscode/
+*.swp
+*~
