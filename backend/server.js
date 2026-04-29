@@ -2,21 +2,24 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
-const pino = require('pino');
 
-dotenv.config(); // Load environment variables from .env
+dotenv.config();
 
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-});
+require('./models');
+
+const { createLogger } = require('./lib/observability/logger');
+const logger = createLogger();
+
 const app = express();
 const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(express.json());
 
+app.use('/api/v1', require('./api/v1'));
+
 // Basic route to check if server is running
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   logger.info('Health check route accessed');
   res.send('Backend is running!');
 });

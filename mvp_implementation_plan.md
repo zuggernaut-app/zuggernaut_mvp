@@ -92,6 +92,47 @@ flowchart TD
   adsCreate --> running["Running Dashboard"]
 ```
 
+## Database Architecture Strategy
+
+MongoDB collections are defined with Mongoose in `backend/models/`. The goal is **clear separation**: who the user/business is, how orchestration progresses, how we authenticate to Google tools, what we **read** from providers, what we **create or select**, what we **conclude**, and what we **plan** before mutating Ads.
+
+### Mental model
+
+| Concern | Model(s) |
+|--------|-----------|
+| Identity | `User` |
+| Canonical business inputs (confirmed by user) | `BusinessContext` |
+| Workflow run state (Temporal + dashboard) | `SetupRun`, `SetupStepExecution` |
+| OAuth and connection health per integration | `IntegrationConnection` |
+| Read-only payloads fetched from providers (audit, catalogs, snapshots) | `ProviderSnapshot` |
+| Resources **created or selected** in external systems (ids for idempotent retries) | `IntegrationArtifact` |
+| GBP audit conclusions vs `BusinessContext` | `AuditReport` |
+| Intended Google Ads structure **before** create | `CampaignPlan` |
+
+### Core models (V1)
+
+- **`User`**: Authentication identity (e.g. email, linking to OAuth subject). References `businessId` or primary `BusinessContext` as product design dictates.
+- **`BusinessContext`**: Single source of truth for **confirmed** business fields after onboarding/edits; never overwritten by raw scrape output without user confirmation (`businessId`).
+- **`SetupRun`**: One record per orchestrated setup attempt; ties to Temporal workflow id/state; aggregates status for UI (`businessId`).
+- **`SetupStepExecution`**: One record per logical step inside a run (GBP audit, catalog fetch, GTM setup, verification, campaign creation); tracks status, errors, retries (`setupRunId`, `businessId`, `provider`, `stepName`).
+- **`IntegrationConnection`**: Per provider (GBP / GTM / Google Ads)—tokens, expiry, scopes, provider account identifiers; **encrypt at rest**, never expose tokens to frontend; selective `select:false` fields.
+- **`ProviderSnapshot`**: Immutable or versioned payloads **fetched** from APIs (e.g. GBP profile read snapshot, Ads conversion catalog snapshot, optional GTM container version snapshot)—not used as the registry of created resource ids.
+- **`IntegrationArtifact`**: Registry of external resources **created or explicitly selected**—e.g. GTM tag/trigger/container ids, Google Ads campaign/ad group/conversion mapping ids. Use consistent enums for `provider` and `artifactType`; store stable provider ids in **`externalId`** (preferred name over a generic “artifact id” to avoid confusion across tools).
+- **`AuditReport`**: Structured findings for GBP audit (present / missing / needs attention vs confirmed `BusinessContext`).
+- **`CampaignPlan`**: Deterministic intention for Ads (structure, goals, geography, bidding intent) persisted **before** creation; deployed resource ids ultimately land on `IntegrationArtifact`.
+
+### Tenant and workflow rules
+
+- Every tenant-scoped document includes **`businessId`** for isolation and indexing.
+- **`SetupRun`** is the backbone for workflow-visible state in MongoDB (Temporal holds execution; Mongo holds durable summaries for API/dashboard).
+- **`IntegrationArtifact`** is the source of truth for **external resource ids** and supports **idempotent** activities (“find by `setupRunId` + `provider` + `artifactType` + `externalId` before create”).
+- Raw scrape output must never overwrite **`BusinessContext`** without user confirmation.
+
+### Implementation notes
+
+- Prefer **`backend/constants/`** (or similar) for `provider`, `SetupRun` status enums, `artifactType` values—avoid string drift.
+- Mongoose **`timestamps: true`** where appropriate; indexes on **`businessId`**, and compound indexes such as **`(setupRunId, stepName)`** where queries demand it.
+
 ## Implementation Phases
 
 ### Phase 0: Architecture and Repo Preparation
@@ -116,19 +157,23 @@ Recommended backend structure:
 ### Phase 1: Foundational Models
 Purpose: introduce enterprise-grade persistence before provider integrations.
 
-Models to add or adapt:
+Models to add or adapt (see **Database Architecture Strategy** above):
+- `User`
 - `BusinessContext`
 - `SetupRun`
 - `SetupStepExecution`
 - `IntegrationConnection`
+- `ProviderSnapshot`
 - `IntegrationArtifact`
 - `AuditReport`
+- `CampaignPlan`
 
 Key rules:
-- Every model must include `businessId` for tenant isolation.
-- `SetupRun` is the source of truth for workflow state.
-- `IntegrationArtifact` is the source of truth for external resources.
-- Raw scrape output must not overwrite confirmed user context.
+- Tenant-scoped documents include `businessId` for isolation and indexing.
+- `SetupRun` (with `SetupStepExecution`) is the durable summary of workflow progress for API and dashboard; Temporal remains the execution engine.
+- `IntegrationConnection` holds OAuth and connection metadata; encrypt sensitive fields at rest.
+- `ProviderSnapshot` stores fetched provider payloads; `IntegrationArtifact` registers created/selected resources with stable **`externalId`** per `provider` / `artifactType`.
+- Raw scrape output must not overwrite confirmed `BusinessContext`.
 
 ### Phase 2: Logging and Minimal Observability
 Purpose: add enough MVP observability without overbuilding.
@@ -212,7 +257,7 @@ Instructions:
 - Fetch conversion actions from Google Ads after Ads connection.
 - Normalize conversion actions into logical categories: calls, forms, both.
 - For primary goal `Both`, deterministically select one call conversion and one form conversion where available.
-- Persist selection in `IntegrationArtifact` or conversion catalog output snapshot.
+- Persist full catalog fetch in `ProviderSnapshot`; persist selected conversion identifiers in `IntegrationArtifact` for idempotent linkage.
 
 ### Phase 8: GTM Conversion Setup Capability
 Purpose: automate conversion tracking setup.
