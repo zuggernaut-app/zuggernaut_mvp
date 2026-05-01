@@ -1,4 +1,8 @@
-/**
- * Temporal activity implementations — external I/O and Mongo writes live here.
- */
-module.exports = {};
+'use strict';
+
+const { helloActivity } = require('./hello');
+
+/** Activity name → implementation (see `Worker.create` in `scripts/temporal-worker.js`). */
+module.exports = {
+  helloActivity,
+};

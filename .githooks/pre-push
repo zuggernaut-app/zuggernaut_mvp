@@ -1,0 +1,12 @@
+#!/bin/sh
+# Repo-local hooks (enable: `git config core.hooksPath .githooks`)
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
+cd "$ROOT" || exit 1
+
+if command -v node >/dev/null 2>&1; then
+  node scripts/check-before-push.js || exit 1
+else
+  echo "pre-push: node not found; run manually from repo root: npm run check:before-push" >&2
+fi
+exit 0

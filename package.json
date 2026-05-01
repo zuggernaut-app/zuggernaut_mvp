@@ -1,0 +1,8 @@
+{
+  "name": "zuggernaut_mvp",
+  "private": true,
+  "description": "Root workspace helpers (backend/frontend are separate packages)",
+  "scripts": {
+    "check:before-push": "node scripts/check-before-push.js"
+  }
+}

@@ -6,6 +6,10 @@
     "start": "node server.js",
     "dev": "node server.js",
     "seed:test": "node scripts/seed-test-data.js",
+    "temporal:up": "node scripts/temporal-compose.js up -d",
+    "temporal:down": "node scripts/temporal-compose.js down",
+    "temporal:worker": "node scripts/temporal-worker.js",
+    "temporal:demo-workflow": "node scripts/temporal-demo-workflow.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

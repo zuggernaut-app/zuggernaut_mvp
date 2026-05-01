@@ -7,14 +7,16 @@ Monorepo for the Zuggernaut V1 MVP: Node.js backend and React (Vite) frontend.
 | Path | Purpose |
 |------|---------|
 | `backend/` | Express API, MongoDB (Mongoose), Pino logging, Temporal client/worker packages |
+| `docker/temporal/` | Local Temporal cluster (Docker Compose): server gRPC UI |
 | `frontend/` | React + TypeScript SPA (Vite) |
 
-See `mvp_implementation_plan.md` for phased implementation details.
+See `mvp_implementation_plan.md` for phased implementation details. Quick pre-push checklist: `CONTRIBUTING.md` (and run `npm run check:before-push` from the repo root when Node is available).
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 22+ (LTS recommended; match Vite/engine warnings)
 - MongoDB reachable at the URI you set (local or Atlas)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose) for local Temporal only
 
 ## Backend
 
@@ -38,6 +40,41 @@ npm run dev
 Dev server defaults to `http://localhost:5173`. Production build: `npm run build`.
 
 Set `VITE_API_BASE_URL` in `frontend/.env` if the API base URL differs from `http://localhost:3000`.
+
+## Temporal (local Docker)
+
+Stack is defined in [`docker/temporal/docker-compose.yml`](docker/temporal/docker-compose.yml) (Postgres + Elasticsearch + Temporal + Web UI).
+
+From the **`backend/`** directory:
+
+```bash
+npm run temporal:up
+```
+
+Stop:
+
+```bash
+npm run temporal:down
+```
+
+| What | Value |
+|------|--------|
+| **gRPC (workers & `@temporalio/client`)** | `localhost:7233` (`127.0.0.1:7233` also works) |
+| **Temporal Web UI** | [http://localhost:8080](http://localhost:8080) |
+| **Namespace** | `default` |
+| **Task queue** (V1 scaffold) | `setup-run` — override via `TEMPORAL_TASK_QUEUE` in `backend/.env` |
+
+Optional `backend/.env` keys:
+
+- `TEMPORAL_ADDRESS` (default `127.0.0.1:7233`)
+- `TEMPORAL_NAMESPACE` (default `default`)
+- `TEMPORAL_TASK_QUEUE` (default `setup-run`)
+
+**Smoke test skeleton workflow**
+
+1. `npm run temporal:up`
+2. In one terminal: `npm run temporal:worker`
+3. In another: `npm run temporal:demo-workflow` — completes `SetupRunWorkflow` with a single `helloActivity`.
 
 ## Environment
 

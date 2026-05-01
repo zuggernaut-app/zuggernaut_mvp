@@ -211,6 +211,23 @@ Initial workflow states:
 - `RUNNING`
 - `FAILED`
 
+#### Temporal workflow and activity design discipline (implementation rules)
+
+Purpose: durable orchestration benefits from appropriately sized steps—**not** one giant activity per channel, **not** micro-activities for every line of code. Keep a balance between **granularity** (retries, visibility, isolation) and **scale** (overhead per task, readability, maintainer comprehension).
+
+Rules:
+
+- **Workflows orchestrate only.** Sequence steps, branch on durable state, call activities, and drive high-level progress. Workflows must stay **deterministic**: no external API calls, no direct Mongo reads/writes, no `Date.now()`, no `Math.random()`, no OAuth token reads.
+- **Activities do real work.** One logical unit per activity when possible—e.g. a single provider API round-trip, one idempotent external create/select, one verification pass, one Mongo persistence step that matches the plan’s durability model (`SetupRun`, `SetupStepExecution`, etc.).
+- **Granularity vs overhead.** Prefer splitting where **independent failure**, **different retry semantics**, **observability**, or **parallelism** matter. Combine steps that are always atomic together, instantaneous, or would never be retried alone without duplicating risky side-effects.
+- **Retry the smallest failing unit.** If step B fails, do not rerun A unless A truly did not persist and idempotency cannot cover it.
+- **Provider-changing activities must be idempotent.** Before create/mutate, look up **`IntegrationArtifact`** (and **`ProviderSnapshot`** for read-only payloads) keyed by **`setupRunId` + `provider` + `artifactType` + stable logical identity** (`externalId` / idempotency keys). Duplicate external creates on retry are unacceptable in V1.
+- **Secrets stay out of workflow arguments.** Load OAuth/access material inside activities from **`IntegrationConnection`** (encrypted fields stay server-side; never serialize tokens through workflow signals/inputs destined for histories you do not intend to treat as opaque).
+- **Logging on every setup-facing activity.** Include **`setupRunId`**, **`businessId`**, **`stepName`**, and **`provider`** where applicable (aligned with Phase 2 logging).
+- **Explicit timeouts and retry policies.** Set **`startToCloseTimeout`** and **`RetryPolicy`** per activity defaults are fine globally; tighten or broaden per risky calls (OAuth, publishes, Ads mutations). Validation errors should usually be **non-retryable**.
+- **Workflow versioning.** When workflow **logic meaningfully changes**, use Temporal **patch/versioning flows** compatible with replay; do not freely rewrite live workflow definitions ignoring in-flight runs.
+- **Extending channels later.** Adding a provider = new enums + `backend/services/capabilities/<provider>/` + new activities—reuse **`SetupRun` / `IntegrationArtifact`** patterns before inventing parallel models.
+
 ### Phase 4: Business Onboarding APIs and UI
 Purpose: build Block 1 as the reusable business requirements layer.
 
@@ -368,6 +385,8 @@ Use small, isolated implementation tasks:
 - One workflow or activity at a time.
 - One capability service at a time.
 - One frontend screen at a time.
+- **Before pushing:** follow `CONTRIBUTING.md` (human checklist). From repo root run `npm run check:before-push` to block accidental staging of `.env` files; optionally enable the Git hook (`git config core.hooksPath .githooks`) so the same check runs on every `git push` on your machine.
+- Follow **Temporal workflow and activity design discipline** under Phase 3—balance granularity (retries, visibility) with scale (task overhead, workflow readability).
 - Add tests immediately for orchestration and idempotency-sensitive code.
 - Do not mix provider integrations into route handlers.
 - Do not add V2 modules while V1 setup flow is incomplete.

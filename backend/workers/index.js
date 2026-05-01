@@ -1,4 +1,7 @@
+'use strict';
+
 /**
- * Temporal worker bootstrap — register workflows/activities and poll task queue (Phase 3).
+ * Temporal worker bootstrap lives in `scripts/temporal-worker.js`.
+ * Run from `backend/`: `npm run temporal:worker`
  */
 module.exports = {};
