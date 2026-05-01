@@ -8,7 +8,8 @@ const { helloActivity } = proxyActivities({
 
 /**
  * Skeleton `SetupRunWorkflow` — wires one activity so Docker + worker can be verified.
- * Replace with full V1 steps (GBP, Ads, GTM, …) in later phases.
+ * Activity is named `helloActivity` for Temporal determinism: earlier runs logged that type in history;
+ * renames would break replay / queries (TMPRL1100). Impl is persisted setup (see activities/index).
  *
  * @param {object} [input]
  * @param {string} [input.setupRunId]

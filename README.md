@@ -39,7 +39,9 @@ npm run dev
 
 Dev server defaults to `http://localhost:5173`. Production build: `npm run build`.
 
-Set `VITE_API_BASE_URL` in `frontend/.env` if the API base URL differs from `http://localhost:3000`.
+**API in development:** Requests use **`/api/v1`** relative to the Vite dev server. `vite.config.ts` proxies **`/api` → `http://localhost:3000`**, so the browser stays **same-origin** (no CORS). Run the backend on port `3000` (or align with your proxy target).
+
+Optional `frontend/.env`: set **`VITE_API_BASE_URL`** only when the SPA and API live on **different origins** (e.g. staging). See `frontend/.env.example`. For local Express on `localhost`, leave it unset — do **not** set `http://localhost:3000` (that skips the proxy and breaks CORS/path).
 
 ## Temporal (local Docker)
 

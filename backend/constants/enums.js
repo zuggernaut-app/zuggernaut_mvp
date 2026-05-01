@@ -27,6 +27,7 @@ const SETUP_RUN_STATUS = Object.freeze([
   'SETUP_NEEDS_TRACKING_FIX',
   'ADS_CAMPAIGNS_CREATED',
   'RUNNING',
+  'SUCCEEDED',
   'FAILED',
 ]);
 

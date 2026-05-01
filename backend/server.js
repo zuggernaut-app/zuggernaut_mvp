@@ -24,6 +24,15 @@ app.get('/', (_req, res) => {
   res.send('Backend is running!');
 });
 
+app.use((err, _req, res, _next) => {
+  logger.error({ err }, 'Unhandled API error');
+  if (res.headersSent) return;
+  const status = typeof err.status === 'number' ? err.status : 500;
+  const message =
+    status === 500 ? 'Internal server error' : err.message || 'Request failed';
+  res.status(status).json({ error: 'internal_error', message });
+});
+
 // MongoDB Connection (optional for this basic check, but good to have)
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/zuggernaut_test')
   .then(() => logger.info('MongoDB connected successfully (using default or env URI)'))

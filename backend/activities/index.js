@@ -1,8 +1,10 @@
 'use strict';
 
-const { helloActivity } = require('./hello');
+const { completeSkeletonSetupActivity } = require('./completeSkeletonSetup');
 
 /** Activity name → implementation (see `Worker.create` in `scripts/temporal-worker.js`). */
 module.exports = {
-  helloActivity,
+  completeSkeletonSetupActivity,
+  /** Workflow schedules this name (stable in history/replay); same impl as completeSkeletonSetupActivity. */
+  helloActivity: completeSkeletonSetupActivity,
 };
