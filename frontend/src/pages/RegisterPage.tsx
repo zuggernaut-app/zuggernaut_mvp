@@ -7,6 +7,11 @@ import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import {
+  MAX_EMAIL_LENGTH,
+  MAX_NAME_LENGTH,
+  validateRegisterForm,
+} from '../utils/validation'
 
 export function RegisterPage(): ReactElement {
   const navigate = useNavigate()
@@ -19,9 +24,14 @@ export function RegisterPage(): ReactElement {
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
     setError(null)
+    const form = validateRegisterForm(email, name)
+    if (!form.ok) {
+      setError(form.message)
+      return
+    }
     setBusy(true)
     try {
-      const { user } = await createUser(email, name.trim() || undefined)
+      const { user } = await createUser(form.email, form.name)
       setUserId(user.id)
       navigate('/onboarding/business', { replace: true })
     } catch (err) {
@@ -47,6 +57,7 @@ export function RegisterPage(): ReactElement {
             type="email"
             autoComplete="email"
             required
+            maxLength={MAX_EMAIL_LENGTH}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
           />
@@ -58,6 +69,7 @@ export function RegisterPage(): ReactElement {
             name="name"
             type="text"
             autoComplete="name"
+            maxLength={MAX_NAME_LENGTH}
             value={name}
             onChange={(e) => setName(e.target.value)}
           />

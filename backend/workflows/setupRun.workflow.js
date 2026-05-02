@@ -2,22 +2,24 @@
 
 const { proxyActivities } = require('@temporalio/workflow');
 
-const { helloActivity } = proxyActivities({
+const { completeSkeletonSetupActivity } = proxyActivities({
   startToCloseTimeout: '30 seconds',
 });
 
 /**
- * Skeleton `SetupRunWorkflow` — wires one activity so Docker + worker can be verified.
- * Activity is named `helloActivity` for Temporal determinism: earlier runs logged that type in history;
- * renames would break replay / queries (TMPRL1100). Impl is persisted setup (see activities/index).
+ * Skeleton `SetupRunWorkflow` — orchestrates persisted setup steps via activities.
+ * The proxied activity name is the Temporal activity type: keep it stable or use versioning;
+ * renames break replay for in-flight runs unless you reset dev history or migrate workflows.
  *
  * @param {object} [input]
  * @param {string} [input.setupRunId]
  * @param {string} [input.message]
+ * @returns {Promise<{ workflow: 'setupRunWorkflow', greeting: { persisted: boolean, greeting: string, setupRunId: string | null }, setupRunId: string | undefined }>}
+ * `greeting` holds the serialized return payload from `completeSkeletonSetupActivity`.
  */
 async function setupRunWorkflow(input) {
   const safe = input && typeof input === 'object' ? input : {};
-  const greeting = await helloActivity({
+  const greeting = await completeSkeletonSetupActivity({
     setupRunId: safe.setupRunId,
     message: safe.message,
   });

@@ -59,6 +59,17 @@ Stop:
 npm run temporal:down
 ```
 
+**Nuke local Temporal data (fixes stuck activity-type mismatches)**
+
+After renaming workflow activities (`helloActivity` → `completeSkeletonSetupActivity`, etc.) you must wipe the server DB or runs will forever request the old activity name. From `backend/`:
+
+```bash
+npm run temporal:reset:dev   # docker compose down -v
+npm run temporal:up
+```
+
+Then restart **exactly one** `npm run temporal:worker` process before creating new setup runs.
+
 | What | Value |
 |------|--------|
 | **gRPC (workers & `@temporalio/client`)** | `localhost:7233` (`127.0.0.1:7233` also works) |
@@ -76,7 +87,16 @@ Optional `backend/.env` keys:
 
 1. `npm run temporal:up`
 2. In one terminal: `npm run temporal:worker`
-3. In another: `npm run temporal:demo-workflow` — completes `SetupRunWorkflow` with a single `helloActivity`.
+3. In another: `npm run temporal:demo-workflow` — completes `SetupRunWorkflow` (demo input may skip Mongo writes if `setupRunId` is not a real `SetupRun` id).
+
+**Dev worker hygiene**
+
+- Run `npm run temporal:worker` from **`backend/`** only (where `backend/package.json` lives).
+- Use **one** worker process per `TEMPORAL_TASK_QUEUE` so you never poll with mismatched bundles.
+- Workflow bundles are built with **`webpack.cache` disabled** in `temporal-worker.js` so local workflow edits always apply on restart.
+
+**Resetting workflow history (phase 1)**  
+Temporal history is immutable. When you rename activities/workflows, use **`npm run temporal:reset:dev`** then **`npm run temporal:up`** (see above) before verifying new executions.
 
 ## Environment
 

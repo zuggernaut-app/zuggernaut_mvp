@@ -2,6 +2,9 @@
 
 const mongoose = require('mongoose');
 const { ApplicationFailure } = require('@temporalio/activity');
+const { createLogger } = require('../lib/observability/logger');
+
+const logger = createLogger({ name: 'completeSkeletonSetupActivity' });
 
 const SetupRun = mongoose.model('SetupRun');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
@@ -17,7 +20,16 @@ function redactMongoUri(uri) {
  * Skips writes only when setupRunId is missing or not a valid ObjectId (CLI demos).
  * A valid ObjectId with no SetupRun row fails the workflow (usually worker DB ≠ API DB).
  *
+ * On failure, Temporal surfaces these as workflow task failures — inspect `cause.type` /
+ * Activity failure payloads when matching from a client (`SetupRunNotFoundInWorkerDb`,
+ * `SetupRunPersistenceError`).
+ *
  * @param {{ setupRunId?: string, message?: string }} input
+ * @returns {Promise<{ persisted: false, greeting: string, setupRunId: string | null } | { persisted: true, greeting: string, setupRunId: string }>}
+ * `persisted: false` when `setupRunId` is absent or invalid; otherwise after a successful Mongo write,
+ * `persisted: true` with a human-readable `greeting`.
+ * @throws {import('@temporalio/activity').ApplicationFailure} Non-retryable when the `SetupRun` document does not exist in the worker’s MongoDB — failure type **`SetupRunNotFoundInWorkerDb`**.
+ * @throws {import('@temporalio/activity').ApplicationFailure} Non-retryable when Mongoose persistence fails — failure type **`SetupRunPersistenceError`**.
  */
 async function completeSkeletonSetupActivity(input) {
   const rawId = typeof input?.setupRunId === 'string' ? input.setupRunId.trim() : '';
@@ -76,7 +88,12 @@ async function completeSkeletonSetupActivity(input) {
     await SetupRun.updateOne(
       { _id: setupRunId },
       { $set: { status: 'FAILED', lastErrorSummary: summary } }
-    ).catch(() => {});
+    ).catch((updateErr) => {
+      logger.error(
+        { err: updateErr, setupRunId: rawId, summary },
+        'SetupRun FAILED status write failed after activity error'
+      );
+    });
 
     throw ApplicationFailure.nonRetryable(summary, 'SetupRunPersistenceError');
   }

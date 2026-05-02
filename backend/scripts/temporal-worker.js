@@ -15,7 +15,7 @@ function redactMongoUri(uri) {
 }
 
 async function main() {
-  const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://zuggernaut_user:5AuABrBza9GiBg@zuggernautdevcluster.bpo3khu.mongodb.net/?appName=ZuggernautDevCluste';
+  const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/zuggernaut_test';
   await mongoose.connect(mongoUri);
 
   // eslint-disable-next-line no-console
@@ -38,11 +38,13 @@ async function main() {
     })
   );
 
+  const workflowsPath = path.resolve(path.join(__dirname, '..', 'workflows'));
+
   const worker = await Worker.create({
     connection,
     namespace,
     taskQueue,
-    workflowsPath: path.join(__dirname, '..', 'workflows'),
+    workflowsPath,
     activities: require('../activities'),
     bundlerOptions: {
       webpackConfigHook: (config) => {
@@ -59,6 +61,8 @@ async function main() {
       address,
       namespace,
       taskQueue,
+      workflowsPath,
+      hint: 'Run only one worker on this task queue. If Temporal history mentions unknown activity names, npm run temporal:reset:dev && npm run temporal:up.',
     })
   );
 

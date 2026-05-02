@@ -8,6 +8,7 @@
     "seed:test": "node scripts/seed-test-data.js",
     "temporal:up": "node scripts/temporal-compose.js up -d",
     "temporal:down": "node scripts/temporal-compose.js down",
+    "temporal:reset:dev": "node scripts/temporal-compose.js down -v",
     "temporal:worker": "node scripts/temporal-worker.js",
     "temporal:demo-workflow": "node scripts/temporal-demo-workflow.js",
     "test": "echo \"Error: no test specified\" && exit 1"

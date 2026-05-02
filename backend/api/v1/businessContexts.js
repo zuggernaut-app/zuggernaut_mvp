@@ -4,6 +4,12 @@ const express = require('express');
 const mongoose = require('mongoose');
 const BusinessContext = mongoose.model('BusinessContext');
 const { devUserRequired } = require('./middleware/devUser');
+const {
+  normalizeStringList,
+  validateMixedObjectOrNull,
+  validateHttpUrl,
+  MAX_SINGLE_LINE_FIELD,
+} = require('../../lib/validation');
 
 const router = express.Router();
 
@@ -21,17 +27,25 @@ const EDITABLE_FIELDS = new Set([
   'orderValueHint',
 ]);
 
-router.put('/:businessId', devUserRequired, async (req, res) => {
+router.put('/:businessId', devUserRequired, async (req, res, next) => {
   const businessIdRaw = req.params.businessId;
   if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
     return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
   }
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
 
-  const doc = await BusinessContext.findOne({
-    businessId,
-    userId: req.devUserId,
-  });
+  let doc;
+  try {
+    doc = await BusinessContext.findOne({
+      businessId,
+      userId: req.devUserId,
+    });
+  } catch {
+    return res.status(503).json({
+      error: 'service_unavailable',
+      message: 'Database query failed. Check MongoDB and MONGODB_URI.',
+    });
+  }
 
   if (!doc) {
     return res.status(404).json({
@@ -45,13 +59,11 @@ router.put('/:businessId', devUserRequired, async (req, res) => {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
     const val = body[key];
     if (key === 'services' || key === 'serviceAreas') {
-      if (!Array.isArray(val)) {
-        return res.status(400).json({
-          error: 'validation_error',
-          message: `${key} must be an array of strings`,
-        });
+      const list = normalizeStringList(val, key);
+      if (!list.ok) {
+        return res.status(400).json({ error: 'validation_error', message: list.message });
       }
-      doc[key] = val.map((s) => String(s).trim()).filter(Boolean);
+      doc[key] = list.value;
       continue;
     }
     if (
@@ -59,11 +71,45 @@ router.put('/:businessId', devUserRequired, async (req, res) => {
       key === 'audienceSignals' ||
       key === 'goals'
     ) {
-      doc[key] = val === undefined ? undefined : val;
+      const mixed = validateMixedObjectOrNull(val, key);
+      if (!mixed.ok) {
+        return res.status(400).json({ error: 'validation_error', message: mixed.message });
+      }
+      if (mixed.value === undefined) continue;
+      doc[key] = mixed.value;
+      continue;
+    }
+    if (key === 'websiteUrl') {
+      if (val === null || val === undefined || val === '') {
+        doc[key] = undefined;
+        continue;
+      }
+      if (typeof val !== 'string') {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: 'websiteUrl must be a string or null',
+        });
+      }
+      const urlCheck = validateHttpUrl(val);
+      if (!urlCheck.ok) {
+        return res.status(400).json({ error: 'validation_error', message: urlCheck.message });
+      }
+      doc[key] = urlCheck.value;
       continue;
     }
     if (typeof val === 'string' || val === null || val === undefined) {
-      doc[key] = val === null || val === undefined ? undefined : val.trim();
+      if (val === null || val === undefined || val === '') {
+        doc[key] = undefined;
+      } else {
+        const t = val.trim();
+        if (t.length > MAX_SINGLE_LINE_FIELD) {
+          return res.status(400).json({
+            error: 'validation_error',
+            message: `${key} must be at most ${MAX_SINGLE_LINE_FIELD} characters`,
+          });
+        }
+        doc[key] = t;
+      }
     } else {
       return res.status(400).json({
         error: 'validation_error',
@@ -73,7 +119,16 @@ router.put('/:businessId', devUserRequired, async (req, res) => {
   }
 
   doc.confirmedAt = new Date();
-  await doc.save();
+  try {
+    await doc.save();
+  } catch (err) {
+    if (err?.name === 'ValidationError') {
+      const msg =
+        typeof err.message === 'string' ? err.message : 'Validation failed';
+      return res.status(400).json({ error: 'validation_error', message: msg });
+    }
+    return next(err);
+  }
 
   return res.status(200).json({
     businessContext: {

@@ -7,6 +7,7 @@ import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import { MAX_URL_LENGTH, validateHttpUrl } from '../utils/validation'
 
 export function BusinessStartPage(): ReactElement {
   const navigate = useNavigate()
@@ -23,6 +24,11 @@ export function BusinessStartPage(): ReactElement {
     e.preventDefault()
     if (!snapshot.userId) return
     setError(null)
+    const urlCheck = validateHttpUrl(websiteUrl)
+    if (!urlCheck.ok) {
+      setError(urlCheck.message)
+      return
+    }
     setBusy(true)
     try {
       let businessId = snapshot.businessId
@@ -31,7 +37,7 @@ export function BusinessStartPage(): ReactElement {
         businessId = draft.businessId
         setBusinessId(businessId)
       }
-      const scraped = await scrapeBusiness(businessId, websiteUrl.trim())
+      const scraped = await scrapeBusiness(businessId, urlCheck.value)
       setScrapePreview({
         websiteUrl: scraped.websiteUrl,
         suggested: scraped.suggested,
@@ -68,6 +74,7 @@ export function BusinessStartPage(): ReactElement {
             type="url"
             placeholder="https://example.com"
             required
+            maxLength={MAX_URL_LENGTH}
             value={websiteUrl}
             onChange={(e) => setWebsiteUrl(e.target.value)}
           />
