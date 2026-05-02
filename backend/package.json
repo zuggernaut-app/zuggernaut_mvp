@@ -11,7 +11,8 @@
     "temporal:reset:dev": "node scripts/temporal-compose.js down -v",
     "temporal:worker": "node scripts/temporal-worker.js",
     "temporal:demo-workflow": "node scripts/temporal-demo-workflow.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest --runInBand",
+    "ci": "npm test"
   },
   "keywords": [],
   "author": "",
@@ -26,5 +27,10 @@
     "express": "^5.2.1",
     "mongoose": "^9.5.0",
     "pino": "^10.3.1"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0",
+    "mongodb-memory-server": "^11.1.0",
+    "supertest": "^7.2.2"
   }
 }
