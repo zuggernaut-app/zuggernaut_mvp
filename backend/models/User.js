@@ -15,6 +15,8 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
     name: { type: String, trim: true },
+    /** bcrypt password hash — never returned from API selectors by default (`select:false`) */
+    passwordHash: { type: String, select: false },
     /** Google OAuth subject (OpenID "sub") when using Google sign-in */
     googleSub: { type: String, sparse: true, unique: true, index: true },
     /** Primary tenant key for the business this user owns (matches BusinessContext.businessId) */

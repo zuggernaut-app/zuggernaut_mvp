@@ -5,6 +5,9 @@
 export const MAX_EMAIL_LENGTH = 254
 export const MAX_NAME_LENGTH = 200
 export const MAX_URL_LENGTH = 2048
+/** Mirrors backend/lib/auth/passwordPolicy.js */
+export const PASSWORD_MIN_LENGTH = 10
+export const PASSWORD_MAX_LENGTH = 72
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -75,4 +78,66 @@ export function validateRegisterForm(
     email,
     name: nameTrimmed ? nameTrimmed : undefined,
   }
+}
+
+export type PasswordFormResult =
+  | { ok: true; password: string }
+  | { ok: false; message: string }
+
+export function validatePasswordField(raw: string): PasswordFormResult {
+  const pwd = raw
+  if (!pwd.trim()) return { ok: false, message: 'password is required' }
+  if ([...pwd].length < PASSWORD_MIN_LENGTH) {
+    return {
+      ok: false,
+      message: `password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+    }
+  }
+  if ([...pwd].length > PASSWORD_MAX_LENGTH) {
+    return {
+      ok: false,
+      message: `password must be at most ${PASSWORD_MAX_LENGTH} characters`,
+    }
+  }
+  return { ok: true, password: pwd }
+}
+
+export type RegisterWithPasswordResult =
+  | { ok: true; email: string; name?: string; password: string }
+  | { ok: false; message: string }
+
+export function validateRegisterWithPasswordForm(
+  emailRaw: string,
+  nameRaw: string,
+  passwordRaw: string,
+  confirmRaw: string
+): RegisterWithPasswordResult {
+  const basic = validateRegisterForm(emailRaw, nameRaw)
+  if (!basic.ok) return basic
+
+  const pw = validatePasswordField(passwordRaw)
+  if (!pw.ok) return pw
+
+  const confirmTrim = confirmRaw.trim()
+  if (!confirmTrim) return { ok: false, message: 'Confirm your password.' }
+  if (confirmTrim !== pw.password) return { ok: false, message: 'Passwords must match.' }
+
+  return {
+    ok: true,
+    email: basic.email,
+    name: basic.name,
+    password: pw.password,
+  }
+}
+
+export type LoginFormValidateResult =
+  | { ok: true; email: string; password: string }
+  | { ok: false; message: string }
+
+export function validateLoginForm(emailRaw: string, passwordRaw: string): LoginFormValidateResult {
+  const email = emailRaw.trim().toLowerCase()
+  if (!email) return { ok: false, message: 'email is required' }
+  if (!isValidEmail(email)) return { ok: false, message: 'email format is invalid' }
+  if (!passwordRaw) return { ok: false, message: 'password is required' }
+  return { ok: true, email, password: passwordRaw }
 }

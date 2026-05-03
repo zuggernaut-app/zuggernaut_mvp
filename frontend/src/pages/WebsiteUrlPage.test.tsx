@@ -12,11 +12,7 @@ function renderSuggestions(): ReturnType<typeof render> {
       <OnboardingProvider>
         <Routes>
           <Route path="/onboarding/suggestions" element={<WebsiteUrlPage />} />
-          <Route path="/register" element={<div data-testid="register-target">register</div>} />
-          <Route
-            path="/onboarding/business"
-            element={<div data-testid="business-target">business</div>}
-          />
+          <Route path="/onboarding/business" element={<div data-testid="business-target">business</div>} />
           <Route path="/onboarding/review" element={<div data-testid="review-target">review</div>} />
         </Routes>
       </OnboardingProvider>
@@ -29,11 +25,11 @@ describe('WebsiteUrlPage', () => {
     seedSession({})
   })
 
-  it('redirects when user id missing', async () => {
+  it('redirects to business start when draft or preview is missing', async () => {
     renderSuggestions()
 
     await waitFor(() => {
-      expect(screen.getByTestId('register-target')).toBeInTheDocument()
+      expect(screen.getByTestId('business-target')).toBeInTheDocument()
     })
   })
 

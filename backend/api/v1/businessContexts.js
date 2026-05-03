@@ -3,7 +3,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const BusinessContext = mongoose.model('BusinessContext');
-const { devUserRequired } = require('./middleware/devUser');
+const { requireAuth } = require('./middleware/requireAuth');
 const {
   normalizeStringList,
   validateMixedObjectOrNull,
@@ -27,18 +27,19 @@ const EDITABLE_FIELDS = new Set([
   'orderValueHint',
 ]);
 
-router.put('/:businessId', devUserRequired, async (req, res, next) => {
+router.put('/:businessId', requireAuth, async (req, res, next) => {
   const businessIdRaw = req.params.businessId;
   if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
     return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
   }
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  const userId = new mongoose.Types.ObjectId(req.user.id);
 
   let doc;
   try {
     doc = await BusinessContext.findOne({
       businessId,
-      userId: req.devUserId,
+      userId,
     });
   } catch {
     return res.status(503).json({

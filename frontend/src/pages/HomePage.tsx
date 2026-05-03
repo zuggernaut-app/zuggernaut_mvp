@@ -1,11 +1,21 @@
 import type { ReactElement } from 'react'
 import { Link } from 'react-router-dom'
 import { PageLayout } from '../components/layout/PageLayout'
+import { InlineLoading } from '../components/feedback/InlineLoading'
+import { useAuth } from '../hooks/useAuth'
 import { useOnboardingState } from '../hooks/useOnboardingState'
-import { resetLocalSession } from '../utils/storage'
 
 export function HomePage(): ReactElement {
+  const { user, loading, logout } = useAuth()
   const { snapshot } = useOnboardingState()
+
+  if (loading) {
+    return (
+      <PageLayout title="Welcome">
+        <InlineLoading />
+      </PageLayout>
+    )
+  }
 
   return (
     <PageLayout
@@ -13,16 +23,21 @@ export function HomePage(): ReactElement {
       lead="Orchestrate onboarding and setup with the Zuggernaut MVP flow."
     >
       <div className="actions" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
-        {!snapshot.userId ? (
-          <Link className="btn btn-primary" to="/register">
-            Start — register
-          </Link>
+        {!user ? (
+          <>
+            <Link className="btn btn-primary" to="/register">
+              Start — register
+            </Link>
+            <Link className="btn btn-secondary" to="/login">
+              Log in
+            </Link>
+          </>
         ) : (
           <>
             <p
               style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: 'var(--color-muted)' }}
             >
-              Dev user loaded (x-dev-user-id). Continue where you left off:
+              Signed in as <strong>{user.email}</strong>. Continue onboarding:
             </p>
             <Link className="btn btn-primary" to="/onboarding/business">
               Continue onboarding
@@ -36,11 +51,13 @@ export function HomePage(): ReactElement {
               type="button"
               className="btn btn-secondary"
               onClick={() => {
-                resetLocalSession()
-                window.location.assign('/register')
+                void (async () => {
+                  await logout()
+                  window.location.assign('/login')
+                })()
               }}
             >
-              Use a different email
+              Sign out
             </button>
           </>
         )}

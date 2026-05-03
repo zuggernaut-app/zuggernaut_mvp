@@ -7,6 +7,7 @@ router.get('/health', (_req, res) => {
 });
 
 router.use('/users', require('./users'));
+router.use('/auth', require('./auth'));
 router.use('/onboarding', require('./onboarding'));
 router.use('/business-contexts', require('./businessContexts'));
 router.use('/setup-runs', require('./setupRuns'));

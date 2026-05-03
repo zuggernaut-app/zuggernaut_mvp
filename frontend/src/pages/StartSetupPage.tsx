@@ -28,14 +28,13 @@ function extractSetupRunId(body: unknown): string | undefined {
 export function StartSetupPage(): ReactElement {
   const navigate = useNavigate()
   const { snapshot, setSetupRunId } = useOnboardingState()
-  const { userId, businessId } = snapshot
+  const { businessId } = snapshot
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!userId) navigate('/register', { replace: true })
-    else if (!businessId) navigate('/onboarding/business', { replace: true })
-  }, [userId, businessId, navigate])
+    if (!businessId) navigate('/onboarding/business', { replace: true })
+  }, [businessId, navigate])
 
   async function onSubmit(e?: FormEvent): Promise<void> {
     e?.preventDefault()
@@ -67,7 +66,7 @@ export function StartSetupPage(): ReactElement {
     }
   }
 
-  if (!userId || !businessId) {
+  if (!businessId) {
     return (
       <PageLayout title="Setup">
         <InlineLoading />

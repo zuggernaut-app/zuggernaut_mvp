@@ -13,14 +13,13 @@ function formatList(val: unknown): string[] {
 export function WebsiteUrlPage(): ReactElement {
   const navigate = useNavigate()
   const { snapshot } = useOnboardingState()
-  const { scrapePreview, businessId, userId } = snapshot
+  const { scrapePreview, businessId } = snapshot
 
   useEffect(() => {
-    if (!userId) navigate('/register', { replace: true })
-    else if (!businessId || !scrapePreview) navigate('/onboarding/business', { replace: true })
-  }, [userId, businessId, scrapePreview, navigate])
+    if (!businessId || !scrapePreview) navigate('/onboarding/business', { replace: true })
+  }, [businessId, scrapePreview, navigate])
 
-  if (!userId || !businessId || !scrapePreview) {
+  if (!businessId || !scrapePreview) {
     return (
       <PageLayout title="Suggestions">
         <InlineLoading />

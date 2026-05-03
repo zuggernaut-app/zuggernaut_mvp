@@ -4,10 +4,9 @@ jest.mock('../lib/temporalClient', () => ({
   getTemporalClient: jest.fn(),
 }));
 
-const request = require('supertest');
 const { getTemporalClient } = require('../lib/temporalClient');
 const { createApp } = require('../app');
-const { createDevUser, authHeader } = require('./helpers');
+const { registerAgent } = require('./helpers');
 
 describe('PUT /api/v1/business-contexts', () => {
   const app = createApp();
@@ -18,18 +17,16 @@ describe('PUT /api/v1/business-contexts', () => {
     });
   });
 
-  async function draftAndConfirmHeaders(email) {
-    const user = await createDevUser(email);
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+  async function draftAndConfirm(email) {
+    const { agent } = await registerAgent(app, email);
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
-    await request(app)
+    await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://example.com' })
       .expect(202);
 
-    const res = await request(app).put(`/api/v1/business-contexts/${bid}`).set(h).send({
+    const res = await agent.put(`/api/v1/business-contexts/${bid}`).send({
       businessName: 'Acme',
       services: [' one ', 'two'],
       contactMethods: { phone: '1' },
@@ -38,27 +35,25 @@ describe('PUT /api/v1/business-contexts', () => {
     expect(res.status).toBe(200);
     expect(res.body.businessContext.confirmedAt).toBeTruthy();
 
-    return { user, h, bid };
+    return { agent, bid };
   }
 
   it('returns 400 for invalid businessId', async () => {
-    const user = await createDevUser();
-    const res = await request(app)
-      .put('/api/v1/business-contexts/not-an-object-id')
-      .set(authHeader(user))
-      .send({ businessName: 'X' });
+    const { agent } = await registerAgent(app, 'bad_bid@test.com');
+    const res = await agent.put('/api/v1/business-contexts/not-an-object-id').send({
+      businessName: 'X',
+    });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_error');
   });
 
   it('422-ish validation for invalid services type', async () => {
-    const user = await createDevUser();
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const { agent } = await registerAgent(app, 'svc@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
 
-    const res = await request(app).put(`/api/v1/business-contexts/${bid}`).set(h).send({
+    const res = await agent.put(`/api/v1/business-contexts/${bid}`).send({
       services: 'not-array',
     });
 
@@ -67,20 +62,16 @@ describe('PUT /api/v1/business-contexts', () => {
   });
 
   it('404 when updating another users business', async () => {
-    const { bid } = await draftAndConfirmHeaders('owner@test.com');
-    const other = await createDevUser('other@test.com');
+    const { bid } = await draftAndConfirm('owner@test.com');
+    const { agent: otherAgent } = await registerAgent(app, 'other@test.com');
 
-    await request(app)
-      .put(`/api/v1/business-contexts/${bid}`)
-      .set(authHeader(other))
-      .send({ businessName: 'X' })
-      .expect(404);
+    await otherAgent.put(`/api/v1/business-contexts/${bid}`).send({ businessName: 'X' }).expect(404);
   });
 
   it('clears optional fields with empty string', async () => {
-    const { h, bid } = await draftAndConfirmHeaders('clear@test.com');
+    const { agent, bid } = await draftAndConfirm('clear@test.com');
 
-    const res = await request(app).put(`/api/v1/business-contexts/${bid}`).set(h).send({
+    const res = await agent.put(`/api/v1/business-contexts/${bid}`).send({
       differentiators: '',
     });
 

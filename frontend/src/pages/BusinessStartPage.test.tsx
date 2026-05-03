@@ -2,8 +2,10 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { RequireAuth } from '../app/RequireAuth'
 import { createBusinessDraft, scrapeBusiness, waitForScrapeCompletion } from '../api/onboarding'
 import { ApiError } from '../api/client'
+import { AuthProvider } from '../hooks/useAuth'
 import { OnboardingProvider } from '../hooks/useOnboardingState'
 import { TEST_IDS, seedSession } from '../test/pageTestUtils'
 import { BusinessStartPage } from './BusinessStartPage'
@@ -14,38 +16,76 @@ vi.mock('../api/onboarding', () => ({
   waitForScrapeCompletion: vi.fn(),
 }))
 
+const hoisted = vi.hoisted(() => ({
+  mockAuthMe: vi.fn(),
+}))
+
+vi.mock('../api/auth', () => ({
+  authMe: hoisted.mockAuthMe,
+  authRegister: vi.fn(),
+  authLogin: vi.fn(),
+  authLogout: vi.fn().mockResolvedValue({ ok: true }),
+}))
+
 const mockedDraft = vi.mocked(createBusinessDraft)
 const mockedScrape = vi.mocked(scrapeBusiness)
 const mockedWait = vi.mocked(waitForScrapeCompletion)
 
-function renderBusinessStart(): ReturnType<typeof render> {
-  return render(
+function renderBusinessStart(userIdSeed = TEST_IDS.user): ReturnType<typeof render> {
+  hoisted.mockAuthMe.mockResolvedValue({
+    user: {
+      id: userIdSeed,
+      email: 'whoever@example.com',
+      name: 'Who',
+    },
+  })
+
+  const view = render(
     <MemoryRouter initialEntries={['/onboarding/business']}>
-      <OnboardingProvider>
-        <Routes>
-          <Route path="/onboarding/business" element={<BusinessStartPage />} />
-          <Route path="/register" element={<div data-testid="register-target">register</div>} />
-          <Route
-            path="/onboarding/suggestions"
-            element={<div data-testid="suggestions-target">suggestions</div>}
-          />
-        </Routes>
-      </OnboardingProvider>
+      <AuthProvider>
+        <OnboardingProvider>
+          <Routes>
+            <Route
+              path="/onboarding/business"
+              element={
+                <RequireAuth>
+                  <BusinessStartPage />
+                </RequireAuth>
+              }
+            />
+            <Route path="/login" element={<div data-testid="login-target">login</div>} />
+            <Route
+              path="/onboarding/suggestions"
+              element={<div data-testid="suggestions-target">suggestions</div>}
+            />
+          </Routes>
+        </OnboardingProvider>
+      </AuthProvider>
     </MemoryRouter>,
   )
+  return view
+}
+
+async function bootstrapBusinessUi(): Promise<void> {
+  await screen.findByRole('heading', { name: /your website/i })
 }
 
 describe('BusinessStartPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    hoisted.mockAuthMe.mockResolvedValue({
+      user: { id: TEST_IDS.user, email: 'whoever@example.com', name: 'Who' },
+    })
     seedSession({})
   })
 
-  it('redirects to register when no dev user id', async () => {
+  it('redirects to login when there is no session', async () => {
+    hoisted.mockAuthMe.mockRejectedValueOnce(new ApiError(401, 'no', 'unauthorized'))
+    seedSession({})
     renderBusinessStart()
 
     await waitFor(() => {
-      expect(screen.getByTestId('register-target')).toBeInTheDocument()
+      expect(screen.getByTestId('login-target')).toBeInTheDocument()
     })
   })
 
@@ -54,6 +94,7 @@ describe('BusinessStartPage', () => {
 
     const user = userEvent.setup()
     renderBusinessStart()
+    await bootstrapBusinessUi()
 
     await user.type(screen.getByLabelText(/website url/i), 'ftp://bad.example')
     await user.click(screen.getByRole('button', { name: /scrape suggestions/i }))
@@ -81,6 +122,7 @@ describe('BusinessStartPage', () => {
 
     const user = userEvent.setup()
     renderBusinessStart()
+    await bootstrapBusinessUi()
 
     await user.type(screen.getByLabelText(/website url/i), 'https://example.com')
     await user.click(screen.getByRole('button', { name: /scrape suggestions/i }))
@@ -122,6 +164,7 @@ describe('BusinessStartPage', () => {
 
     const user = userEvent.setup()
     renderBusinessStart()
+    await bootstrapBusinessUi()
 
     await user.type(screen.getByLabelText(/website url/i), 'https://example.com')
     await user.click(screen.getByRole('button', { name: /scrape suggestions/i }))
@@ -142,6 +185,7 @@ describe('BusinessStartPage', () => {
 
     const user = userEvent.setup()
     renderBusinessStart()
+    await bootstrapBusinessUi()
 
     await user.type(screen.getByLabelText(/website url/i), 'https://example.com')
     await user.click(screen.getByRole('button', { name: /scrape suggestions/i }))

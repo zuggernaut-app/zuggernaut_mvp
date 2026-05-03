@@ -4,6 +4,11 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
+
+/** Dev proxy target; Playwright sets E2E_API_PROXY_TARGET so E2E always hits the API it started. */
+const apiProxyTarget =
+  process.env.E2E_API_PROXY_TARGET?.trim() || 'http://127.0.0.1:3000'
+
 export default defineConfig({
   plugins: [react()],
   test: {
@@ -24,10 +29,10 @@ export default defineConfig({
     },
   },
   server: {
-    // SPA calls same-origin /api/v1 → proxied → Express (:3000) so the browser avoids CORS in dev.
+    // SPA calls same-origin /api/v1 → proxied → Express so the browser avoids CORS in dev.
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: apiProxyTarget,
         changeOrigin: true,
       },
     },

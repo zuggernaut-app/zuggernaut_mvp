@@ -7,7 +7,7 @@ jest.mock('../lib/temporalClient', () => ({
 const request = require('supertest');
 const mongoose = require('mongoose');
 const { createApp } = require('../app');
-const { createDevUser, authHeader } = require('./helpers');
+const { registerAgent } = require('./helpers');
 const { getTemporalClient } = require('../lib/temporalClient');
 
 describe('POST /api/v1/onboarding', () => {
@@ -22,27 +22,25 @@ describe('POST /api/v1/onboarding', () => {
   });
 
   it('sets primaryBusinessId only when missing', async () => {
-    const user = await createDevUser('primary@test.com');
-    const h = authHeader(user);
+    const { agent, userId } = await registerAgent(app, 'primary@test.com');
 
-    const first = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
-    await mongoose.model('User').findByIdAndUpdate(user._id, {
+    const first = await agent.post('/api/v1/onboarding/business').expect(201);
+    await mongoose.model('User').findByIdAndUpdate(userId, {
       primaryBusinessId: first.body.businessId,
     });
 
-    const second = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const second = await agent.post('/api/v1/onboarding/business').expect(201);
 
     expect(second.body.businessId).not.toBe(first.body.businessId);
 
-    const refreshed = await mongoose.model('User').findById(user._id).lean();
+    const refreshed = await mongoose.model('User').findById(userId).lean();
     expect(refreshed.primaryBusinessId.toString()).toBe(first.body.businessId);
   });
 
   it('rejects scrape with invalid businessId', async () => {
-    const user = await createDevUser();
-    const res = await request(app)
+    const { agent } = await registerAgent(app, 'inv_bid@test.com');
+    const res = await agent
       .post('/api/v1/onboarding/business/not-an-id/scrape')
-      .set(authHeader(user))
       .send({ websiteUrl: 'https://example.com' })
       .expect(400);
 
@@ -50,12 +48,11 @@ describe('POST /api/v1/onboarding', () => {
   });
 
   it('rejects scrape with bad URL', async () => {
-    const user = await createDevUser();
-    const draft = await request(app).post('/api/v1/onboarding/business').set(authHeader(user)).expect(201);
+    const { agent } = await registerAgent(app, 'bad_url@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
 
-    const res = await request(app)
+    const res = await agent
       .post(`/api/v1/onboarding/business/${draft.body.businessId}/scrape`)
-      .set(authHeader(user))
       .send({ websiteUrl: 'ftp://bad' })
       .expect(400);
 
@@ -63,26 +60,24 @@ describe('POST /api/v1/onboarding', () => {
   });
 
   it('404 when scraping another users draft', async () => {
-    const u1 = await createDevUser('a@test.com');
-    const u2 = await createDevUser('b@test.com');
-    const draft = await request(app).post('/api/v1/onboarding/business').set(authHeader(u1)).expect(201);
+    const { agent: agent1 } = await registerAgent(app, 'a@test.com');
+    const { agent: agent2 } = await registerAgent(app, 'b@test.com');
 
-    await request(app)
+    const draft = await agent1.post('/api/v1/onboarding/business').expect(201);
+
+    await agent2
       .post(`/api/v1/onboarding/business/${draft.body.businessId}/scrape`)
-      .set(authHeader(u2))
       .send({ websiteUrl: 'https://example.com' })
       .expect(404);
   });
 
   it('starts async scrape (202) and creates ScrapeRun', async () => {
-    const user = await createDevUser('async@test.com');
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const { agent } = await registerAgent(app, 'async@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
 
-    const res = await request(app)
+    const res = await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://one.example.com' })
       .expect(202);
 
@@ -115,14 +110,12 @@ describe('POST /api/v1/onboarding', () => {
 
   it('503 when Temporal workflow start fails', async () => {
     workflowStart.mockRejectedValueOnce(new Error('temporal down'));
-    const user = await createDevUser('503@test.com');
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const { agent } = await registerAgent(app, '503@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
 
-    const res = await request(app)
+    const res = await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://fail.example.com' })
       .expect(503);
 
@@ -134,20 +127,17 @@ describe('POST /api/v1/onboarding', () => {
   });
 
   it('GET scrape run returns RUNNING without suggested', async () => {
-    const user = await createDevUser('poll@test.com');
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const { agent } = await registerAgent(app, 'poll@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
 
-    const start = await request(app)
+    const start = await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://poll.example.com' })
       .expect(202);
 
-    const poll = await request(app)
+    const poll = await agent
       .get(`/api/v1/onboarding/business/${bid}/scrape-runs/${start.body.scrapeRunId}`)
-      .set(h)
       .expect(200);
 
     expect(poll.body.scrapeRun.status).toBe('RUNNING');
@@ -155,19 +145,16 @@ describe('POST /api/v1/onboarding', () => {
   });
 
   it('creates distinct ScrapeRuns for repeated scrapes', async () => {
-    const user = await createDevUser('two@test.com');
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const { agent } = await registerAgent(app, 'two@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
 
-    const a = await request(app)
+    const a = await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://one.example.com' })
       .expect(202);
-    const b = await request(app)
+    const b = await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://two.example.com' })
       .expect(202);
 

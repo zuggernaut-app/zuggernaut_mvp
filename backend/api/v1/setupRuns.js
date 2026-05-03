@@ -5,12 +5,13 @@ const mongoose = require('mongoose');
 const BusinessContext = mongoose.model('BusinessContext');
 const SetupRun = mongoose.model('SetupRun');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
-const { devUserRequired } = require('./middleware/devUser');
+const { requireAuth } = require('./middleware/requireAuth');
 const { getTemporalClient } = require('../../lib/temporalClient');
 
 const router = express.Router();
 
-router.post('/', devUserRequired, async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
+  const userId = new mongoose.Types.ObjectId(req.user.id);
   const bidRaw = req.body?.businessId;
   if (!bidRaw || typeof bidRaw !== 'string' || !mongoose.Types.ObjectId.isValid(bidRaw)) {
     return res.status(400).json({
@@ -22,7 +23,7 @@ router.post('/', devUserRequired, async (req, res) => {
 
   const bc = await BusinessContext.findOne({
     businessId,
-    userId: req.devUserId,
+    userId,
   }).lean();
 
   if (!bc) {
@@ -88,7 +89,8 @@ router.post('/', devUserRequired, async (req, res) => {
   }
 });
 
-router.get('/:setupRunId', devUserRequired, async (req, res) => {
+router.get('/:setupRunId', requireAuth, async (req, res) => {
+  const setupUserId = new mongoose.Types.ObjectId(req.user.id);
   const sidRaw = req.params.setupRunId;
   if (!mongoose.Types.ObjectId.isValid(sidRaw)) {
     return res.status(400).json({
@@ -106,7 +108,7 @@ router.get('/:setupRunId', devUserRequired, async (req, res) => {
 
     const ownsBusiness = await BusinessContext.exists({
       businessId: setupRun.businessId,
-      userId: req.devUserId,
+      userId: setupUserId,
     });
     if (!ownsBusiness) {
       return res.status(404).json({

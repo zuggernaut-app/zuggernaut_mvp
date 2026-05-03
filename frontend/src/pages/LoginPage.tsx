@@ -1,6 +1,6 @@
 import { type FormEvent, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
@@ -8,37 +8,35 @@ import { PageLayout } from '../components/layout/PageLayout'
 import { useAuth } from '../hooks/useAuth'
 import {
   MAX_EMAIL_LENGTH,
-  MAX_NAME_LENGTH,
   PASSWORD_MAX_LENGTH,
-  validateRegisterWithPasswordForm,
+  validateLoginForm,
 } from '../utils/validation'
 
-export function RegisterPage(): ReactElement {
+export function LoginPage(): ReactElement {
   const navigate = useNavigate()
-  const { register } = useAuth()
+  const location = useLocation()
+  const from = (location.state as { from?: string } | null)?.from ?? '/'
+  const { login } = useAuth()
+
   const [email, setEmail] = useState('')
-  const [name, setName] = useState('')
   const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
     setError(null)
-    const form = validateRegisterWithPasswordForm(email, name, password, confirmPassword)
-    if (!form.ok) {
-      setError(form.message)
+
+    const parsed = validateLoginForm(email, password)
+    if (!parsed.ok) {
+      setError(parsed.message)
       return
     }
+
     setBusy(true)
     try {
-      await register({
-        email: form.email,
-        password: form.password,
-        ...(form.name !== undefined ? { name: form.name } : {}),
-      })
-      navigate('/onboarding/business', { replace: true })
+      await login(parsed.email, parsed.password)
+      navigate(from, { replace: true })
     } catch (err) {
       if (err instanceof ApiError) setError(err.message)
       else setError('Something went wrong. Try again.')
@@ -49,8 +47,8 @@ export function RegisterPage(): ReactElement {
 
   return (
     <PageLayout
-      title="Create your account"
-      lead="Choose a secure password — your session stays signed in via a secure cookie."
+      title="Log in"
+      lead="Use the email and password you registered with."
     >
       <form className="form" onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error} />
@@ -73,46 +71,19 @@ export function RegisterPage(): ReactElement {
             id="password"
             name="password"
             type="password"
-            autoComplete="new-password"
+            autoComplete="current-password"
             required
-            minLength={10}
             maxLength={PASSWORD_MAX_LENGTH}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        <div className="field">
-          <label htmlFor="confirmPassword">Confirm password</label>
-          <input
-            id="confirmPassword"
-            name="confirmPassword"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={10}
-            maxLength={PASSWORD_MAX_LENGTH}
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="name">Name (optional)</label>
-          <input
-            id="name"
-            name="name"
-            type="text"
-            autoComplete="name"
-            maxLength={MAX_NAME_LENGTH}
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
         <div className="actions">
           <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? <InlineLoading label="Saving…" /> : 'Continue'}
+            {busy ? <InlineLoading label="Signing in…" /> : 'Log in'}
           </button>
-          <Link className="btn btn-secondary" to="/login">
-            Already have an account?
+          <Link className="btn btn-secondary" to="/register">
+            Create an account
           </Link>
         </div>
       </form>

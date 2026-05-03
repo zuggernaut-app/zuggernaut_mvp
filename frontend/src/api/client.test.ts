@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import * as storage from '../utils/storage'
 import { apiRequest } from './client'
 
 describe('apiRequest', () => {
@@ -13,7 +12,6 @@ describe('apiRequest', () => {
   })
 
   it('returns parsed JSON on 200', async () => {
-    vi.spyOn(storage, 'getStoredUserId').mockReturnValue(null)
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ ok: true, n: 1 }), {
         status: 200,
@@ -25,34 +23,40 @@ describe('apiRequest', () => {
     expect(data).toEqual({ ok: true, n: 1 })
     expect(fetch).toHaveBeenCalledWith(
       expect.stringMatching(/\/api\/v1\/health$/),
-      expect.any(Object),
+      expect.objectContaining({
+        credentials: 'include',
+      }),
     )
   })
 
-  it('adds x-dev-user-id when user is stored and skipAuth is false', async () => {
-    vi.spyOn(storage, 'getStoredUserId').mockReturnValue('507f1f77bcf86cd799439011')
+  it('calls fetch with credentials include (cookie session)', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('{}', { status: 200 }))
 
-    await apiRequest('/users/me')
+    await apiRequest('/auth/me')
 
     const [, init] = vi.mocked(fetch).mock.calls[0]
     const headers = init?.headers as Headers
-    expect(headers.get('x-dev-user-id')).toBe('507f1f77bcf86cd799439011')
+    expect(headers.get('Authorization')).toBeNull()
+    expect(headers.get('x-dev-user-id')).toBeNull()
+    expect(init).toMatchObject({
+      credentials: 'include',
+    })
   })
 
-  it('does not add dev header when skipAuth', async () => {
-    vi.spyOn(storage, 'getStoredUserId').mockReturnValue('507f1f77bcf86cd799439011')
+  it('omit skipAuth marker from Fetch init payload', async () => {
     vi.mocked(fetch).mockResolvedValue(new Response('{}', { status: 200 }))
 
-    await apiRequest('/users', { method: 'POST', body: {}, skipAuth: true })
+    await apiRequest('/auth/login', {
+      method: 'POST',
+      body: {},
+      skipAuth: true,
+    })
 
     const [, init] = vi.mocked(fetch).mock.calls[0]
-    const headers = init?.headers as Headers
-    expect(headers.get('x-dev-user-id')).toBeNull()
+    expect(init).not.toHaveProperty('skipAuth')
   })
 
   it('serializes JSON body and sets Content-Type', async () => {
-    vi.spyOn(storage, 'getStoredUserId').mockReturnValue(null)
     vi.mocked(fetch).mockResolvedValue(new Response('{}', { status: 200 }))
 
     await apiRequest('/x', { method: 'POST', body: { a: 1 } })
@@ -64,7 +68,6 @@ describe('apiRequest', () => {
   })
 
   it('throws ApiError on network failure', async () => {
-    vi.spyOn(storage, 'getStoredUserId').mockReturnValue(null)
     vi.mocked(fetch).mockRejectedValue(new Error('ECONNREFUSED'))
 
     await expect(apiRequest('/x')).rejects.toMatchObject({
@@ -75,7 +78,6 @@ describe('apiRequest', () => {
   })
 
   it('throws ApiError with server payload on non-OK response', async () => {
-    vi.spyOn(storage, 'getStoredUserId').mockReturnValue(null)
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ error: 'validation_error', message: 'Bad email' }), {
         status: 400,

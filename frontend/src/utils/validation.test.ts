@@ -4,7 +4,9 @@ import {
   MAX_URL_LENGTH,
   isValidEmail,
   validateHttpUrl,
+  validateLoginForm,
   validateRegisterForm,
+  validateRegisterWithPasswordForm,
 } from './validation'
 
 describe('isValidEmail', () => {
@@ -106,6 +108,43 @@ describe('validateRegisterForm', () => {
     ).toMatchObject({
       ok: false,
       message: `name must be at most ${MAX_NAME_LENGTH} characters`,
+    })
+  })
+})
+
+describe('validateRegisterWithPasswordForm', () => {
+  const okPw = '1234567890ab'
+
+  it('requires matching confirmation', () => {
+    const result = validateRegisterWithPasswordForm('a@example.com', '', okPw, 'nomatch')
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.message).toMatch(/match/i)
+  })
+
+  it('returns trimmed email and password bundle', () => {
+    expect(
+      validateRegisterWithPasswordForm('  Hi@Example.com ', '', okPw, okPw),
+    ).toMatchObject({
+      ok: true,
+      email: 'hi@example.com',
+      password: okPw,
+    })
+  })
+})
+
+describe('validateLoginForm', () => {
+  it('accepts plausible credentials', () => {
+    expect(validateLoginForm('  Hi@Example.com ', 'secret')).toEqual({
+      ok: true,
+      email: 'hi@example.com',
+      password: 'secret',
+    })
+  })
+
+  it('reports missing password', () => {
+    expect(validateLoginForm('who@example.com', '')).toMatchObject({
+      ok: false,
+      message: 'password is required',
     })
   })
 })

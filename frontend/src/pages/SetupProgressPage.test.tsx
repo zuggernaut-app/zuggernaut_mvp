@@ -31,7 +31,6 @@ function renderProgress(path: string): ReturnType<typeof render> {
         <Routes>
           <Route path="/setup/progress/:setupRunId" element={<SetupProgressPage />} />
           <Route path="/setup/no-param" element={<SetupProgressPage />} />
-          <Route path="/register" element={<div data-testid="register-target">register</div>} />
           <Route path="/setup" element={<div data-testid="setup-link-target">setup page</div>} />
         </Routes>
       </OnboardingProvider>
@@ -44,18 +43,6 @@ describe('SetupProgressPage', () => {
     vi.clearAllMocks()
     seedSession({})
     mockUseSetupRunStatus.mockImplementation(() => defaultHookReturn())
-  })
-
-  it('redirects unauthenticated users to register', async () => {
-    mockUseSetupRunStatus.mockReturnValue({
-      ...defaultHookReturn(),
-    })
-
-    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('register-target')).toBeInTheDocument()
-    })
   })
 
   it('shows missing setup run message when no id', async () => {

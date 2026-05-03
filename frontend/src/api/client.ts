@@ -1,5 +1,4 @@
 import type { ApiErrorBody } from '../types/api'
-import { getStoredUserId } from '../utils/storage'
 
 const DEFAULT_BASE = '/api/v1'
 
@@ -51,6 +50,7 @@ function joinBaseAndPath(base: string, path: string): string {
   return `${b}${p}`
 }
 
+/** `skipAuth`: documents calls that omit cookies on purpose (`/auth/register`, `/auth/login`). */
 export interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
   skipAuth?: boolean
@@ -67,19 +67,16 @@ async function parseJsonSafely(res: Response): Promise<unknown> {
 }
 
 /**
- * Typed fetch wrapper: base URL, optional `x-dev-user-id`, JSON helpers.
+ * Typed fetch wrapper: authenticated session passes via cookies (`credentials: 'include'`).
  */
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { body: rawBody, skipAuth = false, ...rest } = options
+  const { body: rawBody, skipAuth: _, ...fetchInit } = options
+  void _
+
   const base = resolveApiBaseUrl()
   const url = joinBaseAndPath(base, path)
 
-  const headers = new Headers(rest.headers)
-
-  const userId = getStoredUserId()
-  if (!skipAuth && userId && !headers.has('x-dev-user-id')) {
-    headers.set('x-dev-user-id', userId)
-  }
+  const headers = new Headers(fetchInit.headers)
 
   let body: BodyInit | undefined = rawBody as BodyInit | undefined
   if (rawBody !== undefined && !(rawBody instanceof FormData)) {
@@ -92,7 +89,8 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   let res: Response
   try {
     res = await fetch(url, {
-      ...rest,
+      ...fetchInit,
+      credentials: 'include',
       headers,
       body,
     })

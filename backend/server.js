@@ -4,6 +4,9 @@ const dotenv = require('dotenv');
 
 dotenv.config();
 
+const { assertAuthEnvironment } = require('./lib/auth/assertAuthEnvironment');
+assertAuthEnvironment();
+
 require('./models');
 
 const { createLogger } = require('./lib/observability/logger');

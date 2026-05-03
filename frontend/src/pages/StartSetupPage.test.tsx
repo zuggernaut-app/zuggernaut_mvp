@@ -20,7 +20,6 @@ function renderStartSetup(): ReturnType<typeof render> {
       <OnboardingProvider>
         <Routes>
           <Route path="/setup" element={<StartSetupPage />} />
-          <Route path="/register" element={<div data-testid="register-target">register</div>} />
           <Route
             path="/onboarding/business"
             element={<div data-testid="business-target">business</div>}
@@ -41,14 +40,12 @@ describe('StartSetupPage', () => {
     seedSession({})
   })
 
-  it('redirects to register without user id', async () => {
+  it('shows the form when local session has businessId', async () => {
     seedSession({ businessId: TEST_IDS.business })
 
     renderStartSetup()
 
-    await waitFor(() => {
-      expect(screen.getByTestId('register-target')).toBeInTheDocument()
-    })
+    expect(await screen.findByRole('heading', { name: /start setup run/i })).toBeInTheDocument()
   })
 
   it('redirects to business onboarding without business id', async () => {

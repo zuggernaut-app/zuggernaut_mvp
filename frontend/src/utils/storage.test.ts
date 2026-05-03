@@ -1,5 +1,6 @@
 import {
   STORAGE_KEYS,
+  clearStoredUserId,
   clearOnboardingDrafts,
   getScrapePreview,
   getStoredBusinessId,
@@ -52,6 +53,12 @@ describe('storage helpers', () => {
     expect(getStoredBusinessId()).toBe(null)
     expect(getStoredSetupRunId()).toBe(null)
     expect(getScrapePreview()).toBe(null)
+  })
+
+  it('clearStoredUserId removes persisted user row', () => {
+    setStoredUserId('u')
+    clearStoredUserId()
+    expect(getStoredUserId()).toBe(null)
   })
 
   it('resetLocalSession clears all keys', () => {

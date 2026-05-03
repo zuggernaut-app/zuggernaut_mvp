@@ -26,6 +26,10 @@ export function setStoredUserId(id: string): void {
   localStorage.setItem(STORAGE_KEYS.USER_ID, id)
 }
 
+export function clearStoredUserId(): void {
+  localStorage.removeItem(STORAGE_KEYS.USER_ID)
+}
+
 export function getStoredBusinessId(): string | null {
   return localStorage.getItem(STORAGE_KEYS.BUSINESS_ID)?.trim() || null
 }

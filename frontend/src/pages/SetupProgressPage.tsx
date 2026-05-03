@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import type { ReactElement } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
@@ -16,7 +16,6 @@ function statusTone(status: string): string {
 
 export function SetupProgressPage(): ReactElement {
   const { setupRunId: paramId } = useParams<{ setupRunId: string }>()
-  const navigate = useNavigate()
   const { snapshot, setSetupRunId } = useOnboardingState()
   const effectiveId = paramId ?? snapshot.setupRunId
 
@@ -24,20 +23,8 @@ export function SetupProgressPage(): ReactElement {
     if (paramId && paramId !== snapshot.setupRunId) setSetupRunId(paramId)
   }, [paramId, snapshot.setupRunId, setSetupRunId])
 
-  useEffect(() => {
-    if (!snapshot.userId) navigate('/register', { replace: true })
-  }, [snapshot.userId, navigate])
-
   const { data, loading, error, lastUpdatedAt, appearsStuck, pollingPaused, refetch } =
     useSetupRunStatus(effectiveId ?? null)
-
-  if (!snapshot.userId) {
-    return (
-      <PageLayout title="Setup progress">
-        <InlineLoading />
-      </PageLayout>
-    )
-  }
 
   if (!effectiveId) {
     return (

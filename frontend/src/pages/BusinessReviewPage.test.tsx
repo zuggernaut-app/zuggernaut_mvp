@@ -20,7 +20,6 @@ function renderReview(): ReturnType<typeof render> {
       <OnboardingProvider>
         <Routes>
           <Route path="/onboarding/review" element={<BusinessReviewPage />} />
-          <Route path="/register" element={<div data-testid="register-target">register</div>} />
           <Route
             path="/onboarding/business"
             element={<div data-testid="business-target">business</div>}

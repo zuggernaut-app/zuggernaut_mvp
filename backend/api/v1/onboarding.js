@@ -5,7 +5,7 @@ const mongoose = require('mongoose');
 const BusinessContext = mongoose.model('BusinessContext');
 const ScrapeRun = mongoose.model('ScrapeRun');
 const User = mongoose.model('User');
-const { devUserRequired } = require('./middleware/devUser');
+const { requireAuth } = require('./middleware/requireAuth');
 const { validateHttpUrl } = require('../../lib/validation');
 const { getTemporalClient } = require('../../lib/temporalClient');
 
@@ -13,14 +13,16 @@ const router = express.Router();
 
 const TERMINAL_SCRAPE_STATUSES = new Set(['SUCCEEDED', 'PARTIAL', 'BLOCKED', 'FAILED']);
 
-router.post('/business', devUserRequired, async (req, res) => {
+router.post('/business', requireAuth, async (req, res) => {
+  const userId = new mongoose.Types.ObjectId(req.user.id);
+
   const draft = await BusinessContext.create({
-    userId: req.devUserId,
+    userId,
   });
 
   await User.findOneAndUpdate(
     {
-      _id: req.devUserId,
+      _id: userId,
       $or: [{ primaryBusinessId: { $exists: false } }, { primaryBusinessId: null }],
     },
     { $set: { primaryBusinessId: draft.businessId } }
@@ -31,12 +33,13 @@ router.post('/business', devUserRequired, async (req, res) => {
   });
 });
 
-router.post('/business/:businessId/scrape', devUserRequired, async (req, res) => {
+router.post('/business/:businessId/scrape', requireAuth, async (req, res) => {
   const businessIdRaw = req.params.businessId;
   if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
     return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
   }
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  const userId = new mongoose.Types.ObjectId(req.user.id);
 
   const urlCheck = validateHttpUrl(
     typeof req.body?.websiteUrl === 'string' ? req.body.websiteUrl : ''
@@ -51,7 +54,7 @@ router.post('/business/:businessId/scrape', devUserRequired, async (req, res) =>
 
   const doc = await BusinessContext.findOne({
     businessId,
-    userId: req.devUserId,
+    userId,
   });
 
   if (!doc) {
@@ -66,7 +69,7 @@ router.post('/business/:businessId/scrape', devUserRequired, async (req, res) =>
 
   const scrapeRun = await ScrapeRun.create({
     businessId: doc.businessId,
-    userId: req.devUserId,
+    userId,
     websiteUrl,
     status: 'QUEUED',
   });
@@ -84,7 +87,7 @@ router.post('/business/:businessId/scrape', devUserRequired, async (req, res) =>
         {
           scrapeRunId: scrapeRun._id.toString(),
           businessId: doc.businessId.toString(),
-          userId: req.devUserId.toString(),
+          userId: userId.toString(),
           websiteUrl,
           startedAt,
         },
@@ -122,7 +125,8 @@ router.post('/business/:businessId/scrape', devUserRequired, async (req, res) =>
   }
 });
 
-router.get('/business/:businessId/scrape-runs/:scrapeRunId', devUserRequired, async (req, res) => {
+router.get('/business/:businessId/scrape-runs/:scrapeRunId', requireAuth, async (req, res) => {
+  const userId = new mongoose.Types.ObjectId(req.user.id);
   const businessIdRaw = req.params.businessId;
   const scrapeRunIdRaw = req.params.scrapeRunId;
   if (
@@ -136,7 +140,7 @@ router.get('/business/:businessId/scrape-runs/:scrapeRunId', devUserRequired, as
 
   const owns = await BusinessContext.exists({
     businessId,
-    userId: req.devUserId,
+    userId,
   });
   if (!owns) {
     return res.status(404).json({
@@ -148,7 +152,7 @@ router.get('/business/:businessId/scrape-runs/:scrapeRunId', devUserRequired, as
   const scrapeRun = await ScrapeRun.findOne({
     _id: scrapeRunId,
     businessId,
-    userId: req.devUserId,
+    userId,
   }).lean();
   if (!scrapeRun) {
     return res.status(404).json({

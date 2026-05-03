@@ -7,7 +7,7 @@ jest.mock('../lib/temporalClient', () => ({
 const request = require('supertest');
 const mongoose = require('mongoose');
 const { createApp } = require('../app');
-const { createDevUser, authHeader } = require('./helpers');
+const { registerAgent } = require('./helpers');
 const { getTemporalClient } = require('../lib/temporalClient');
 
 describe('setup-runs API', () => {
@@ -22,47 +22,40 @@ describe('setup-runs API', () => {
   });
 
   async function confirmedBusiness(email) {
-    const user = await createDevUser(email);
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const { agent } = await registerAgent(app, email);
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
-    await request(app)
+    await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://example.com' })
       .expect(202);
-    await request(app).put(`/api/v1/business-contexts/${bid}`).set(h).send({ businessName: 'Co' }).expect(200);
-    return { user, h, bid };
+    await agent.put(`/api/v1/business-contexts/${bid}`).send({ businessName: 'Co' }).expect(200);
+    return { agent, bid };
   }
 
   it('returns 400 for invalid setupRunId', async () => {
-    const user = await createDevUser();
-    await request(app).get('/api/v1/setup-runs/not-an-id').set(authHeader(user)).expect(400);
+    const { agent } = await registerAgent(app, 'sr_bad_id@test.com');
+    await agent.get('/api/v1/setup-runs/not-an-id').expect(400);
   });
 
   it('returns 400 when businessId is invalid', async () => {
-    const user = await createDevUser();
-    const res = await request(app)
-      .post('/api/v1/setup-runs')
-      .set(authHeader(user))
-      .send({ businessId: 'not-valid' });
+    const { agent } = await registerAgent(app, 'sr_bad_biz@test.com');
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: 'not-valid' });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('validation_error');
   });
 
   it('409 when business context is not confirmed', async () => {
-    const user = await createDevUser();
-    const h = authHeader(user);
-    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const { agent } = await registerAgent(app, 'sr_unconfirmed@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
-    await request(app)
+    await agent
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .set(h)
       .send({ websiteUrl: 'https://example.com' })
       .expect(202);
 
-    const res = await request(app).post('/api/v1/setup-runs').set(h).send({ businessId: bid }).expect(409);
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
 
     expect(res.body.error).toBe('precondition_failed');
   });
@@ -73,9 +66,9 @@ describe('setup-runs API', () => {
       workflow: { start: workflowStart },
     });
 
-    const { h, bid } = await confirmedBusiness('sr-ok@test.com');
+    const { agent, bid } = await confirmedBusiness('sr-ok@test.com');
 
-    const res = await request(app).post('/api/v1/setup-runs').set(h).send({ businessId: bid }).expect(201);
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
 
     expect(res.body.setupRunId).toMatch(/^[a-f0-9]{24}$/);
     expect(res.body.status).toBe('RUNNING');
@@ -97,9 +90,9 @@ describe('setup-runs API', () => {
       workflow: { start: workflowStart },
     });
 
-    const { h, bid } = await confirmedBusiness('sr-fail@test.com');
+    const { agent, bid } = await confirmedBusiness('sr-fail@test.com');
 
-    const res = await request(app).post('/api/v1/setup-runs').set(h).send({ businessId: bid }).expect(503);
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(503);
 
     expect(res.body.error).toBe('temporal_unavailable');
     expect(res.body.setupRunId).toMatch(/^[a-f0-9]{24}$/);
@@ -115,12 +108,12 @@ describe('setup-runs API', () => {
       workflow: { start: workflowStart },
     });
 
-    const { h, bid } = await confirmedBusiness('sr-own@test.com');
-    const created = await request(app).post('/api/v1/setup-runs').set(h).send({ businessId: bid }).expect(201);
+    const { agent, bid } = await confirmedBusiness('sr-own@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
     const sid = created.body.setupRunId;
 
-    const other = await createDevUser('sr-other@test.com');
-    await request(app).get(`/api/v1/setup-runs/${sid}`).set(authHeader(other)).expect(404);
+    const { agent: otherAgent } = await registerAgent(app, 'sr-other@test.com');
+    await otherAgent.get(`/api/v1/setup-runs/${sid}`).expect(404);
   });
 
   it('GET returns steps sorted by stepName', async () => {
@@ -129,8 +122,8 @@ describe('setup-runs API', () => {
       workflow: { start: workflowStart },
     });
 
-    const { h, bid } = await confirmedBusiness('sr-steps@test.com');
-    const created = await request(app).post('/api/v1/setup-runs').set(h).send({ businessId: bid }).expect(201);
+    const { agent, bid } = await confirmedBusiness('sr-steps@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
     const sid = created.body.setupRunId;
 
     const SetupStepExecution = mongoose.model('SetupStepExecution');
@@ -152,7 +145,11 @@ describe('setup-runs API', () => {
       attemptCount: 0,
     });
 
-    const detail = await request(app).get(`/api/v1/setup-runs/${sid}`).set(h).expect(200);
+    const detail = await agent.get(`/api/v1/setup-runs/${sid}`).expect(200);
     expect(detail.body.steps.map((s) => s.stepName)).toEqual(['alpha', 'zebra']);
+  });
+
+  it('GET returns 401 when unauthenticated', async () => {
+    await request(app).get(`/api/v1/setup-runs/${new mongoose.Types.ObjectId().toString()}`).expect(401);
   });
 });

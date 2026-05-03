@@ -1,6 +1,10 @@
 'use strict';
 
 const express = require('express');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const cors = require('cors');
+
 const { createLogger } = require('./lib/observability/logger');
 
 const logger = createLogger();
@@ -8,7 +12,31 @@ const logger = createLogger();
 function createApp() {
   const app = express();
 
-  app.use(express.json());
+  app.set('trust proxy', 1);
+
+  app.use(
+    helmet({
+      crossOriginEmbedderPolicy: false,
+      contentSecurityPolicy: false,
+    }),
+  );
+
+  const frontendOrigin = process.env.FRONTEND_ORIGIN?.trim();
+  if (frontendOrigin) {
+    const origins = frontendOrigin
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+    app.use(
+      cors({
+        origin: origins.length === 1 ? origins[0] : origins,
+        credentials: true,
+      }),
+    );
+  }
+
+  app.use(express.json({ limit: '100kb' }));
+  app.use(cookieParser());
 
   app.use('/api/v1', require('./api/v1'));
 

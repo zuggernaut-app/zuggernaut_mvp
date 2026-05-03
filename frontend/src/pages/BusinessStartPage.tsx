@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react'
+import { type FormEvent, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -37,13 +37,8 @@ export function BusinessStartPage(): ReactElement {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!snapshot.userId) navigate('/register', { replace: true })
-  }, [snapshot.userId, navigate])
-
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
-    if (!snapshot.userId) return
     setError(null)
     const urlCheck = validateHttpUrl(websiteUrl)
     if (!urlCheck.ok) {
@@ -68,14 +63,6 @@ export function BusinessStartPage(): ReactElement {
     } finally {
       setBusy(false)
     }
-  }
-
-  if (!snapshot.userId) {
-    return (
-      <PageLayout title="Business">
-        <InlineLoading />
-      </PageLayout>
-    )
   }
 
   return (

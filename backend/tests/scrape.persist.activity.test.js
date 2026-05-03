@@ -1,12 +1,12 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { createDevUser } = require('./helpers');
+const { createBareUser } = require('./helpers');
 const { persistScrapeResultActivity } = require('../activities/scrapeActivities');
 
 describe('persistScrapeResultActivity', () => {
   it('appends raw scrape run idempotently', async () => {
-    const user = await createDevUser('persist@test.com');
+    const user = await createBareUser('persist@test.com');
     const BusinessContext = mongoose.model('BusinessContext');
     const ScrapeRun = mongoose.model('ScrapeRun');
 

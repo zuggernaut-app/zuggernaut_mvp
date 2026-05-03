@@ -25,7 +25,7 @@ function parseOptionalObject(raw: string): unknown | undefined {
 export function BusinessReviewPage(): ReactElement {
   const navigate = useNavigate()
   const { snapshot, clearScrapePreviewState } = useOnboardingState()
-  const { userId, businessId, scrapePreview } = snapshot
+  const { businessId, scrapePreview } = snapshot
   /** After successful PUT, scrape preview clears async; suppress redirect-to-business until `/setup` is shown. */
   const leavingAfterSaveRef = useRef(false)
 
@@ -58,9 +58,8 @@ export function BusinessReviewPage(): ReactElement {
 
   useEffect(() => {
     if (leavingAfterSaveRef.current) return
-    if (!userId) navigate('/register', { replace: true })
-    else if (!businessId || !scrapePreview) navigate('/onboarding/business', { replace: true })
-  }, [userId, businessId, scrapePreview, navigate])
+    if (!businessId || !scrapePreview) navigate('/onboarding/business', { replace: true })
+  }, [businessId, scrapePreview, navigate])
 
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
@@ -112,7 +111,7 @@ export function BusinessReviewPage(): ReactElement {
     }
   }
 
-  if (!userId || !businessId || !scrapePreview) {
+  if (!businessId || !scrapePreview) {
     return (
       <PageLayout title="Review">
         <InlineLoading />
