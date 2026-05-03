@@ -33,7 +33,6 @@ async function main() {
   const connection = await withRetry('Temporal worker', () =>
     NativeConnection.connect({
       address,
-      // Plaintext gRPC to local docker-compose frontend (avoids any implicit TLS path).
       tls: false,
     })
   );
@@ -62,7 +61,7 @@ async function main() {
       namespace,
       taskQueue,
       workflowsPath,
-      hint: 'Run only one worker on this task queue. If Temporal history mentions unknown activity names, npm run temporal:reset:dev && npm run temporal:up.',
+      hint: 'Use the same MONGODB_URI as the API. Run only one worker on this task queue.',
     })
   );
 

@@ -1,6 +1,6 @@
 {
   "name": "backend",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -23,10 +23,14 @@
     "@temporalio/client": "^1.16.1",
     "@temporalio/worker": "^1.16.1",
     "@temporalio/workflow": "^1.16.1",
+    "axios": "^1.7.9",
+    "cheerio": "^1.0.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "libphonenumber-js": "^1.11.16",
     "mongoose": "^9.5.0",
-    "pino": "^10.3.1"
+    "pino": "^10.3.1",
+    "playwright": "^1.49.1"
   },
   "devDependencies": {
     "jest": "^30.3.0",

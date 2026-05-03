@@ -68,6 +68,16 @@ const ARTIFACT_TYPES = Object.freeze([
 
 const CAMPAIGN_PLAN_STATUS = Object.freeze(['draft', 'ready', 'applied', 'superseded']);
 
+/** Async website scrape job (Temporal orchestration; raw output stored on BusinessContext). */
+const SCRAPE_RUN_STATUS = Object.freeze([
+  'QUEUED',
+  'RUNNING',
+  'SUCCEEDED',
+  'PARTIAL',
+  'BLOCKED',
+  'FAILED',
+]);
+
 module.exports = {
   PROVIDERS,
   CONNECTION_HEALTH,
@@ -76,4 +86,5 @@ module.exports = {
   SNAPSHOT_TYPES,
   ARTIFACT_TYPES,
   CAMPAIGN_PLAN_STATUS,
+  SCRAPE_RUN_STATUS,
 };

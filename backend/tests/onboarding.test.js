@@ -1,12 +1,25 @@
 'use strict';
 
+jest.mock('../lib/temporalClient', () => ({
+  getTemporalClient: jest.fn(),
+}));
+
 const request = require('supertest');
 const mongoose = require('mongoose');
 const { createApp } = require('../app');
 const { createDevUser, authHeader } = require('./helpers');
+const { getTemporalClient } = require('../lib/temporalClient');
 
 describe('POST /api/v1/onboarding', () => {
   const app = createApp();
+  const workflowStart = jest.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    workflowStart.mockClear();
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+  });
 
   it('sets primaryBusinessId only when missing', async () => {
     const user = await createDevUser('primary@test.com');
@@ -61,32 +74,108 @@ describe('POST /api/v1/onboarding', () => {
       .expect(404);
   });
 
-  it('appends raw scrape runs', async () => {
-    const user = await createDevUser('runs@test.com');
+  it('starts async scrape (202) and creates ScrapeRun', async () => {
+    const user = await createDevUser('async@test.com');
     const h = authHeader(user);
     const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
     const bid = draft.body.businessId;
 
-    await request(app)
+    const res = await request(app)
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
       .set(h)
       .send({ websiteUrl: 'https://one.example.com' })
+      .expect(202);
+
+    expect(res.body.scrapeRunId).toBeDefined();
+    expect(res.body.workflowId).toMatch(/^scrape-/);
+    expect(res.body.status).toBe('RUNNING');
+    expect(workflowStart).toHaveBeenCalledWith(
+      'scrapeWorkflow',
+      expect.objectContaining({
+        workflowId: res.body.workflowId,
+        args: [
+          expect.objectContaining({
+            scrapeRunId: res.body.scrapeRunId,
+            businessId: bid,
+            websiteUrl: 'https://one.example.com',
+          }),
+        ],
+      })
+    );
+
+    const run = await mongoose.model('ScrapeRun').findById(res.body.scrapeRunId).lean();
+    expect(run).toBeTruthy();
+    expect(run.status).toBe('RUNNING');
+
+    const bc = await mongoose.model('BusinessContext').findOne({
+      businessId: new mongoose.Types.ObjectId(bid),
+    });
+    expect(bc.websiteUrl).toBe('https://one.example.com');
+  });
+
+  it('503 when Temporal workflow start fails', async () => {
+    workflowStart.mockRejectedValueOnce(new Error('temporal down'));
+    const user = await createDevUser('503@test.com');
+    const h = authHeader(user);
+    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const bid = draft.body.businessId;
+
+    const res = await request(app)
+      .post(`/api/v1/onboarding/business/${bid}/scrape`)
+      .set(h)
+      .send({ websiteUrl: 'https://fail.example.com' })
+      .expect(503);
+
+    expect(res.body.error).toBe('temporal_unavailable');
+    expect(res.body.scrapeRunId).toBeDefined();
+
+    const run = await mongoose.model('ScrapeRun').findById(res.body.scrapeRunId).lean();
+    expect(run.status).toBe('FAILED');
+  });
+
+  it('GET scrape run returns RUNNING without suggested', async () => {
+    const user = await createDevUser('poll@test.com');
+    const h = authHeader(user);
+    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const bid = draft.body.businessId;
+
+    const start = await request(app)
+      .post(`/api/v1/onboarding/business/${bid}/scrape`)
+      .set(h)
+      .send({ websiteUrl: 'https://poll.example.com' })
+      .expect(202);
+
+    const poll = await request(app)
+      .get(`/api/v1/onboarding/business/${bid}/scrape-runs/${start.body.scrapeRunId}`)
+      .set(h)
       .expect(200);
 
-    await request(app)
+    expect(poll.body.scrapeRun.status).toBe('RUNNING');
+    expect(poll.body.scrapeRun.suggested).toBeNull();
+  });
+
+  it('creates distinct ScrapeRuns for repeated scrapes', async () => {
+    const user = await createDevUser('two@test.com');
+    const h = authHeader(user);
+    const draft = await request(app).post('/api/v1/onboarding/business').set(h).expect(201);
+    const bid = draft.body.businessId;
+
+    const a = await request(app)
+      .post(`/api/v1/onboarding/business/${bid}/scrape`)
+      .set(h)
+      .send({ websiteUrl: 'https://one.example.com' })
+      .expect(202);
+    const b = await request(app)
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
       .set(h)
       .send({ websiteUrl: 'https://two.example.com' })
-      .expect(200);
+      .expect(202);
 
-    const BusinessContext = mongoose.model('BusinessContext');
-    const doc = await BusinessContext.findOne({
+    expect(a.body.scrapeRunId).not.toBe(b.body.scrapeRunId);
+
+    const count = await mongoose.model('ScrapeRun').countDocuments({
       businessId: new mongoose.Types.ObjectId(bid),
-    })
-      .select('+rawScrapeOutput')
-      .lean();
-
-    expect(doc.rawScrapeOutput.runs.length).toBe(2);
-    expect(doc.websiteUrl).toBe('https://two.example.com');
+    });
+    expect(count).toBe(2);
   });
 });

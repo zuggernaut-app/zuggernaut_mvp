@@ -3,8 +3,8 @@
 const { URL } = require('url');
 
 /**
- * Deterministic placeholder “scraper” — replace with real crawl/extract later.
- * Never writes to confirmed BusinessContext fields; caller merges only into rawScrapeOutput.
+ * Deterministic placeholder scraper (superseded by Temporal `scrapeWorkflow` + `enterprise_scraper_v1`).
+ * Retained for reference/tests. Never writes to confirmed BusinessContext fields.
  *
  * @param {string} websiteUrl
  * @returns {{ suggested: Record<string, unknown>, rawPayload: Record<string, unknown> }}

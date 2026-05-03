@@ -13,6 +13,7 @@ jspm_packages/
 dist
 dist-server
 build
+frontend/coverage/
 
 # Optional npm cache clean
 .npm
@@ -27,3 +28,7 @@ build
 .vscode/
 *.swp
 *~
+
+# Playwright (frontend)
+frontend/playwright-report/
+frontend/test-results/

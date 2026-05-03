@@ -46,5 +46,9 @@
     388|- **Before pushing:** follow `CONTRIBUTING.md` (human checklist). From repo root run `npm run check:before-push` to block accidental staging of `.env` files; optionally enable the Git hook (`git config core.hooksPath .githooks`) so the same check runs on every `git push` on your machine.
     389|- Follow **Temporal workflow and activity design discipline** under Phase 3—balance granularity (retries, visibility) with scale (task overhead, workflow readability).
     390|- Add tests immediately for orchestration and idempotency-sensitive code.
+- Implement frontend unit tests for validation, storage, and state management hooks.
+- Implement backend integration tests for API routes and middleware.
+- Write unit tests for Temporal workflow and activity logic.
+- Develop E2E tests for core onboarding and setup flows.
     391|- Do not mix provider integrations into route handlers.
     392|- Do not add V2 modules while V1 setup flow is incomplete.

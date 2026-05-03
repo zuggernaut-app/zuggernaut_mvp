@@ -28,11 +28,29 @@ export interface ScrapeSuggested {
   [key: string]: unknown
 }
 
-export interface ScrapeResponse {
+/** Response from POST …/scrape — async job started; poll GET …/scrape-runs/:id */
+export interface ScrapeStartResponse {
   businessId: string
   websiteUrl: string
-  suggested: ScrapeSuggested
-  rawScrapeStored: boolean
+  scrapeRunId: string
+  workflowId: string | null
+  status: string
+}
+
+export interface ScrapeRunDto {
+  id: string
+  businessId: string
+  websiteUrl: string
+  temporalWorkflowId: string | null
+  status: string
+  lastErrorSummary: string | null
+  suggested: ScrapeSuggested | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ScrapeRunPollResponse {
+  scrapeRun: ScrapeRunDto
 }
 
 export interface BusinessContextDto {

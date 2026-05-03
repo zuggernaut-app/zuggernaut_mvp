@@ -1,13 +1,34 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createBusinessDraft, scrapeBusiness } from '../api/onboarding'
+import {
+  createBusinessDraft,
+  scrapeBusiness,
+  waitForScrapeCompletion,
+} from '../api/onboarding'
 import { ApiError } from '../api/client'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useOnboardingState } from '../hooks/useOnboardingState'
 import { MAX_URL_LENGTH, validateHttpUrl } from '../utils/validation'
+
+function userMessageForScrapeError(err: ApiError): string {
+  switch (err.code) {
+    case 'scrape_timeout':
+      return err.message
+    case 'scrape_failed':
+      return err.message || 'Scrape job failed. Try again or use a different URL.'
+    case 'scrape_incomplete':
+      return err.message
+    case 'temporal_unavailable':
+      return 'Could not start the scrape job. Is Temporal running and reachable? Check backend logs.'
+    case 'network_error':
+      return err.message
+    default:
+      return err.message || 'Could not scrape this URL.'
+  }
+}
 
 export function BusinessStartPage(): ReactElement {
   const navigate = useNavigate()
@@ -37,14 +58,12 @@ export function BusinessStartPage(): ReactElement {
         businessId = draft.businessId
         setBusinessId(businessId)
       }
-      const scraped = await scrapeBusiness(businessId, urlCheck.value)
-      setScrapePreview({
-        websiteUrl: scraped.websiteUrl,
-        suggested: scraped.suggested,
-      })
+      const started = await scrapeBusiness(businessId, urlCheck.value)
+      const preview = await waitForScrapeCompletion(businessId, started.scrapeRunId)
+      setScrapePreview(preview)
       navigate('/onboarding/suggestions', { replace: true })
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message)
+      if (err instanceof ApiError) setError(userMessageForScrapeError(err))
       else setError('Could not scrape this URL.')
     } finally {
       setBusy(false)
@@ -62,7 +81,7 @@ export function BusinessStartPage(): ReactElement {
   return (
     <PageLayout
       title="Your website"
-      lead="Create a draft business and scrape your public site for onboarding suggestions."
+      lead="Create a draft business and scrape your public site for onboarding suggestions. Scraping runs in the background (Temporal); keep the API and worker running."
     >
       <form className="form" onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error} />
@@ -81,7 +100,11 @@ export function BusinessStartPage(): ReactElement {
         </div>
         <div className="actions">
           <button type="submit" className="btn btn-primary" disabled={busy}>
-            {busy ? <InlineLoading label="Creating & scraping…" /> : 'Scrape suggestions'}
+            {busy ? (
+              <InlineLoading label="Scraping site (may take a few minutes)…" />
+            ) : (
+              'Scrape suggestions'
+            )}
           </button>
         </div>
       </form>

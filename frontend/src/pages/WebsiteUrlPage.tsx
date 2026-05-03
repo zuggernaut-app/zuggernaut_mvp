@@ -33,7 +33,7 @@ export function WebsiteUrlPage(): ReactElement {
   return (
     <PageLayout
       title="Suggested business details"
-      lead="Placeholder scraper results (replace with production extraction). Confirm on the next step."
+      lead="Suggestions from your public website (async scrape + extraction). Confirm on the next step."
     >
       <section className="alert alert-info" style={{ marginBottom: '1.25rem' }}>
         <strong>URL:</strong> <span style={{ wordBreak: 'break-all' }}>{websiteUrl}</span>

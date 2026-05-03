@@ -3,6 +3,7 @@
  * Require this once early in server bootstrap (see `mvp_implementation_plan.md` Phase 1 / Database Architecture Strategy).
  */require('./User');
 require('./BusinessContext');
+require('./ScrapeRun');
 require('./SetupRun');
 require('./SetupStepExecution');
 require('./IntegrationConnection');
@@ -14,6 +15,7 @@ require('./CampaignPlan');
 module.exports = {
   User: require('./User'),
   BusinessContext: require('./BusinessContext'),
+  ScrapeRun: require('./ScrapeRun'),
   SetupRun: require('./SetupRun'),
   SetupStepExecution: require('./SetupStepExecution'),
   IntegrationConnection: require('./IntegrationConnection'),

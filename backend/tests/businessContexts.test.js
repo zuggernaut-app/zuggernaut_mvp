@@ -1,11 +1,22 @@
 'use strict';
 
+jest.mock('../lib/temporalClient', () => ({
+  getTemporalClient: jest.fn(),
+}));
+
 const request = require('supertest');
+const { getTemporalClient } = require('../lib/temporalClient');
 const { createApp } = require('../app');
 const { createDevUser, authHeader } = require('./helpers');
 
 describe('PUT /api/v1/business-contexts', () => {
   const app = createApp();
+
+  beforeEach(() => {
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: jest.fn().mockResolvedValue(undefined) },
+    });
+  });
 
   async function draftAndConfirmHeaders(email) {
     const user = await createDevUser(email);
@@ -16,7 +27,7 @@ describe('PUT /api/v1/business-contexts', () => {
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
       .set(h)
       .send({ websiteUrl: 'https://example.com' })
-      .expect(200);
+      .expect(202);
 
     const res = await request(app).put(`/api/v1/business-contexts/${bid}`).set(h).send({
       businessName: 'Acme',

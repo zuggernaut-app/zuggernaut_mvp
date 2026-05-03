@@ -30,7 +30,7 @@ describe('setup-runs API', () => {
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
       .set(h)
       .send({ websiteUrl: 'https://example.com' })
-      .expect(200);
+      .expect(202);
     await request(app).put(`/api/v1/business-contexts/${bid}`).set(h).send({ businessName: 'Co' }).expect(200);
     return { user, h, bid };
   }
@@ -60,7 +60,7 @@ describe('setup-runs API', () => {
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
       .set(h)
       .send({ websiteUrl: 'https://example.com' })
-      .expect(200);
+      .expect(202);
 
     const res = await request(app).post('/api/v1/setup-runs').set(h).send({ businessId: bid }).expect(409);
 
@@ -79,16 +79,20 @@ describe('setup-runs API', () => {
 
     expect(res.body.setupRunId).toMatch(/^[a-f0-9]{24}$/);
     expect(res.body.status).toBe('RUNNING');
-    expect(workflowStart).toHaveBeenCalledWith(
-      'setupRunWorkflow',
+    expect(workflowStart.mock.calls[0][0]).toBe('scrapeWorkflow');
+    expect(workflowStart.mock.calls[1][0]).toBe('setupRunWorkflow');
+    expect(workflowStart.mock.calls[1][1]).toEqual(
       expect.objectContaining({
         args: [{ setupRunId: res.body.setupRunId, message: 'setup-started' }],
-      }),
+      })
     );
   });
 
   it('503 preserves setupRunId when Temporal workflow start fails', async () => {
-    const workflowStart = jest.fn().mockRejectedValue(new Error('broker down'));
+    const workflowStart = jest
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('broker down'));
     getTemporalClient.mockResolvedValue({
       workflow: { start: workflowStart },
     });

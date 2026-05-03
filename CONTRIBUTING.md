@@ -8,7 +8,7 @@ Review **what changed**, not the whole repo.
 
 1. Inspect the diff: `git diff` (and staged: `git diff --cached`).
 2. Confirm secrets are not staged: no `**/`.env`** files (unless `*.example` / documented templates).
-3. If you touched **Temporal**, smoke test once: `backend/` → `temporal:up`, `temporal:worker`, `temporal:demo-workflow` when feasible.
+3. If you touched **Temporal**, smoke test once: `backend/` → `temporal:up`, `temporal:worker`, and a real scrape when feasible. **Use the same `MONGODB_URI` in `backend/.env` for the API (`npm start`) and the worker (`npm run temporal:worker`)** so activities can load `ScrapeRun` / `BusinessContext` rows created by the API.
 4. If you touched **Mongo / models / seed**, run `npm run seed:test` — only against a DB you intend to mutate.
 5. Run linters/tests when they exist (`backend`/`frontend` `npm test` paths will grow over time).
 
