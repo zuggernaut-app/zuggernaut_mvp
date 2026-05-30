@@ -29,6 +29,11 @@ function emit(): void {
   listeners.forEach((fn) => fn())
 }
 
+/** After mutating onboarding keys in localStorage outside this module, call this so UI syncs. */
+export function notifyOnboardingStorageChanged(): void {
+  emit()
+}
+
 function subscribeOnboarding(listener: Subscriber): () => void {
   listeners.add(listener)
   return () => {

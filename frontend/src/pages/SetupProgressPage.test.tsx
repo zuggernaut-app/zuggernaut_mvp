@@ -5,12 +5,54 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { OnboardingProvider } from '../hooks/useOnboardingState'
 import { TEST_IDS, seedSession } from '../test/pageTestUtils'
 import { SetupProgressPage } from './SetupProgressPage'
+import { startSetupRun } from '../api/setupRuns'
 
 const mockUseSetupRunStatus = vi.fn()
+const mockedStartSetupRun = vi.mocked(startSetupRun)
 
 vi.mock('../hooks/useSetupRunStatus', () => ({
   useSetupRunStatus: (setupRunId: string | null) => mockUseSetupRunStatus(setupRunId),
 }))
+
+const mockUseProvisioningOverview = vi.fn()
+
+vi.mock('../hooks/useProvisioningOverview', () => ({
+  useProvisioningOverview: (...args: unknown[]) => mockUseProvisioningOverview(...args),
+}))
+
+vi.mock('../api/setupRuns', () => ({
+  startSetupRun: vi.fn(),
+}))
+
+vi.mock('../hooks/useIntegrationConnections', () => ({
+  useIntegrationConnections: vi.fn(() => ({
+    connections: {},
+    loading: false,
+    error: null,
+    refetch: vi.fn(),
+    connectProvider: vi.fn(),
+    providerLabels: {
+      gbp: 'Google Business Profile (optional)',
+      gtm: 'Google Tag Manager (required)',
+      google_ads: 'Google Ads (required)',
+    },
+    statusLabel: (s: { ready: boolean }) => (s.ready ? 'Connected' : 'Not connected'),
+  })),
+  INTEGRATION_PROVIDERS: ['gbp', 'gtm', 'google_ads'],
+}))
+
+function defaultProvisioningHook() {
+  return {
+    overview: null,
+    loading: false,
+    error: null,
+    refetch: vi.fn(),
+    createRequest: vi.fn(),
+    approveRequest: vi.fn(),
+    cancelRequest: vi.fn(),
+    mutationByProvider: {},
+  }
+}
 
 function defaultHookReturn() {
   return {
@@ -43,6 +85,7 @@ describe('SetupProgressPage', () => {
     vi.clearAllMocks()
     seedSession({})
     mockUseSetupRunStatus.mockImplementation(() => defaultHookReturn())
+    mockUseProvisioningOverview.mockImplementation(() => defaultProvisioningHook())
   })
 
   it('shows missing setup run message when no id', async () => {
@@ -133,5 +176,557 @@ describe('SetupProgressPage', () => {
     await waitFor(() => {
       expect(localStorage.getItem('zuggernaut:setupRunId')).toBe(TEST_IDS.setupRun)
     })
+  })
+
+  it('shows GBP audit summary when present in run meta', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'SUCCEEDED',
+          lastErrorSummary: null,
+          meta: {
+            gbpAudit: 'complete',
+            gbpAuditSummary: {
+              presentCount: 3,
+              missingCount: 1,
+              needsAttentionCount: 2,
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: 1_700_000_000_000,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    const heading = await screen.findByRole('heading', { name: /GBP audit summary/i })
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section).toHaveTextContent('Present')
+    expect(section).toHaveTextContent('3 fields')
+    expect(section).toHaveTextContent('Missing')
+    expect(section).toHaveTextContent('1 field')
+    expect(section).toHaveTextContent('Needs attention')
+    expect(section).toHaveTextContent('2 items')
+  })
+
+  it('shows GBP skipped notice when audit was not run', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'RUNNING',
+          lastErrorSummary: null,
+          meta: { gbpAudit: 'skipped' },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/GBP audit skipped/i)).toBeInTheDocument()
+  })
+
+  it('shows Ads conversion catalog summary when present in run meta', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'RUNNING',
+          lastErrorSummary: null,
+          meta: {
+            catalog: 'ready',
+            catalogSummary: {
+              primaryGoal: 'both',
+              totalInCatalog: 4,
+              selectedCount: 2,
+              selectedCategories: ['call', 'form'],
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    const heading = await screen.findByRole('heading', { name: /Ads conversion catalog/i })
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section).toHaveTextContent('Primary goal')
+    expect(section).toHaveTextContent('both')
+    expect(section).toHaveTextContent('4 conversions')
+    expect(section).toHaveTextContent('call, form')
+  })
+
+  it('shows GTM setup summary when present in run meta', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'RUNNING',
+          lastErrorSummary: null,
+          meta: {
+            gtm: 'setup_complete',
+            gtmSummary: {
+              templateVersion: 1,
+              tagsCreated: 2,
+              triggersCreated: 4,
+              variablesCreated: 3,
+              reusedArtifacts: 0,
+              publishedVersion: 'accounts/mock/containers/mock/versions/1',
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    const heading = await screen.findByRole('heading', { name: /GTM setup status/i })
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section).toHaveTextContent('2 created')
+    expect(section).toHaveTextContent('4 created')
+    expect(section).toHaveTextContent('accounts/mock/containers/mock/versions/1')
+  })
+
+  it('shows Ads campaign summary when present in run meta', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'SUCCEEDED',
+          lastErrorSummary: null,
+          meta: {
+            ads: 'campaigns_recorded',
+            adsCampaignSummary: {
+              campaignCreated: true,
+              adGroupCreated: true,
+              adCreated: true,
+              reusedArtifacts: 0,
+              campaignExternalId: 'customers/123/campaigns/zug-campaign-mock',
+              conversionLinkCount: 1,
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    const heading = await screen.findByRole('heading', { name: /Google Ads campaign/i })
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section).toHaveTextContent('customers/123/campaigns/zug-campaign-mock')
+    expect(section).toHaveTextContent('Conversion links')
+  })
+
+  it('shows GTM snippet pending instructions', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'GTM_SNIPPET_PENDING',
+          lastErrorSummary: 'Install GTM snippet',
+          meta: {
+            structuralVerification: {
+              missing: ['snippet'],
+              snippetPresent: false,
+              publicContainerId: 'GTM-MOCK',
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/Install the Google Tag Manager snippet/i)).toBeInTheDocument()
+    expect(screen.getByText('GTM-MOCK')).toBeInTheDocument()
+    expect(screen.getByText(/Verification details/i)).toBeInTheDocument()
+  })
+
+  it('shows structural verification missing items for tracking fix', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'SETUP_NEEDS_TRACKING_FIX',
+          lastErrorSummary: 'Structural verification failed',
+          meta: {
+            structuralVerification: {
+              missing: ['gtm_tags', 'published container version'],
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/Tracking setup needs attention/i)).toBeInTheDocument()
+    const heading = screen.getByRole('heading', { name: /Verification details/i })
+    const section = heading.closest('section')
+    expect(section).toHaveTextContent('published container version')
+  })
+
+  it('shows link to setup report when run is terminal', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'SUCCEEDED',
+          lastErrorSummary: null,
+          meta: null,
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    const link = await screen.findByRole('link', { name: /View setup report/i })
+    expect(link).toHaveAttribute('href', `/setup/report/${TEST_IDS.setupRun}`)
+  })
+
+  it('shows backend stuck guidance when stuckState is true', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'RUNNING',
+          lastErrorSummary: null,
+          meta: null,
+        },
+        stuckState: {
+          stuck: true,
+          runningForMs: 400000,
+          thresholdMs: 300000,
+          guidance: 'Verify the Temporal worker is running.',
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: true,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/Verify the Temporal worker is running/i)).toBeInTheDocument()
+  })
+
+  it('shows GTM provisioning consent card', async () => {
+    seedSession({ userId: TEST_IDS.user, businessId: TEST_IDS.business })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'GTM_PROVISIONING_REQUIRED',
+          lastErrorSummary: 'GTM provisioning approval required',
+          meta: null,
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    mockUseProvisioningOverview.mockReturnValue({
+      ...defaultProvisioningHook(),
+      overview: {
+        businessId: TEST_IDS.business,
+        providers: {
+          gtm: {
+            provider: 'gtm',
+            provisioningRequired: true,
+            connection: { provider: 'gtm', ready: false, reason: 'provisioning_required' },
+            activeRequest: {
+              id: 'req-gtm',
+              businessId: TEST_IDS.business,
+              provider: 'gtm',
+              status: 'pending_approval',
+              requestedResources: ['gtm_account', 'gtm_container', 'gtm_workspace'],
+              approvedAt: null,
+              createdProviderIdentifiers: null,
+              errorCode: null,
+              errorMessage: null,
+              setupRunId: TEST_IDS.setupRun,
+            },
+            latestRequest: null,
+          },
+          google_ads: {
+            provider: 'google_ads',
+            provisioningRequired: false,
+            connection: { provider: 'google_ads', ready: true, reason: 'ok' },
+            activeRequest: null,
+            latestRequest: null,
+          },
+        },
+      },
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(
+      await screen.findByRole('heading', { name: /Google Tag Manager provisioning approval/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Web container')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Approve provisioning/i })).toBeInTheDocument()
+  })
+
+  it('shows Ads provisioning consent card', async () => {
+    seedSession({ userId: TEST_IDS.user, businessId: TEST_IDS.business })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'ADS_PROVISIONING_REQUIRED',
+          lastErrorSummary: 'Google Ads provisioning approval required',
+          meta: null,
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    mockUseProvisioningOverview.mockReturnValue({
+      ...defaultProvisioningHook(),
+      overview: {
+        businessId: TEST_IDS.business,
+        providers: {
+          gtm: {
+            provider: 'gtm',
+            provisioningRequired: false,
+            connection: { provider: 'gtm', ready: true, reason: 'ok' },
+            activeRequest: null,
+            latestRequest: null,
+          },
+          google_ads: {
+            provider: 'google_ads',
+            provisioningRequired: true,
+            connection: { provider: 'google_ads', ready: false, reason: 'provisioning_required' },
+            activeRequest: {
+              id: 'req-ads',
+              businessId: TEST_IDS.business,
+              provider: 'google_ads',
+              status: 'pending_approval',
+              requestedResources: ['google_ads_customer'],
+              approvedAt: null,
+              createdProviderIdentifiers: null,
+              errorCode: null,
+              errorMessage: null,
+              setupRunId: TEST_IDS.setupRun,
+            },
+            latestRequest: null,
+          },
+        },
+      },
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(
+      await screen.findByRole('heading', { name: /Google Ads customer provisioning approval/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Approve provisioning/i })).toBeInTheDocument()
+  })
+
+  it('approves provisioning and shows continue setup action', async () => {
+    seedSession({ userId: TEST_IDS.user, businessId: TEST_IDS.business })
+
+    const approveRequest = vi.fn().mockResolvedValue({
+      id: 'req-gtm',
+      status: 'approved',
+    })
+    const refetchProvisioning = vi.fn()
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'GTM_PROVISIONING_REQUIRED',
+          lastErrorSummary: null,
+          meta: null,
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    mockUseProvisioningOverview.mockReturnValue({
+      overview: {
+        businessId: TEST_IDS.business,
+        providers: {
+          gtm: {
+            provider: 'gtm',
+            provisioningRequired: true,
+            connection: { provider: 'gtm', ready: false, reason: 'provisioning_required' },
+            activeRequest: {
+              id: 'req-gtm',
+              businessId: TEST_IDS.business,
+              provider: 'gtm',
+              status: 'pending_approval',
+              requestedResources: ['gtm_account'],
+              approvedAt: null,
+              createdProviderIdentifiers: null,
+              errorCode: null,
+              errorMessage: null,
+              setupRunId: TEST_IDS.setupRun,
+            },
+            latestRequest: null,
+          },
+          google_ads: {
+            provider: 'google_ads',
+            provisioningRequired: false,
+            connection: { provider: 'google_ads', ready: true, reason: 'ok' },
+            activeRequest: null,
+            latestRequest: null,
+          },
+        },
+      },
+      loading: false,
+      error: null,
+      refetch: refetchProvisioning,
+      createRequest: vi.fn(),
+      approveRequest,
+      cancelRequest: vi.fn(),
+      mutationByProvider: {},
+    })
+
+    mockedStartSetupRun.mockResolvedValueOnce({
+      setupRunId: 'new-run-id',
+      workflowId: 'wf-new',
+      status: 'RUNNING',
+    })
+
+    const user = userEvent.setup()
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    await user.click(await screen.findByRole('button', { name: /Approve provisioning/i }))
+    expect(approveRequest).toHaveBeenCalledWith('req-gtm')
+
+    expect(
+      await screen.findByText(/Approved\. Start setup again to provision resources and continue\./i),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Continue setup/i }))
+    expect(mockedStartSetupRun).toHaveBeenCalledWith(TEST_IDS.business)
   })
 })

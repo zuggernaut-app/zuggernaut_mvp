@@ -1,6 +1,5 @@
 'use strict';
 
-const { completeSkeletonSetupActivity } = require('./completeSkeletonSetup');
 const {
   checkRobotsActivity,
   scrapeStaticActivity,
@@ -9,9 +8,37 @@ const {
   persistScrapeResultActivity,
 } = require('./scrapeActivities');
 
+const {
+  loadSetupContextActivity,
+  checkGbpPreconditionsActivity,
+  checkGtmPreconditionsActivity,
+  checkGoogleAdsPreconditionsActivity,
+  checkProviderPreconditionsActivity,
+  checkProvisioningApprovalActivity,
+  provisionGtmResourcesActivity,
+  provisionGoogleAdsCustomerActivity,
+  runGbpAuditActivity,
+  fetchAdsConversionCatalogActivity,
+  runGtmConversionSetupActivity,
+  runStructuralVerificationActivity,
+  createAdsCampaignActivity,
+} = require('./setupRunActivities');
+
 /** Activity name → implementation (see `Worker.create` in `scripts/temporal-worker.js`). */
 module.exports = {
-  completeSkeletonSetupActivity,
+  loadSetupContextActivity,
+  checkGbpPreconditionsActivity,
+  checkGtmPreconditionsActivity,
+  checkGoogleAdsPreconditionsActivity,
+  checkProviderPreconditionsActivity,
+  checkProvisioningApprovalActivity,
+  provisionGtmResourcesActivity,
+  provisionGoogleAdsCustomerActivity,
+  runGbpAuditActivity,
+  fetchAdsConversionCatalogActivity,
+  runGtmConversionSetupActivity,
+  runStructuralVerificationActivity,
+  createAdsCampaignActivity,
   checkRobotsActivity,
   scrapeStaticActivity,
   scrapeHeadlessActivity,

@@ -26,15 +26,34 @@ export function useSetupRunStatus(setupRunId: string | null): UseSetupRunStatusR
   const runningSinceRef = useRef<number | null>(null)
   const cancelledRef = useRef(false)
 
-  const bumpStuck = useCallback((status: string) => {
+  const terminalStatuses = new Set([
+    'SUCCEEDED',
+    'FAILED',
+    'SETUP_NEEDS_MANUAL_REVIEW',
+    'SETUP_NEEDS_TRACKING_FIX',
+    'GTM_SNIPPET_PENDING',
+    'GTM_PROVISIONING_REQUIRED',
+    'ADS_PROVISIONING_REQUIRED',
+  ])
+
+  const bumpStuck = useCallback((status: string, stuckState?: SetupRunDetailResponse['stuckState']) => {
     if (status === 'RUNNING') {
-      if (runningSinceRef.current === null) runningSinceRef.current = Date.now()
-      else if (Date.now() - runningSinceRef.current > STUCK_AFTER_MS) setAppearsStuck(true)
+      if (stuckState?.stuck) {
+        runningSinceRef.current = null
+        setAppearsStuck(true)
+      } else {
+        if (runningSinceRef.current === null) runningSinceRef.current = Date.now()
+        else if (Date.now() - runningSinceRef.current > STUCK_AFTER_MS) setAppearsStuck(true)
+      }
       setPollingPaused(false)
-    } else {
+    } else if (terminalStatuses.has(status)) {
       runningSinceRef.current = null
       setAppearsStuck(false)
       setPollingPaused(true)
+    } else {
+      runningSinceRef.current = null
+      setAppearsStuck(false)
+      setPollingPaused(false)
     }
   }, [])
 
@@ -46,7 +65,7 @@ export function useSetupRunStatus(setupRunId: string | null): UseSetupRunStatusR
       setData(res)
       setError(null)
       setLastUpdatedAt(Date.now())
-      bumpStuck(res.setupRun.status)
+      bumpStuck(res.setupRun.status, res.stuckState)
       return res
     } catch (e) {
       if (cancelledRef.current) return undefined

@@ -152,4 +152,125 @@ describe('setup-runs API', () => {
   it('GET returns 401 when unauthenticated', async () => {
     await request(app).get(`/api/v1/setup-runs/${new mongoose.Types.ObjectId().toString()}`).expect(401);
   });
+
+  it('GET /report returns normalized dashboard payload for owner', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-report@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+    const sid = created.body.setupRunId;
+
+    const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    const runOid = new mongoose.Types.ObjectId(sid);
+    const bizOid = new mongoose.Types.ObjectId(bid);
+
+    await SetupRun.findByIdAndUpdate(runOid, {
+      status: 'SUCCEEDED',
+      meta: {
+        gbpAudit: 'complete',
+        gbpAuditSummary: { presentCount: 1, missingCount: 0, needsAttentionCount: 0 },
+        ads: 'campaigns_recorded',
+        adsCampaignSummary: {
+          campaignCreated: true,
+          adGroupCreated: true,
+          adCreated: true,
+          reusedArtifacts: 0,
+          campaignExternalId: 'customers/123/campaigns/mock',
+          conversionLinkCount: 1,
+        },
+      },
+    });
+
+    await SetupStepExecution.create({
+      setupRunId: runOid,
+      businessId: bizOid,
+      stepName: 'ads_campaign_creation',
+      status: 'success',
+      provider: 'google_ads',
+      attemptCount: 1,
+    });
+
+    const res = await agent.get(`/api/v1/setup-runs/${sid}/report`).expect(200);
+    expect(res.body.report.setupRun.id).toBe(sid);
+    expect(res.body.report.outcome.kind).toBe('succeeded');
+    expect(res.body.report.adsCampaign.status).toBe('campaigns_recorded');
+    expect(res.body.report.steps.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('GET /report denies access for other users', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-report-deny@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+    const sid = created.body.setupRunId;
+
+    const { agent: otherAgent } = await registerAgent(app, 'sr-report-other@test.com');
+    await otherAgent.get(`/api/v1/setup-runs/${sid}/report`).expect(404);
+  });
+
+  it('GET returns stuckState contract for RUNNING setup runs', async () => {
+    const { agent, bid } = await confirmedBusiness('sr-stuck@test.com');
+    const SetupRun = mongoose.model('SetupRun');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+    const sid = created.body.setupRunId;
+
+    const res = await agent.get(`/api/v1/setup-runs/${sid}`).expect(200);
+    expect(res.body.stuckState).toEqual(
+      expect.objectContaining({
+        stuck: expect.any(Boolean),
+        thresholdMs: expect.any(Number),
+      })
+    );
+    expect(res.body.setupRun.id).toBe(sid);
+    expect(JSON.stringify(res.body)).not.toMatch(/accessToken|refreshToken/i);
+  });
+
+  it('GET /report returns 401 when unauthenticated', async () => {
+    await request(app)
+      .get(`/api/v1/setup-runs/${new mongoose.Types.ObjectId().toString()}/report`)
+      .expect(401);
+  });
+
+  it('GET /report returns 400 for invalid setupRunId', async () => {
+    const { agent } = await registerAgent(app, 'sr-report-bad@test.com');
+    await agent.get('/api/v1/setup-runs/not-an-id/report').expect(400);
+  });
+
+  it('GET /report response includes required report sections', async () => {
+    const { agent, bid } = await confirmedBusiness('sr-report-shape@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+    const sid = created.body.setupRunId;
+
+    const SetupRun = mongoose.model('SetupRun');
+    await SetupRun.findByIdAndUpdate(sid, {
+      status: 'GTM_SNIPPET_PENDING',
+      meta: {
+        structuralVerification: { missing: ['snippet'], snippetPresent: false },
+      },
+    });
+
+    const res = await agent.get(`/api/v1/setup-runs/${sid}/report`).expect(200);
+    const report = res.body.report;
+    expect(report).toEqual(
+      expect.objectContaining({
+        setupRun: expect.any(Object),
+        outcome: expect.any(Object),
+        stuckState: expect.any(Object),
+        gbpAudit: expect.any(Object),
+        adsCatalog: expect.any(Object),
+        gtmSetup: expect.any(Object),
+        structuralVerification: expect.any(Object),
+        adsCampaign: expect.any(Object),
+        steps: expect.any(Array),
+      })
+    );
+    expect(report.outcome.kind).toBe('snippet_pending');
+  });
 });

@@ -7,6 +7,7 @@
     "start:e2e": "node scripts/start-e2e-api.js",
     "dev": "node server.js",
     "seed:test": "node scripts/seed-test-data.js",
+    "debug:gtm-discovery": "node scripts/debugGtmDiscovery.js",
     "temporal:up": "node scripts/temporal-compose.js up -d",
     "temporal:down": "node scripts/temporal-compose.js down",
     "temporal:reset:dev": "node scripts/temporal-compose.js down -v",

@@ -20,6 +20,12 @@ function makeRun(status: string): SetupRunDetailResponse {
       lastErrorSummary: null,
       meta: null,
     },
+    stuckState: {
+      stuck: false,
+      runningForMs: null,
+      thresholdMs: 300000,
+      guidance: null,
+    },
     steps: [],
   }
 }
@@ -55,6 +61,19 @@ describe('useSetupRunStatus', () => {
       expect(result.current.loading).toBe(false)
     })
     expect(result.current.data?.setupRun.status).toBe('SUCCEEDED')
+    expect(result.current.pollingPaused).toBe(true)
+    expect(mockGetSetupRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('pauses polling for provisioning-required terminals', async () => {
+    mockGetSetupRun.mockResolvedValueOnce(makeRun('GTM_PROVISIONING_REQUIRED'))
+
+    const { result } = renderHook(() => useSetupRunStatus('run-1'))
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.data?.setupRun.status).toBe('GTM_PROVISIONING_REQUIRED')
     expect(result.current.pollingPaused).toBe(true)
     expect(mockGetSetupRun).toHaveBeenCalledTimes(1)
   })
@@ -118,5 +137,24 @@ describe('useSetupRunStatus', () => {
       expect(result.current.loading).toBe(false)
     })
     expect(result.current.error).toBe('Setup run not found')
+  })
+
+  it('uses backend stuckState hint when polling', async () => {
+    mockGetSetupRun.mockResolvedValueOnce({
+      ...makeRun('RUNNING'),
+      stuckState: {
+        stuck: true,
+        runningForMs: 400000,
+        thresholdMs: 300000,
+        guidance: 'Worker may be down.',
+      },
+    })
+
+    const { result } = renderHook(() => useSetupRunStatus('run-1'))
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false)
+    })
+    expect(result.current.appearsStuck).toBe(true)
   })
 })

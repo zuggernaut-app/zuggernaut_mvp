@@ -12,6 +12,29 @@ vi.mock('../api/setupRuns', () => ({
   startSetupRun: vi.fn(),
 }))
 
+vi.mock('../hooks/useIntegrationConnections', () => ({
+  useIntegrationConnections: vi.fn(() => ({
+    connections: {
+      gtm: { provider: 'gtm', ready: true, reason: 'ok' },
+      google_ads: { provider: 'google_ads', ready: true, reason: 'ok' },
+      gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' },
+    },
+    loading: false,
+    error: null,
+    refetch: vi.fn(),
+    connectProvider: vi.fn(),
+    providerLabels: {
+      gbp: 'Google Business Profile (optional)',
+      gtm: 'Google Tag Manager (required)',
+      google_ads: 'Google Ads (required)',
+    },
+    statusLabel: (s: { ready: boolean }) => (s.ready ? 'Connected' : 'Not connected'),
+    canAttemptSetup: (s: { ready: boolean; reason?: string } | undefined) =>
+      Boolean(s?.ready || s?.reason === 'provisioning_required'),
+  })),
+  INTEGRATION_PROVIDERS: ['gbp', 'gtm', 'google_ads'],
+}))
+
 const mockedStart = vi.mocked(startSetupRun)
 
 function renderStartSetup(): ReturnType<typeof render> {

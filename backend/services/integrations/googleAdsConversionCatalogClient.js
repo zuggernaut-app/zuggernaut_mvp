@@ -1,0 +1,247 @@
+'use strict';
+
+const axios = require('axios');
+const mongoose = require('mongoose');
+const { getFreshGoogleAccessToken } = require('./googleTokenService');
+const { withProviderRateLimit } = require('../../lib/providerRateLimit');
+
+const IntegrationConnection = mongoose.model('IntegrationConnection');
+
+const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION?.trim() || 'v18';
+const CONVERSION_ACTION_QUERY =
+  'SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric FROM conversion_action WHERE conversion_action.status != \'REMOVED\'';
+
+class GoogleAdsApiError extends Error {
+  constructor(message, code = 'GOOGLE_ADS_API_ERROR') {
+    super(message);
+    this.name = 'GoogleAdsApiError';
+    this.code = code;
+  }
+}
+
+/**
+ * @param {string | number | undefined} customerId
+ */
+function normalizeCustomerId(customerId) {
+  if (customerId == null || customerId === '') return null;
+  return String(customerId).replace(/-/g, '').trim();
+}
+
+/**
+ * @param {object} row — Google Ads conversionAction resource or mock row
+ */
+function normalizeConversionAction(row) {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+
+  const externalId =
+    row.id != null
+      ? String(row.id)
+      : row.externalId != null
+        ? String(row.externalId)
+        : null;
+
+  const resourceName =
+    typeof row.resourceName === 'string' && row.resourceName.trim()
+      ? row.resourceName.trim()
+      : externalId
+        ? `customers/unknown/conversionActions/${externalId}`
+        : null;
+
+  if (!externalId || !resourceName) return null;
+
+  return {
+    externalId,
+    resourceName,
+    name: row.name ?? null,
+    category: row.category ?? null,
+    status: row.status ?? null,
+    type: row.type ?? null,
+    includeInConversionsMetric: row.includeInConversionsMetric === true,
+  };
+}
+
+/**
+ * @param {object} resultRow — Google Ads search result row
+ */
+function normalizeSearchResultRow(resultRow) {
+  const ca = resultRow?.conversionAction;
+  if (!ca) return null;
+  return normalizeConversionAction({
+    id: ca.id,
+    resourceName: ca.resourceName,
+    name: ca.name,
+    category: ca.category,
+    status: ca.status,
+    type: ca.type,
+    includeInConversionsMetric: ca.includeInConversionsMetric,
+  });
+}
+
+/**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {string} [customerIdOverride]
+ */
+async function fetchGoogleAdsConversionCatalogMock(businessId, customerIdOverride) {
+  const conn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' }).lean();
+  const customerId =
+    normalizeCustomerId(customerIdOverride) ??
+    normalizeCustomerId(conn?.providerIdentifiers?.customerId) ??
+    'mock-customer-id';
+  const cid = normalizeCustomerId(customerId) ?? 'mockcustomerid';
+
+  const mockRows = conn?.providerIdentifiers?.mockConversionActions;
+  if (Array.isArray(mockRows) && mockRows.length > 0) {
+    const conversionActions = mockRows
+      .map((row) =>
+        normalizeConversionAction({
+          ...row,
+          resourceName:
+            row.resourceName ?? `customers/${cid}/conversionActions/${row.id ?? row.externalId}`,
+        })
+      )
+      .filter(Boolean);
+
+    return {
+      source: 'google_ads_api_mock',
+      recordedAt: new Date().toISOString(),
+      customerId,
+      conversionActions,
+    };
+  }
+
+  return {
+    source: 'google_ads_api_mock',
+    recordedAt: new Date().toISOString(),
+    customerId,
+    conversionActions: [
+      {
+        externalId: '1001',
+        resourceName: `customers/${cid}/conversionActions/1001`,
+        name: 'Phone calls from ads',
+        category: 'PHONE_CALL_LEAD',
+        status: 'ENABLED',
+        type: 'AD_CALL',
+        includeInConversionsMetric: true,
+      },
+      {
+        externalId: '1002',
+        resourceName: `customers/${cid}/conversionActions/1002`,
+        name: 'Website form submit',
+        category: 'SUBMIT_LEAD_FORM',
+        status: 'ENABLED',
+        type: 'WEBPAGE',
+        includeInConversionsMetric: true,
+      },
+    ],
+  };
+}
+
+/**
+ * @param {string} accessToken
+ * @param {string} customerId — digits only
+ */
+async function searchConversionActions(accessToken, customerId) {
+  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.trim();
+  if (!developerToken) {
+    throw new GoogleAdsApiError(
+      'GOOGLE_ADS_DEVELOPER_TOKEN is required when Google Ads API is enabled.',
+      'GOOGLE_ADS_DEVELOPER_TOKEN_MISSING'
+    );
+  }
+
+  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/googleAds:search`;
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'developer-token': developerToken,
+    'Content-Type': 'application/json',
+  };
+
+  const loginCustomerId = normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
+  if (loginCustomerId) {
+    headers['login-customer-id'] = loginCustomerId;
+  }
+
+  const res = await axios.post(
+    url,
+    { query: CONVERSION_ACTION_QUERY },
+    { headers, timeout: 30000, validateStatus: () => true }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw new GoogleAdsApiError(
+      `Google Ads conversion catalog search failed (${res.status})`,
+      'GOOGLE_ADS_CATALOG_SEARCH_FAILED'
+    );
+  }
+
+  const results = Array.isArray(res.data?.results) ? res.data.results : [];
+  const conversionActions = results.map(normalizeSearchResultRow).filter(Boolean);
+
+  return conversionActions;
+}
+
+/**
+ * Read-only Google Ads conversion catalog fetch — never mutates Ads.
+ *
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.customerId — setup-ready normalized customer id
+ * @param {import('pino').Logger} [ctx.logger]
+ */
+async function fetchGoogleAdsConversionCatalog(ctx) {
+  const { businessId, customerId: customerIdInput, logger } = ctx;
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return fetchGoogleAdsConversionCatalogMock(businessId, customerIdInput);
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError(
+      'Google Ads API is not enabled (set GOOGLE_ADS_API_ENABLED=true after configuring credentials).',
+      'GOOGLE_ADS_API_NOT_ENABLED'
+    );
+  }
+
+  const customerId = normalizeCustomerId(customerIdInput);
+  if (!customerId) {
+    throw new GoogleAdsApiError(
+      'Google Ads customerId missing for catalog fetch.',
+      'GOOGLE_ADS_CUSTOMER_ID_MISSING'
+    );
+  }
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+
+  const conversionActions = await withProviderRateLimit('google_ads', () =>
+    searchConversionActions(accessToken, customerId)
+  );
+
+  if (conversionActions.length === 0) {
+    throw new GoogleAdsApiError(
+      'No conversion actions accessible for this Google Ads connection.',
+      'GOOGLE_ADS_NO_CONVERSION_ACTIONS'
+    );
+  }
+
+  logger?.info?.(
+    { businessId: String(businessId), customerId, count: conversionActions.length, provider: 'google_ads' },
+    'google ads conversion catalog fetched from API'
+  );
+
+  return {
+    source: 'google_ads_api',
+    recordedAt: new Date().toISOString(),
+    customerId: customerIdInput ?? customerId,
+    conversionActions,
+  };
+}
+
+module.exports = {
+  GoogleAdsApiError,
+  fetchGoogleAdsConversionCatalog,
+  fetchGoogleAdsConversionCatalogMock,
+  normalizeConversionAction,
+  normalizeCustomerId,
+};

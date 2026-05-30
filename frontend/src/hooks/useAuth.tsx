@@ -11,7 +11,15 @@ import {
 import type { RegisterBody } from '../api/auth'
 import { authLogin, authLogout, authMe, authRegister } from '../api/auth'
 import type { UserDto } from '../types/api'
-import { clearStoredUserId, resetLocalSession, setStoredUserId } from '../utils/storage'
+import {
+  clearOnboardingDrafts,
+  clearStoredUserId,
+  getStoredBusinessId,
+  getStoredUserId,
+  resetLocalSession,
+  setStoredUserId,
+} from '../utils/storage'
+import { notifyOnboardingStorageChanged } from './useOnboardingState'
 
 export type AuthContextValue = {
   user: UserDto | null
@@ -23,6 +31,19 @@ export type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+function reconcileOnboardingDraftsForSession(nextUserId: string): void {
+  const prevId = getStoredUserId()
+  if (prevId !== null && prevId !== nextUserId) {
+    clearOnboardingDrafts()
+    notifyOnboardingStorageChanged()
+    return
+  }
+  if (prevId === null && getStoredBusinessId() !== null) {
+    clearOnboardingDrafts()
+    notifyOnboardingStorageChanged()
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }): ReactElement {
   const [user, setUser] = useState<UserDto | null>(null)
   const [loading, setLoading] = useState(true)
@@ -30,11 +51,14 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
   const refreshSession = useCallback(async () => {
     try {
       const res = await authMe()
+      reconcileOnboardingDraftsForSession(res.user.id)
       setUser(res.user)
       setStoredUserId(res.user.id)
     } catch {
       setUser(null)
       clearStoredUserId()
+      clearOnboardingDrafts()
+      notifyOnboardingStorageChanged()
     }
   }, [])
 
@@ -47,6 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
 
   const register = useCallback(async (body: RegisterBody) => {
     const res = await authRegister(body)
+    reconcileOnboardingDraftsForSession(res.user.id)
     setUser(res.user)
     setStoredUserId(res.user.id)
     return res.user
@@ -54,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await authLogin({ email, password })
+    reconcileOnboardingDraftsForSession(res.user.id)
     setUser(res.user)
     setStoredUserId(res.user.id)
     return res.user
@@ -65,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
     } finally {
       setUser(null)
       resetLocalSession()
+      notifyOnboardingStorageChanged()
     }
   }, [])
 

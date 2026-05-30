@@ -1,12 +1,14 @@
 /**
  * Side-effect import — registers all Mongoose models with the default connection.
  * Require this once early in server bootstrap (see `mvp_implementation_plan.md` Phase 1 / Database Architecture Strategy).
- */require('./User');
+ */
+require('./User');
 require('./BusinessContext');
 require('./ScrapeRun');
 require('./SetupRun');
 require('./SetupStepExecution');
 require('./IntegrationConnection');
+require('./IntegrationProvisioningRequest');
 require('./ProviderSnapshot');
 require('./IntegrationArtifact');
 require('./AuditReport');
@@ -19,6 +21,7 @@ module.exports = {
   SetupRun: require('./SetupRun'),
   SetupStepExecution: require('./SetupStepExecution'),
   IntegrationConnection: require('./IntegrationConnection'),
+  IntegrationProvisioningRequest: require('./IntegrationProvisioningRequest'),
   ProviderSnapshot: require('./ProviderSnapshot'),
   IntegrationArtifact: require('./IntegrationArtifact'),
   AuditReport: require('./AuditReport'),

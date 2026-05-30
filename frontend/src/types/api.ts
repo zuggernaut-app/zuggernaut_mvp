@@ -112,9 +112,169 @@ export interface SetupStepDto {
   updatedAt?: string
 }
 
+export interface SetupRunStuckState {
+  stuck: boolean
+  runningForMs: number | null
+  thresholdMs: number
+  guidance: string | null
+}
+
+export interface SetupRunCompensationAction {
+  type: string
+  outcome?: string
+  message?: string
+  campaignResourceName?: string
+  artifactCount?: number
+}
+
+export interface SetupRunCompensation {
+  appliedAt: string
+  failedStep: string
+  actions: SetupRunCompensationAction[]
+}
+
+export interface SetupRunSupportState {
+  failedStep?: string
+  errorCode?: string | null
+  compensation?: SetupRunCompensation
+  updatedAt?: string
+}
+
 export interface SetupRunDetailResponse {
   setupRun: SetupRunDto
+  stuckState: SetupRunStuckState
   steps: SetupStepDto[]
+}
+
+export interface SetupRunReportRecovery {
+  title: string
+  steps: string[]
+}
+
+export interface SetupRunReportGbpAudit {
+  status: 'complete' | 'skipped' | 'not_run'
+  summary: {
+    presentCount: number
+    missingCount: number
+    needsAttentionCount: number
+  } | null
+  findings: {
+    present: string[]
+    missing: string[]
+    needsAttention: string[]
+  } | null
+}
+
+export interface SetupRunReportAdsCatalog {
+  status: 'ready' | 'not_run'
+  summary: {
+    primaryGoal: string
+    totalInCatalog: number
+    selectedCount: number
+    selectedCategories: string[]
+  } | null
+}
+
+export interface SetupRunReportGtmSetup {
+  status: 'setup_complete' | 'not_run'
+  summary: {
+    templateVersion: number
+    tagsCreated: number
+    triggersCreated: number
+    variablesCreated: number
+    reusedArtifacts: number
+    publishedVersion: string
+  } | null
+}
+
+export interface SetupRunReportProvisioningProvider {
+  status: 'not_required' | 'approval_required' | 'provisioned' | 'failed'
+  requestId: string | null
+}
+
+export interface SetupRunReportProvisioning {
+  gtm: SetupRunReportProvisioningProvider
+  googleAds: SetupRunReportProvisioningProvider
+}
+
+export interface SetupRunReportStructuralVerification {
+  status:
+    | 'pass'
+    | 'snippet_pending'
+    | 'needs_tracking_fix'
+    | 'manual_review'
+    | 'not_run'
+  summary: string | null
+  evidence: {
+    missing?: string[]
+    snippetPresent?: boolean | null
+    publicContainerId?: string | null
+  } | null
+}
+
+export interface SetupRunReportAdsCampaign {
+  status: 'campaigns_recorded' | 'not_run'
+  summary: {
+    campaignCreated: boolean
+    adGroupCreated: boolean
+    adCreated: boolean
+    reusedArtifacts: number
+    campaignExternalId: string
+    conversionLinkCount: number
+  } | null
+  plan: {
+    campaignName: string | null
+    bidding: string | null
+    budgetAmountMicros: number | null
+  } | null
+}
+
+export interface SetupRunReportArtifactCounts {
+  gtmTags: number
+  gtmTriggers: number
+  gtmVariables: number
+  adsConversions: number
+  adsCampaignBudgets: number
+  adsCampaigns: number
+  adsAdGroups: number
+  adsAds: number
+  adsConversionLinks: number
+}
+
+export interface SetupRunReport {
+  setupRun: SetupRunDto
+  business: {
+    businessName: string | null
+    websiteUrl: string | null
+    goals: unknown
+  } | null
+  outcome: {
+    kind:
+      | 'succeeded'
+      | 'failed'
+      | 'in_progress'
+      | 'snippet_pending'
+      | 'tracking_fix'
+      | 'manual_review'
+      | 'provisioning_required'
+    headline: string
+    recovery: SetupRunReportRecovery | null
+  }
+  stuckState: SetupRunStuckState
+  supportState: SetupRunSupportState | null
+  compensation: SetupRunCompensation | null
+  gbpAudit: SetupRunReportGbpAudit
+  adsCatalog: SetupRunReportAdsCatalog
+  gtmSetup: SetupRunReportGtmSetup
+  provisioning: SetupRunReportProvisioning
+  structuralVerification: SetupRunReportStructuralVerification
+  adsCampaign: SetupRunReportAdsCampaign
+  artifactCounts: SetupRunReportArtifactCounts
+  steps: SetupStepDto[]
+}
+
+export interface SetupRunReportResponse {
+  report: SetupRunReport
 }
 
 export interface CreateSetupRunBody {

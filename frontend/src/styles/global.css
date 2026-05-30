@@ -217,6 +217,14 @@ p.lead {
   color: var(--color-success);
 }
 
+.status-needs-fix {
+  color: var(--color-warning, #d4a017);
+}
+
+.status-review {
+  color: var(--color-muted);
+}
+
 .stepsList {
   margin: 1rem 0 0;
   padding: 0;

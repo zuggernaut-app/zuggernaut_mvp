@@ -7,6 +7,8 @@ const SetupRun = mongoose.model('SetupRun');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
 const { requireAuth } = require('./middleware/requireAuth');
 const { getTemporalClient } = require('../../lib/temporalClient');
+const { buildSetupRunReport } = require('../../services/reports/setupRunReportService');
+const { detectStuckSetupRun } = require('../../services/setupRunStuckDetection');
 
 const router = express.Router();
 
@@ -89,6 +91,48 @@ router.post('/', requireAuth, async (req, res) => {
   }
 });
 
+router.get('/:setupRunId/report', requireAuth, async (req, res) => {
+  const setupUserId = new mongoose.Types.ObjectId(req.user.id);
+  const sidRaw = req.params.setupRunId;
+  if (!mongoose.Types.ObjectId.isValid(sidRaw)) {
+    return res.status(400).json({
+      error: 'validation_error',
+      message: 'Invalid setupRunId',
+    });
+  }
+  const setupRunId = new mongoose.Types.ObjectId(sidRaw);
+
+  try {
+    const setupRun = await SetupRun.findById(setupRunId).lean();
+    if (!setupRun) {
+      return res.status(404).json({ error: 'not_found', message: 'Setup run not found' });
+    }
+
+    const ownsBusiness = await BusinessContext.exists({
+      businessId: setupRun.businessId,
+      userId: setupUserId,
+    });
+    if (!ownsBusiness) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Setup run not found for this user',
+      });
+    }
+
+    const report = await buildSetupRunReport(setupRunId);
+    if (!report) {
+      return res.status(404).json({ error: 'not_found', message: 'Setup run not found' });
+    }
+
+    return res.status(200).json({ report });
+  } catch {
+    return res.status(503).json({
+      error: 'service_unavailable',
+      message: 'Database query failed. Check MongoDB and MONGODB_URI.',
+    });
+  }
+});
+
 router.get('/:setupRunId', requireAuth, async (req, res) => {
   const setupUserId = new mongoose.Types.ObjectId(req.user.id);
   const sidRaw = req.params.setupRunId;
@@ -121,6 +165,8 @@ router.get('/:setupRunId', requireAuth, async (req, res) => {
       .sort({ stepName: 1 })
       .lean();
 
+    const stuckState = detectStuckSetupRun(setupRun);
+
     return res.status(200).json({
       setupRun: {
         id: setupRun._id.toString(),
@@ -132,6 +178,7 @@ router.get('/:setupRunId', requireAuth, async (req, res) => {
         createdAt: setupRun.createdAt,
         updatedAt: setupRun.updatedAt,
       },
+      stuckState,
       steps: steps.map((s) => ({
         id: s._id.toString(),
         stepName: s.stepName,

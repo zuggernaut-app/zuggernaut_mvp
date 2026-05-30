@@ -9,6 +9,7 @@ import { WebsiteUrlPage } from '../pages/WebsiteUrlPage'
 import { BusinessReviewPage } from '../pages/BusinessReviewPage'
 import { StartSetupPage } from '../pages/StartSetupPage'
 import { SetupProgressPage } from '../pages/SetupProgressPage'
+import { SetupReportPage } from '../pages/SetupReportPage'
 export function AppRoutes(): ReactElement {
   return (
     <Routes>
@@ -52,6 +53,14 @@ export function AppRoutes(): ReactElement {
         element={
           <RequireAuth>
             <SetupProgressPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/setup/report/:setupRunId"
+        element={
+          <RequireAuth>
+            <SetupReportPage />
           </RequireAuth>
         }
       />
