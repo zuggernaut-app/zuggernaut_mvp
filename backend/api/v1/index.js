@@ -26,6 +26,6 @@ router.use('/business-contexts', require('./businessContexts'));
 router.use('/setup-runs', require('./setupRuns'));
 router.use('/integrations', require('./integrations'));
 router.use('/integrations/provisioning', require('./provisioning'));
-router.use('/dev/integrations', require('./devIntegrations'));
+router.use('/dev/integrations', require('../../../dev-tools/backend/api/v1/devIntegrations'));
 
 module.exports = router;

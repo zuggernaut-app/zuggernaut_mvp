@@ -10,7 +10,7 @@ const {
  * External resources created during dev-only creation diagnostics.
  * Separate from production `IntegrationArtifact` (setup workflow / Temporal).
  *
- * @see backend/services/dev/integrationDiagnosticArtifactService.js
+ * @see dev-tools/backend/services/dev/integrationDiagnosticArtifactService.js
  */
 const integrationDiagnosticArtifactSchema = new mongoose.Schema(
   {
