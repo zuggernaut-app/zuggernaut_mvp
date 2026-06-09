@@ -1,5 +1,6 @@
 /// <reference types="vitest/config" />
 
+import path from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -9,12 +10,15 @@ import react from '@vitejs/plugin-react'
 const apiProxyTarget =
   process.env.E2E_API_PROXY_TARGET?.trim() || 'http://127.0.0.1:3000'
 
+const repoRoot = path.resolve(__dirname, '..')
+
 export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
@@ -29,6 +33,9 @@ export default defineConfig({
     },
   },
   server: {
+    fs: {
+      allow: [repoRoot],
+    },
     // SPA calls same-origin /api/v1 → proxied → Express so the browser avoids CORS in dev.
     proxy: {
       '/api': {
