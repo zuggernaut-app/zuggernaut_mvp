@@ -9,6 +9,11 @@ const mongoose = require('mongoose');
 const { createApp } = require('../app');
 const { registerAgent } = require('./helpers');
 const { getTemporalClient } = require('../lib/temporalClient');
+const {
+  SETUP_RUN_WORKFLOW_NAME,
+  SCRAPE_WORKFLOW_NAME,
+  resolveTemporalTaskQueue,
+} = require('../constants/temporalDefaults');
 
 describe('setup-runs API', () => {
   const app = createApp();
@@ -72,10 +77,11 @@ describe('setup-runs API', () => {
 
     expect(res.body.setupRunId).toMatch(/^[a-f0-9]{24}$/);
     expect(res.body.status).toBe('RUNNING');
-    expect(workflowStart.mock.calls[0][0]).toBe('scrapeWorkflow');
-    expect(workflowStart.mock.calls[1][0]).toBe('setupRunWorkflow');
+    expect(workflowStart.mock.calls[0][0]).toBe(SCRAPE_WORKFLOW_NAME);
+    expect(workflowStart.mock.calls[1][0]).toBe(SETUP_RUN_WORKFLOW_NAME);
     expect(workflowStart.mock.calls[1][1]).toEqual(
       expect.objectContaining({
+        taskQueue: resolveTemporalTaskQueue(),
         args: [{ setupRunId: res.body.setupRunId, message: 'setup-started' }],
       })
     );

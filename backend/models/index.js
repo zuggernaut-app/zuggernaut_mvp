@@ -11,6 +11,8 @@ require('./IntegrationConnection');
 require('./IntegrationProvisioningRequest');
 require('./ProviderSnapshot');
 require('./IntegrationArtifact');
+require('./IntegrationDiagnosticArtifact');
+require('./IntegrationDiagnosticRun');
 require('./AuditReport');
 require('./CampaignPlan');
 
@@ -24,6 +26,8 @@ module.exports = {
   IntegrationProvisioningRequest: require('./IntegrationProvisioningRequest'),
   ProviderSnapshot: require('./ProviderSnapshot'),
   IntegrationArtifact: require('./IntegrationArtifact'),
+  IntegrationDiagnosticArtifact: require('./IntegrationDiagnosticArtifact'),
+  IntegrationDiagnosticRun: require('./IntegrationDiagnosticRun'),
   AuditReport: require('./AuditReport'),
   CampaignPlan: require('./CampaignPlan'),
 };

@@ -8,6 +8,10 @@ const User = mongoose.model('User');
 const { requireAuth } = require('./middleware/requireAuth');
 const { validateHttpUrl } = require('../../lib/validation');
 const { getTemporalClient } = require('../../lib/temporalClient');
+const {
+  SCRAPE_WORKFLOW_NAME,
+  resolveTemporalTaskQueue,
+} = require('../../constants/temporalDefaults');
 
 const router = express.Router();
 
@@ -75,12 +79,12 @@ router.post('/business/:businessId/scrape', requireAuth, async (req, res) => {
   });
 
   const workflowId = `scrape-${scrapeRun._id.toString()}`;
-  const taskQueue = process.env.TEMPORAL_TASK_QUEUE || 'setup-run';
+  const taskQueue = resolveTemporalTaskQueue();
   const startedAt = new Date().toISOString();
 
   try {
     const client = await getTemporalClient();
-    await client.workflow.start('scrapeWorkflow', {
+    await client.workflow.start(SCRAPE_WORKFLOW_NAME, {
       taskQueue,
       workflowId,
       args: [

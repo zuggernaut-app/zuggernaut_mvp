@@ -1,6 +1,9 @@
 'use strict';
 
-jest.mock('../services/capabilities', () => ({
+jest.mock('../services/capabilities', () => {
+  const actual = jest.requireActual('../services/capabilities');
+  return {
+  ...actual,
   runGbpReadOnlyAudit: jest.fn().mockResolvedValue({
     findings: { present: ['Business name'], missing: [], needsAttention: [] },
     summary: { presentCount: 1, missingCount: 0, needsAttentionCount: 0 },
@@ -91,7 +94,8 @@ jest.mock('../services/capabilities', () => ({
       this.code = code;
     }
   },
-}));
+  };
+});
 
 const mongoose = require('mongoose');
 const { ApplicationFailure } = require('@temporalio/activity');
@@ -103,6 +107,9 @@ const {
   loadSetupContextActivity,
   checkGbpPreconditionsActivity,
   checkGtmPreconditionsActivity,
+  checkGoogleAdsConnectionActivity,
+  discoverGoogleAdsCustomersActivity,
+  ensureGoogleAdsProvisioningApprovalActivity,
   checkGoogleAdsPreconditionsActivity,
   checkProvisioningApprovalActivity,
   provisionGtmResourcesActivity,
@@ -303,8 +310,9 @@ describe('setupRun activities (with mocked capabilities)', () => {
     expect(step.status).toBe('skipped');
   });
 
-  it('checkGoogleAdsPreconditionsActivity returns provisioning_required when customerId missing', async () => {
+  it('discoverGoogleAdsCustomersActivity returns provisioning_required when no accessible customers', async () => {
     const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
     const IntegrationConnection = mongoose.model('IntegrationConnection');
     const { bc, run } = await seedRun('act-ads-prov@test.com');
     await IntegrationConnection.create({
@@ -314,11 +322,15 @@ describe('setupRun activities (with mocked capabilities)', () => {
       accessTokenEnc: encryptToken('token'),
       refreshTokenEnc: encryptToken('refresh'),
       tokenExpiryAt: new Date(Date.now() + 3600_000),
-      scopes: ['https://www.googleapis.com/auth/adwords'],
+      scopes: allScopesForProvider('google_ads'),
       providerIdentifiers: { discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
     });
+    process.env.GOOGLE_ADS_API_MOCK = 'false';
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'test-dev-token';
+    const axios = require('axios');
+    jest.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { resourceNames: [] } });
 
-    const out = await checkGoogleAdsPreconditionsActivity({
+    const out = await discoverGoogleAdsCustomersActivity({
       setupRunId: run._id.toString(),
       businessId: bc.businessId.toString(),
     });
@@ -326,6 +338,12 @@ describe('setupRun activities (with mocked capabilities)', () => {
 
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.status).toBe('ADS_PROVISIONING_REQUIRED');
+
+    const step = await SetupStepExecution.findOne({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+    }).lean();
+    expect(step.status).toBe('skipped');
   });
 
   it('checkProvisioningApprovalActivity returns pending_approval', async () => {
@@ -716,6 +734,8 @@ describe('setupRun activities (with mocked capabilities)', () => {
   });
 
   it('createAdsCampaignActivity records supportState and pauses partial campaign on failure', async () => {
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    process.env.GOOGLE_ADS_API_ENABLED = 'true';
     const SetupRun = mongoose.model('SetupRun');
     const IntegrationArtifact = mongoose.model('IntegrationArtifact');
     const { seedPartialAdsCampaignArtifacts } = require('./fixtures/setupRunFixtures');
@@ -745,11 +765,11 @@ describe('setupRun activities (with mocked capabilities)', () => {
     ).toBe(1);
   });
 
-  it('checkGoogleAdsPreconditionsActivity marks manual review when Ads missing', async () => {
+  it('checkGoogleAdsConnectionActivity marks manual review when Ads missing', async () => {
     const SetupRun = mongoose.model('SetupRun');
     const { bc, run } = await seedRun('act-ads-pre@test.com');
 
-    const out = await checkGoogleAdsPreconditionsActivity({
+    const out = await checkGoogleAdsConnectionActivity({
       setupRunId: run._id.toString(),
       businessId: bc.businessId.toString(),
     });
@@ -758,6 +778,34 @@ describe('setupRun activities (with mocked capabilities)', () => {
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.status).toBe('SETUP_NEEDS_MANUAL_REVIEW');
     expect(updated.meta?.missingProviders).toContain('google_ads');
+  });
+
+  it('ensureGoogleAdsProvisioningApprovalActivity returns pending_approval', async () => {
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const { bc, run } = await seedRun('act-ads-approval@test.com');
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'provisioning_required',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: { accessibleCustomerIds: [], discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
+    });
+    const out = await ensureGoogleAdsProvisioningApprovalActivity({
+      setupRunId: run._id.toString(),
+      businessId: bc.businessId.toString(),
+    });
+    expect(out.outcome).toBe('pending_approval');
+    expect(out.provisioningRequestId).toBeTruthy();
+
+    const step = await SetupStepExecution.findOne({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.ENSURE_GOOGLE_ADS_PROVISIONING_APPROVAL,
+    }).lean();
+    expect(step.status).toBe('skipped');
   });
 
   it('runStructuralVerificationActivity sets manual review on manual_review_required verdict', async () => {

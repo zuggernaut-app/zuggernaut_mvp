@@ -7,8 +7,17 @@ const mongoose = require('mongoose');
 
 require('../models');
 
+const { assertWorkerEnvironment } = require('../lib/auth/assertAuthEnvironment');
+const { SETUP_RUN_WORKFLOW_ACTIVITIES } = require('../constants/setupWorkflow');
 const { Worker, NativeConnection } = require('@temporalio/worker');
 const { withRetry } = require('./temporal-connect-retry');
+const {
+  resolveTemporalAddress,
+  resolveTemporalNamespace,
+  resolveTemporalTaskQueue,
+} = require('../constants/temporalDefaults');
+
+assertWorkerEnvironment();
 
 function redactMongoUri(uri) {
   return typeof uri === 'string' ? uri.replace(/\/\/([^:]+):([^@]+)@/, '//$1:***@') : '';
@@ -26,9 +35,9 @@ async function main() {
     })
   );
 
-  const address = process.env.TEMPORAL_ADDRESS || '127.0.0.1:7233';
-  const namespace = process.env.TEMPORAL_NAMESPACE || 'default';
-  const taskQueue = process.env.TEMPORAL_TASK_QUEUE || 'setup-run';
+  const address = resolveTemporalAddress();
+  const namespace = resolveTemporalNamespace();
+  const taskQueue = resolveTemporalTaskQueue();
 
   const connection = await withRetry('Temporal worker', () =>
     NativeConnection.connect({
@@ -56,12 +65,19 @@ async function main() {
   // eslint-disable-next-line no-console
   console.warn(
     JSON.stringify({
-      msg: 'Temporal worker listening',
+      msg: 'Temporal worker ready — polling for tasks',
+      status: 'listening',
       address,
       namespace,
       taskQueue,
+      registeredActivities: SETUP_RUN_WORKFLOW_ACTIVITIES.length,
+      activityNames: SETUP_RUN_WORKFLOW_ACTIVITIES,
       workflowsPath,
-      hint: 'Use the same MONGODB_URI as the API. Run only one worker on this task queue.',
+      rules: [
+        'Run exactly one worker process per TEMPORAL_TASK_QUEUE',
+        'Use the same MONGODB_URI and TEMPORAL_* values as the API',
+        'If setup runs stay RUNNING, verify this process is alive and task queue matches',
+      ],
     })
   );
 

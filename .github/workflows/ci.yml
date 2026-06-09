@@ -58,3 +58,35 @@ jobs:
 
       - name: CI (unit & integration tests)
         run: npm run ci
+
+  playwright:
+    name: Playwright E2E smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: frontend
+        run: npx playwright install chromium --with-deps
+
+      - name: Playwright smoke (onboarding + setup run orchestration)
+        working-directory: frontend
+        run: npx playwright test --grep-invert "full onboarding"

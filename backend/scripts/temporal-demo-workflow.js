@@ -5,21 +5,27 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { Connection, Client } = require('@temporalio/client');
 const { withRetry } = require('./temporal-connect-retry');
+const {
+  SETUP_RUN_WORKFLOW_NAME,
+  resolveTemporalAddress,
+  resolveTemporalNamespace,
+  resolveTemporalTaskQueue,
+} = require('../constants/temporalDefaults');
 
 /**
  * Starts one `SetupRunWorkflow` run (needs Temporal up + worker running elsewhere).
  */
 async function main() {
-  const address = process.env.TEMPORAL_ADDRESS || '127.0.0.1:7233';
-  const namespace = process.env.TEMPORAL_NAMESPACE || 'default';
-  const taskQueue = process.env.TEMPORAL_TASK_QUEUE || 'setup-run';
+  const address = resolveTemporalAddress();
+  const namespace = resolveTemporalNamespace();
+  const taskQueue = resolveTemporalTaskQueue();
 
   const connection = await withRetry('Temporal client', () =>
     Connection.connect({ address, tls: false })
   );
   const client = new Client({ connection, namespace });
 
-  const result = await client.workflow.execute('setupRunWorkflow', {
+  const result = await client.workflow.execute(SETUP_RUN_WORKFLOW_NAME, {
     taskQueue,
     workflowId: `setup-run-demo-${Date.now()}`,
     args: [

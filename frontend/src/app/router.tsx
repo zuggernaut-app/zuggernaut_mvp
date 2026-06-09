@@ -10,6 +10,12 @@ import { BusinessReviewPage } from '../pages/BusinessReviewPage'
 import { StartSetupPage } from '../pages/StartSetupPage'
 import { SetupProgressPage } from '../pages/SetupProgressPage'
 import { SetupReportPage } from '../pages/SetupReportPage'
+import { DevIntegrationsPage } from '../pages/DevIntegrationsPage'
+import { DevGoogleAdsOAuthLabPage } from '../pages/DevGoogleAdsOAuthLabPage'
+import { DevGtmOAuthLabPage } from '../pages/DevGtmOAuthLabPage'
+import { DevGbpOAuthLabPage } from '../pages/DevGbpOAuthLabPage'
+import { isDevIntegrationsEnabled } from '../api/devIntegrations'
+
 export function AppRoutes(): ReactElement {
   return (
     <Routes>
@@ -64,6 +70,42 @@ export function AppRoutes(): ReactElement {
           </RequireAuth>
         }
       />
+      {isDevIntegrationsEnabled() ? (
+        <>
+          <Route
+            path="/dev/integrations"
+            element={
+              <RequireAuth>
+                <DevIntegrationsPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/dev/integrations/googleads"
+            element={
+              <RequireAuth>
+                <DevGoogleAdsOAuthLabPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/dev/integrations/gtm"
+            element={
+              <RequireAuth>
+                <DevGtmOAuthLabPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/dev/integrations/gbp"
+            element={
+              <RequireAuth>
+                <DevGbpOAuthLabPage />
+              </RequireAuth>
+            }
+          />
+        </>
+      ) : null}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

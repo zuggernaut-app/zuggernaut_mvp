@@ -3,7 +3,11 @@
 const { discoverGtmProviderIdentifiers } = require('./googleTagManagerClient');
 const { discoverGoogleAdsProviderIdentifiers } = require('./googleAdsAccountClient');
 const { discoverGbpProviderIdentifiers } = require('./gbpProfileReadClient');
-const { buildDiscoveryResult } = require('./providerDiscoveryResult');
+const {
+  buildDiscoveryResult,
+  buildSelectionRequiredResult,
+  defaultSelectionReason,
+} = require('./providerDiscoveryResult');
 
 /**
  * Mock OAuth discovery — used when GOOGLE_OAUTH_MOCK=true.
@@ -12,15 +16,26 @@ const { buildDiscoveryResult } = require('./providerDiscoveryResult');
  */
 function mockOAuthDiscoveryResult(provider) {
   if (provider === 'gtm') {
-    return buildDiscoveryResult('gtm', {
-      accountId: 'mock-account',
-      containerId: 'mock-container',
-      workspaceId: 'mock-workspace',
-      publicContainerId: 'GTM-MOCK',
-    });
+    return buildSelectionRequiredResult(
+      'gtm',
+      {
+        discoveredAccountCount: 1,
+        discoveredContainerCount: 1,
+        discoveredWorkspaceCount: 1,
+      },
+      defaultSelectionReason('gtm')
+    );
   }
   if (provider === 'google_ads') {
-    return buildDiscoveryResult('google_ads', { customerId: 'mock-customer-id' });
+    return buildSelectionRequiredResult(
+      'google_ads',
+      {
+        accessibleCustomerIds: ['1234567890', '9876543210'],
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+      },
+      defaultSelectionReason('google_ads')
+    );
   }
   if (provider === 'gbp') {
     return buildDiscoveryResult('gbp', {

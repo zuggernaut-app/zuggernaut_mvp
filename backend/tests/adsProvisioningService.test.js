@@ -6,10 +6,7 @@ const {
   AdsProvisioningError,
   provisioningArtifactIdempotencyKey,
 } = require('../services/capabilities/adsProvisioningService');
-const {
-  listAccessibleCustomers,
-  createCustomerClient,
-} = require('../services/integrations/googleAdsAccountClient');
+const { createCustomerClient } = require('../services/integrations/googleAdsAccountClient');
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { createLogger } = require('../lib/observability/logger');
 const { DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER } = require('../constants/provisioning');
@@ -19,7 +16,6 @@ jest.mock('../services/integrations/googleAdsAccountClient', () => {
   const actual = jest.requireActual('../services/integrations/googleAdsAccountClient');
   return {
     ...actual,
-    listAccessibleCustomers: jest.fn(),
     createCustomerClient: jest.fn(),
   };
 });
@@ -37,7 +33,6 @@ describe('adsProvisioningService', () => {
     process.env.GOOGLE_ADS_API_MOCK = 'true';
     process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'test-dev-token';
     process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '9999999999';
-    listAccessibleCustomers.mockResolvedValue(['1234567890', '9876543210']);
     createCustomerClient.mockResolvedValue({
       customerId: 'mock-provisioned-customer',
       resourceName: 'customers/mock-provisioned-customer',
@@ -70,7 +65,10 @@ describe('adsProvisioningService', () => {
       refreshTokenEnc: encryptToken('ads-refresh'),
       tokenExpiryAt: new Date(Date.now() + 3600_000),
       scopes: ['https://www.googleapis.com/auth/adwords'],
-      providerIdentifiers: { discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
+      providerIdentifiers: overrides.providerIdentifiers ?? {
+        discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+        accessibleCustomerIds: [],
+      },
     });
 
     const request = await IntegrationProvisioningRequest.create({
@@ -104,7 +102,12 @@ describe('adsProvisioningService', () => {
   });
 
   it('selects an existing accessible customer without MCC create', async () => {
-    const { bc, run, request } = await seedApprovedProvisioning();
+    const { bc, run, request } = await seedApprovedProvisioning({
+      providerIdentifiers: {
+        accessibleCustomerIds: ['1234567890', '9876543210'],
+        discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+      },
+    });
 
     const result = await provisionGoogleAdsCustomer({
       businessId: bc.businessId,
@@ -124,12 +127,13 @@ describe('adsProvisioningService', () => {
       artifactType: 'ads_customer',
     }).lean();
     expect(artifact.externalId).toBe('1234567890');
-    expect(artifact.metadata.provisioningSource).toBe('existing_accessible_customer');
+    expect(artifact.metadata.provisioningSource).toBe('discovery_selected_customer');
   });
 
   it('creates a customer via MCC when none are accessible', async () => {
-    listAccessibleCustomers.mockResolvedValueOnce([]);
-    const { bc, run, request } = await seedApprovedProvisioning();
+    const { bc, run, request } = await seedApprovedProvisioning({
+      providerIdentifiers: { accessibleCustomerIds: [], discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
+    });
 
     const result = await provisionGoogleAdsCustomer({
       businessId: bc.businessId,
@@ -149,8 +153,9 @@ describe('adsProvisioningService', () => {
   });
 
   it('reuses artifacts on retry without duplicate create calls', async () => {
-    listAccessibleCustomers.mockResolvedValueOnce([]);
-    const { bc, run, request } = await seedApprovedProvisioning();
+    const { bc, run, request } = await seedApprovedProvisioning({
+      providerIdentifiers: { accessibleCustomerIds: [], discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
+    });
 
     await provisionGoogleAdsCustomer({
       businessId: bc.businessId,
@@ -160,7 +165,6 @@ describe('adsProvisioningService', () => {
     });
 
     createCustomerClient.mockClear();
-    listAccessibleCustomers.mockClear();
 
     const retryRequest = await mongoose.model('IntegrationProvisioningRequest').create({
       businessId: bc.businessId,
@@ -180,7 +184,6 @@ describe('adsProvisioningService', () => {
     });
 
     expect(createCustomerClient).not.toHaveBeenCalled();
-    expect(listAccessibleCustomers).not.toHaveBeenCalled();
 
     const count = await mongoose.model('IntegrationArtifact').countDocuments({
       businessId: bc.businessId,
@@ -191,7 +194,6 @@ describe('adsProvisioningService', () => {
   });
 
   it('marks provisioning request failed on API error', async () => {
-    listAccessibleCustomers.mockResolvedValueOnce([]);
     createCustomerClient.mockRejectedValueOnce(
       Object.assign(new Error('MCC permission denied'), { code: 'ADS_MCC_PERMISSION_DENIED' })
     );

@@ -31,6 +31,7 @@ describe('integrationConnectionService', () => {
     expect(s.ready).toBe(false);
     expect(s.reason).toBe(CONNECTION_REASON.MISSING_CONNECTION);
     expect(s.nextAction).toBe('connect_gtm');
+    expect(s.scopesMissing).toEqual([]);
     expect(s.identifiersMissing).toEqual(['accountId', 'containerId', 'workspaceId']);
   });
 

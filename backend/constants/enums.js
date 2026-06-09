@@ -13,6 +13,8 @@ const CONNECTION_HEALTH = Object.freeze([
   'pending',
   /** OAuth connected but provider-native resources (account/container/customer) not yet discovered or provisioned. */
   'provisioning_required',
+  /** OAuth connected and resources discovered, but user must explicitly select Ads customer or GTM hierarchy. */
+  'selection_required',
 ]);
 
 /** MongoDB-visible setup run summary (Temporal holds execution truth; this feeds API/dashboard). */
@@ -72,14 +74,29 @@ const ARTIFACT_TYPES = Object.freeze([
   'gtm_tag',
   'gtm_trigger',
   'gtm_variable',
+  'gtm_builtin_variable',
+  'gtm_container_version',
+  'gtm_container_publish',
   'ads_customer',
   'ads_manager_link',
   'ads_campaign',
   'ads_ad_group',
   'ads_ad',
+  'ads_keyword',
   'ads_conversion_action',
   'ads_campaign_budget',
   'ads_conversion_link',
+  'ads_campaign_criterion',
+  'ads_asset_sitelink',
+  'ads_asset_callout',
+  'ads_asset_call',
+  'ads_remarketing_list',
+  'ads_negative_keyword_list',
+  'ads_offline_conversion_import',
+  /** Dev integrations: explicit user-selected Ads customer (audit metadata on connection). */
+  'ads_selected_customer',
+  /** Dev integrations: explicit user-selected GTM workspace hierarchy. */
+  'gtm_selected_workspace',
   'other',
 ]);
 
@@ -123,12 +140,33 @@ const PROVISIONING_REASON_CODES = Object.freeze([
   'GBP_NO_LOCATIONS',
 ]);
 
+/** Stable reason codes when OAuth succeeded but explicit resource selection is required. */
+const SELECTION_REASON_CODES = Object.freeze([
+  'ADS_CUSTOMER_SELECTION_REQUIRED',
+  'GTM_RESOURCE_SELECTION_REQUIRED',
+]);
+
 /** Resource types a user may approve for automatic creation/linking. */
 const PROVISIONING_RESOURCE_TYPES = Object.freeze([
   'gtm_account',
   'gtm_container',
   'gtm_workspace',
   'google_ads_customer',
+]);
+
+/** Dev-only creation diagnostic run modes (Phase 2). */
+const CREATION_DIAGNOSTIC_RUN_MODES = Object.freeze([
+  'validate_only',
+  'create_paused',
+  'create_and_publish',
+]);
+
+/** Cleanup lifecycle for resources created during dev creation diagnostics. */
+const DIAGNOSTIC_ARTIFACT_CLEANUP_STATUS = Object.freeze([
+  'pending',
+  'retained',
+  'cleanup_requested',
+  'cleaned_up',
 ]);
 
 module.exports = {
@@ -143,5 +181,8 @@ module.exports = {
   PROVISIONING_REQUEST_STATUS,
   PROVISIONING_ACTIVE_STATUSES,
   PROVISIONING_REASON_CODES,
+  SELECTION_REASON_CODES,
   PROVISIONING_RESOURCE_TYPES,
+  CREATION_DIAGNOSTIC_RUN_MODES,
+  DIAGNOSTIC_ARTIFACT_CLEANUP_STATUS,
 };

@@ -30,7 +30,7 @@ describe('provider discovery', () => {
   });
 
   describe('GTM', () => {
-    it('discovers account/container/workspace and marks connected', async () => {
+    it('requires explicit GTM selection when hierarchy exists', async () => {
       axios.get.mockImplementation((url) => {
         if (url.endsWith('/accounts')) {
           return Promise.resolve({ status: 200, data: { account: [{ accountId: '100', name: 'Main' }] } });
@@ -54,14 +54,12 @@ describe('provider discovery', () => {
 
       const result = await discoverGtmProviderIdentifiers('token');
 
-      expect(result.connectionHealth).toBe('connected');
-      expect(result.reason).toBeNull();
-      expect(result.providerIdentifiers).toEqual({
-        accountId: '100',
-        containerId: '200',
-        workspaceId: '3',
-        publicContainerId: 'GTM-ABC',
-      });
+      expect(result.connectionHealth).toBe('selection_required');
+      expect(result.reason).toBe('GTM_RESOURCE_SELECTION_REQUIRED');
+      expect(result.providerIdentifiers.discoveredAccountCount).toBe(1);
+      expect(result.providerIdentifiers.discoveredContainerCount).toBe(1);
+      expect(result.providerIdentifiers.discoveredWorkspaceCount).toBe(1);
+      expect(result.providerIdentifiers.accountId).toBeUndefined();
     });
 
     it('returns provisioning_required when no GTM hierarchy exists', async () => {
@@ -75,7 +73,22 @@ describe('provider discovery', () => {
   });
 
   describe('Google Ads', () => {
-    it('persists customerId when accessible customers exist', async () => {
+    it('listAccessibleCustomers omits login-customer-id header', async () => {
+      process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '346-219-8684';
+      axios.get.mockResolvedValue({
+        status: 200,
+        data: { resourceNames: ['customers/1234567890'] },
+      });
+
+      await discoverGoogleAdsProviderIdentifiers('token');
+
+      expect(axios.get).toHaveBeenCalled();
+      const [, config] = axios.get.mock.calls[0];
+      expect(config.headers['login-customer-id']).toBeUndefined();
+      expect(config.headers['developer-token']).toBe('test-dev-token');
+    });
+
+    it('requires explicit customer selection when accessible customers exist', async () => {
       axios.get.mockResolvedValue({
         status: 200,
         data: { resourceNames: ['customers/1234567890', 'customers/9876543210'] },
@@ -83,8 +96,9 @@ describe('provider discovery', () => {
 
       const result = await discoverGoogleAdsProviderIdentifiers('token');
 
-      expect(result.connectionHealth).toBe('connected');
-      expect(result.providerIdentifiers.customerId).toBe('1234567890');
+      expect(result.connectionHealth).toBe('selection_required');
+      expect(result.reason).toBe('ADS_CUSTOMER_SELECTION_REQUIRED');
+      expect(result.providerIdentifiers.customerId).toBeUndefined();
       expect(result.providerIdentifiers.accessibleCustomerIds).toEqual(['1234567890', '9876543210']);
     });
 
@@ -95,6 +109,25 @@ describe('provider discovery', () => {
 
       expect(result.connectionHealth).toBe('provisioning_required');
       expect(result.reason).toBe('ADS_PROVISIONING_REQUIRED');
+    });
+
+    it('surfaces structured Google API errors on discovery failure', async () => {
+      axios.get.mockResolvedValue({
+        status: 403,
+        data: { error: { status: 'PERMISSION_DENIED', message: 'Developer token is not allowed.' } },
+      });
+
+      const result = await discoverGoogleAdsProviderIdentifiers('token');
+
+      expect(result.connectionHealth).toBe('provisioning_required');
+      expect(result.providerIdentifiers.discoveryError).toBe('GOOGLE_ADS_LIST_CUSTOMERS_FAILED');
+      expect(result.providerIdentifiers.googleErrorSummary).toEqual(
+        expect.objectContaining({
+          statusCode: 403,
+          googleStatus: 'PERMISSION_DENIED',
+          action: 'listAccessibleCustomers',
+        })
+      );
     });
   });
 
@@ -210,9 +243,9 @@ describe('provider discovery', () => {
 
       const result = await discoverProviderConnection('gtm', 'mock-token');
 
-      expect(result.connectionHealth).toBe('connected');
-      expect(result.providerIdentifiers.accountId).toBe('mock-account');
-      expect(result.providerIdentifiers.workspaceId).toBe('mock-workspace');
+      expect(result.connectionHealth).toBe('selection_required');
+      expect(result.reason).toBe('GTM_RESOURCE_SELECTION_REQUIRED');
+      expect(result.providerIdentifiers.accountId).toBeUndefined();
     });
   });
 });

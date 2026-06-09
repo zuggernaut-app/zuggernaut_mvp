@@ -134,6 +134,7 @@ router.get('/google/callback', async (req, res) => {
     const redirect = buildFrontendRedirectUrl({
       provider: payload.provider,
       outcome: 'connected',
+      returnPath: payload.returnPath,
     });
     return res.redirect(302, redirect);
   } catch (err) {
@@ -142,6 +143,7 @@ router.get('/google/callback', async (req, res) => {
       provider: payload.provider,
       outcome: 'error',
       reason,
+      returnPath: payload.returnPath,
     });
     return res.redirect(302, redirect);
   }

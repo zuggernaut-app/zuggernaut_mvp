@@ -122,9 +122,16 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
         (!errPayload ||
           errPayload.message === 'Internal Server Error' ||
           typeof errPayload.message !== 'string'))
+    const looksLikeExpressUnmatchedRoute =
+      res.status === 404 &&
+      typeof msg === 'string' &&
+      /Cannot (?:GET|POST|PUT|PATCH|DELETE) /i.test(msg)
     if (looksLikeProxyOrDown && import.meta.env.DEV) {
       msg =
         'API server unreachable or proxy error (start Express on port 3000 — see vite.config.ts `server.proxy`).'
+    } else if (looksLikeExpressUnmatchedRoute && import.meta.env.DEV) {
+      msg =
+        'API route not found on the running backend. Restart Express (`npm start` in `backend/`) so new routes load, then retry.'
     }
 
     throw new ApiError(res.status, msg, code, errPayload)

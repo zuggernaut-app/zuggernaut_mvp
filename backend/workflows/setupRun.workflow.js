@@ -18,7 +18,10 @@ const {
 const {
   checkGbpPreconditionsActivity,
   checkGtmPreconditionsActivity,
-  checkGoogleAdsPreconditionsActivity,
+  checkGoogleAdsConnectionActivity,
+  discoverGoogleAdsCustomersActivity,
+  ensureGoogleAdsProvisioningApprovalActivity,
+  assertGoogleAdsSetupReadyActivity,
   checkProvisioningApprovalActivity,
 } = preconditionActivities;
 
@@ -71,33 +74,41 @@ async function ensureProviderReady(load, provider) {
     return { terminal: T.MANUAL_REVIEW, pre, approval };
   }
 
-  let pre = await checkGoogleAdsPreconditionsActivity(ctx);
-  if (pre.outcome === 'ok') {
-    return null;
-  }
-  if (pre.outcome !== 'ads_provisioning_required') {
-    return { terminal: pre.outcome, pre };
+  const conn = await checkGoogleAdsConnectionActivity(ctx);
+  if (conn.outcome !== 'ok') {
+    return { terminal: conn.outcome, pre: conn };
   }
 
-  const approval = await checkProvisioningApprovalActivity({ ...ctx, provider: 'google_ads' });
+  let discovery = await discoverGoogleAdsCustomersActivity(ctx);
+  if (discovery.outcome === 'manual_review') {
+    return { terminal: T.MANUAL_REVIEW, pre: discovery };
+  }
+  if (discovery.outcome === 'ok') {
+    return null;
+  }
+  if (discovery.outcome !== 'ads_provisioning_required') {
+    return { terminal: discovery.outcome, pre: discovery };
+  }
+
+  const approval = await ensureGoogleAdsProvisioningApprovalActivity(ctx);
   if (approval.outcome === 'pending_approval') {
-    return { terminal: T.ADS_PROVISIONING_REQUIRED, pre, approval };
+    return { terminal: T.ADS_PROVISIONING_REQUIRED, pre: discovery, approval };
   }
   if (approval.outcome === 'approved') {
     await provisionGoogleAdsCustomerActivity({
       ...ctx,
       provisioningRequestId: approval.provisioningRequestId,
     });
-    pre = await checkGoogleAdsPreconditionsActivity(ctx);
-    if (pre.outcome !== 'ok') {
-      return { terminal: T.MANUAL_REVIEW, pre, approval };
+    const readiness = await assertGoogleAdsSetupReadyActivity(ctx);
+    if (readiness.outcome !== 'ok') {
+      return { terminal: T.MANUAL_REVIEW, pre: readiness, approval };
     }
     return null;
   }
   if (approval.outcome === 'ready') {
     return null;
   }
-  return { terminal: T.MANUAL_REVIEW, pre, approval };
+  return { terminal: T.MANUAL_REVIEW, pre: discovery, approval };
 }
 
 /**

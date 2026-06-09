@@ -5,7 +5,11 @@ const { withProviderRateLimit } = require('../../lib/providerRateLimit');
 const { getFreshGoogleAccessToken } = require('./googleTokenService');
 
 const GTM_API_BASE = 'https://tagmanager.googleapis.com/tagmanager/v2';
-const { buildDiscoveryResult } = require('./providerDiscoveryResult');
+const {
+  buildDiscoveryResult,
+  buildSelectionRequiredResult,
+  defaultSelectionReason,
+} = require('./providerDiscoveryResult');
 
 class GtmApiError extends Error {
   constructor(message, code = 'GTM_API_ERROR') {
@@ -85,15 +89,21 @@ async function createGtmWorkspaceResource(ctx) {
  * @param {string} ctx.accessToken
  * @param {string} ctx.setupRunId
  */
-async function createAndPublishContainerVersion(ctx) {
-  const { gtmIds, accessToken, setupRunId } = ctx;
+/**
+ * @param {object} ctx
+ * @param {object} ctx.gtmIds
+ * @param {string} ctx.accessToken
+ * @param {string} ctx.versionName
+ */
+async function createGtmContainerVersion(ctx) {
+  const { gtmIds, accessToken, versionName } = ctx;
   const base = workspaceBasePath(gtmIds);
 
   if (process.env.GTM_API_MOCK === 'true') {
-    const versionPath = `${base}/versions/zug-${setupRunId}`;
+    const versionPath = `${base}/versions/${String(versionName).replace(/\s+/g, '-').toLowerCase()}`;
     return {
       versionPath,
-      publishedVersionPath: versionPath,
+      containerVersionId: 'mock-version',
       source: 'gtm_api_mock',
     };
   }
@@ -108,7 +118,7 @@ async function createAndPublishContainerVersion(ctx) {
   const createUrl = `${GTM_API_BASE}/${base}:create_version`;
   const createRes = await axios.post(
     createUrl,
-    { name: `Zuggernaut setup ${setupRunId}`, notes: 'Published by Zuggernaut V1 GTM conversion setup' },
+    { name: versionName, notes: 'Created by Zuggernaut dev creation diagnostics' },
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -134,8 +144,38 @@ async function createAndPublishContainerVersion(ctx) {
     throw new GtmApiError('GTM container version create returned no version id', 'GTM_VERSION_INVALID_RESPONSE');
   }
 
-  const publishUrl = `${GTM_API_BASE}/accounts/${gtmIds.accountId}/containers/${gtmIds.containerId}/versions/${containerVersionId}:publish`;
+  return {
+    versionPath,
+    containerVersionId: String(containerVersionId),
+    source: 'gtm_api',
+  };
+}
 
+/**
+ * @param {object} ctx
+ * @param {object} ctx.gtmIds
+ * @param {string} ctx.accessToken
+ * @param {string} ctx.containerVersionId
+ */
+async function publishGtmContainerVersion(ctx) {
+  const { gtmIds, accessToken, containerVersionId } = ctx;
+
+  if (process.env.GTM_API_MOCK === 'true') {
+    const versionPath = `accounts/${gtmIds.accountId}/containers/${gtmIds.containerId}/versions/${containerVersionId}`;
+    return {
+      publishedVersionPath: versionPath,
+      source: 'gtm_api_mock',
+    };
+  }
+
+  if (process.env.GTM_API_ENABLED !== 'true') {
+    throw new GtmApiError(
+      'GTM API is not enabled (set GTM_API_ENABLED=true after configuring credentials).',
+      'GTM_API_NOT_ENABLED'
+    );
+  }
+
+  const publishUrl = `${GTM_API_BASE}/accounts/${gtmIds.accountId}/containers/${gtmIds.containerId}/versions/${containerVersionId}:publish`;
   const publishRes = await axios.post(
     publishUrl,
     {},
@@ -150,12 +190,75 @@ async function createAndPublishContainerVersion(ctx) {
     throw new GtmApiError(`GTM container version publish failed (${publishRes.status})`, 'GTM_PUBLISH_FAILED');
   }
 
-  const publishedPath =
-    publishRes.data?.containerVersion?.path ?? versionPath;
+  const publishedPath = publishRes.data?.containerVersion?.path ?? null;
+  if (!publishedPath) {
+    throw new GtmApiError('GTM container version publish returned no version path', 'GTM_PUBLISH_INVALID_RESPONSE');
+  }
 
   return {
-    versionPath,
     publishedVersionPath: publishedPath,
+    source: 'gtm_api',
+  };
+}
+
+/**
+ * @param {object} ctx
+ * @param {object} ctx.gtmIds
+ * @param {string} ctx.accessToken
+ * @param {string} ctx.setupRunId
+ */
+async function createAndPublishContainerVersion(ctx) {
+  const { gtmIds, accessToken, setupRunId } = ctx;
+  const created = await createGtmContainerVersion({
+    gtmIds,
+    accessToken,
+    versionName: `Zuggernaut setup ${setupRunId}`,
+  });
+  const published = await publishGtmContainerVersion({
+    gtmIds,
+    accessToken,
+    containerVersionId: created.containerVersionId,
+  });
+
+  return {
+    versionPath: created.versionPath,
+    publishedVersionPath: published.publishedVersionPath,
+    source: created.source,
+  };
+}
+
+/**
+ * @param {string} accessToken
+ * @param {object} gtmIds
+ * @param {string[]} types
+ */
+async function enableGtmBuiltinVariables(accessToken, gtmIds, types) {
+  const base = workspaceBasePath(gtmIds);
+  const enabled = [];
+
+  if (process.env.GTM_API_MOCK === 'true') {
+    return {
+      enabledTypes: types,
+      source: 'gtm_api_mock',
+    };
+  }
+
+  if (process.env.GTM_API_ENABLED !== 'true') {
+    throw new GtmApiError(
+      'GTM API is not enabled (set GTM_API_ENABLED=true after configuring credentials).',
+      'GTM_API_NOT_ENABLED'
+    );
+  }
+
+  for (const type of types) {
+    const data = await gtmPost(accessToken, `${base}/built_in_variables`, { type });
+    if (data?.type) {
+      enabled.push(String(data.type));
+    }
+  }
+
+  return {
+    enabledTypes: enabled,
     source: 'gtm_api',
   };
 }
@@ -466,26 +569,49 @@ async function discoverGtmProviderIdentifiers(accessToken) {
       .filter((a) => a.accountId)
       .sort((a, b) => String(a.accountId).localeCompare(String(b.accountId), undefined, { numeric: true }));
 
-    for (const account of sortedAccounts) {
-      const containers = await listGtmContainers(accessToken, account.accountId);
-      const container = selectGtmContainer(containers);
-      if (!container) continue;
-
-      const workspaces = await listGtmWorkspaces(accessToken, account.accountId, container.containerId);
-      const workspace = selectGtmWorkspace(workspaces);
-      if (!workspace) continue;
-
+    if (sortedAccounts.length === 0) {
       return buildDiscoveryResult('gtm', {
-        accountId: String(account.accountId),
-        containerId: String(container.containerId),
-        workspaceId: String(workspace.workspaceId),
-        ...(container.publicId ? { publicContainerId: String(container.publicId) } : {}),
+        discoveryReason: 'GTM_PROVISIONING_REQUIRED',
       });
     }
 
-    return buildDiscoveryResult('gtm', {
-      discoveryReason: 'GTM_PROVISIONING_REQUIRED',
-    });
+    let containerCount = 0;
+    let workspaceCount = 0;
+
+    for (const account of sortedAccounts) {
+      const containers = await listGtmContainers(accessToken, account.accountId);
+      const webContainers = containers.filter(
+        (c) => Array.isArray(c.usageContext) && c.usageContext.includes('web') && c.containerId
+      );
+      const pool = webContainers.length > 0 ? webContainers : containers.filter((c) => c.containerId);
+      containerCount += pool.length;
+
+      for (const container of pool) {
+        const workspaces = await listGtmWorkspaces(
+          accessToken,
+          account.accountId,
+          container.containerId
+        );
+        workspaceCount += workspaces.filter((w) => w.workspaceId).length;
+      }
+    }
+
+    if (containerCount === 0 || workspaceCount === 0) {
+      return buildDiscoveryResult('gtm', {
+        discoveryReason: 'GTM_PROVISIONING_REQUIRED',
+      });
+    }
+
+    return buildSelectionRequiredResult(
+      'gtm',
+      {
+        discoveredAccountCount: sortedAccounts.length,
+        discoveredContainerCount: containerCount,
+        discoveredWorkspaceCount: workspaceCount,
+        discoveryRecordedAt: new Date().toISOString(),
+      },
+      defaultSelectionReason('gtm')
+    );
   } catch (err) {
     return buildDiscoveryResult('gtm', {
       discoveryError: err.code ?? 'GTM_DISCOVERY_FAILED',
@@ -519,7 +645,11 @@ module.exports = {
   discoverGtmProviderIdentifiers: (accessToken) =>
     withProviderRateLimit('gtm', () => discoverGtmProviderIdentifiers(accessToken)),
   createGtmWorkspaceResource: (ctx) => withProviderRateLimit('gtm', () => createGtmWorkspaceResource(ctx)),
+  createGtmContainerVersion: (ctx) => withProviderRateLimit('gtm', () => createGtmContainerVersion(ctx)),
+  publishGtmContainerVersion: (ctx) => withProviderRateLimit('gtm', () => publishGtmContainerVersion(ctx)),
   createAndPublishContainerVersion: (ctx) =>
     withProviderRateLimit('gtm', () => createAndPublishContainerVersion(ctx)),
+  enableGtmBuiltinVariables: (accessToken, gtmIds, types) =>
+    withProviderRateLimit('gtm', () => enableGtmBuiltinVariables(accessToken, gtmIds, types)),
   getGtmAccessToken,
 };

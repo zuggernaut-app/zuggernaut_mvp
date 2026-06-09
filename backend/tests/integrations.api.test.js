@@ -94,7 +94,8 @@ describe('integrations API', () => {
     });
 
     const res = await agent.get('/api/v1/integrations/status').query({ businessId: bid }).expect(200);
-    expect(res.body.connections.gtm.ready).toBe(true);
+    expect(res.body.connections.gtm.ready).toBe(false);
+    expect(res.body.connections.gtm.reason).toBe('selection_required');
     expect(JSON.stringify(res.body)).not.toMatch(/accessToken|refreshToken|mock-access/i);
 
     const { agent: otherAgent } = await registerAgent(app, 'int-other@test.com');

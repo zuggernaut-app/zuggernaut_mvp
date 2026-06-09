@@ -77,7 +77,9 @@ async function getFreshGoogleAccessToken({ businessId, provider }) {
   }
 
   const oauthHealthy =
-    row.connectionHealth === 'connected' || row.connectionHealth === 'provisioning_required';
+    row.connectionHealth === 'connected' ||
+    row.connectionHealth === 'provisioning_required' ||
+    row.connectionHealth === 'selection_required';
   if (!oauthHealthy) {
     const err = new Error(`Provider ${provider} is not connected`);
     err.code = 'NOT_CONNECTED';

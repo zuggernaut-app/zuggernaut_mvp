@@ -5,17 +5,28 @@ const crypto = require('crypto');
 const ALGO = 'aes-256-gcm';
 const IV_BYTES = 12;
 
+function verifyTokenEncryptionConfigured() {
+  if (process.env.NODE_ENV === 'test') return;
+  getEncryptionKey();
+}
+
 function getEncryptionKey() {
   const raw = process.env.TOKEN_ENCRYPTION_KEY?.trim();
   if (!raw) {
-    throw new Error('TOKEN_ENCRYPTION_KEY must be set');
+    throw new Error(
+      'TOKEN_ENCRYPTION_KEY must be set in backend/.env (64 hex chars or base64-encoded 32 bytes). ' +
+        'OAuth integrations encrypt refresh tokens at rest — required even when GOOGLE_OAUTH_MOCK=true.'
+    );
   }
   if (/^[0-9a-fA-F]{64}$/.test(raw)) {
     return Buffer.from(raw, 'hex');
   }
   const buf = Buffer.from(raw, 'base64');
   if (buf.length !== 32) {
-    throw new Error('TOKEN_ENCRYPTION_KEY must be 32 bytes (64 hex chars or base64-encoded 32 bytes)');
+    throw new Error(
+      'TOKEN_ENCRYPTION_KEY must be 32 bytes (64 hex chars or base64-encoded 32 bytes). ' +
+        'Generate hex: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
   }
   return buf;
 }
@@ -57,4 +68,4 @@ function decryptToken(encoded) {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
-module.exports = { encryptToken, decryptToken, getEncryptionKey };
+module.exports = { encryptToken, decryptToken, getEncryptionKey, verifyTokenEncryptionConfigured };

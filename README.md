@@ -22,7 +22,7 @@ See `mvp_implementation_plan.md` for phased implementation details. Quick pre-pu
 
 ```powershell
 cd backend
-# Create `backend/.env` with PORT, MONGODB_URI, etc. (see plan; do not commit secrets)
+Copy-Item .env.example .env   # then edit secrets — see mode matrix in .env.example
 npm install
 npm start
 ```
@@ -77,7 +77,7 @@ Then restart **exactly one** `npm run temporal:worker` process before creating n
 | **Namespace** | `default` |
 | **Task queue** (V1 scaffold) | `setup-run` — override via `TEMPORAL_TASK_QUEUE` in `backend/.env` |
 
-Optional `backend/.env` keys:
+Optional `backend/.env` keys (defaults shown — full list in [`backend/.env.example`](backend/.env.example)):
 
 - `TEMPORAL_ADDRESS` (default `127.0.0.1:7233`)
 - `TEMPORAL_NAMESPACE` (default `default`)
@@ -92,16 +92,65 @@ Optional `backend/.env` keys:
 **Dev worker hygiene**
 
 - Run `npm run temporal:worker` from **`backend/`** only (where `backend/package.json` lives).
-- Use **one** worker process per `TEMPORAL_TASK_QUEUE` so you never poll with mismatched bundles.
+- Use **exactly one** worker process per `TEMPORAL_TASK_QUEUE` — multiple workers on the same queue with different code bundles cause stuck or flaky runs.
+- On startup the worker logs `Temporal worker ready — polling for tasks` with `taskQueue`, `registeredActivities`, and operational rules.
 - Workflow bundles are built with **`webpack.cache` disabled** in `temporal-worker.js` so local workflow edits always apply on restart.
+- Worker requires `TOKEN_ENCRYPTION_KEY` at boot (OAuth activities decrypt stored tokens).
 
 **Resetting workflow history (phase 1)**  
 Temporal history is immutable. When you rename activities/workflows, use **`npm run temporal:reset:dev`** then **`npm run temporal:up`** (see above) before verifying new executions.
 
 ## Environment
 
-- **Backend:** `backend/.env` — never commit secrets. Root `.gitignore` ignores `.env`.
-- **Frontend:** `frontend/.env` — use `VITE_*` prefixes for variables exposed to the client.
+- **Backend:** copy [`backend/.env.example`](backend/.env.example) to `backend/.env` — never commit secrets. Root `.gitignore` ignores `.env`.
+- **Frontend:** `frontend/.env` — use `VITE_*` prefixes for variables exposed to the client (see [`frontend/.env.example`](frontend/.env.example)).
+
+### Required backend variables (summary)
+
+| Area | Variables | Notes |
+|------|-----------|--------|
+| Core | `MONGODB_URI`, `JWT_SECRET` (32+ chars), `TOKEN_ENCRYPTION_KEY` | API fails at startup if JWT or encryption key missing |
+| SPA / CORS | `FRONTEND_ORIGIN` | Required when SPA and API are on different origins |
+| Temporal | `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_TASK_QUEUE` | Same values on API and worker |
+| Mock mode | `GOOGLE_OAUTH_MOCK=true`, `GTM_API_MOCK=true`, `GOOGLE_ADS_API_MOCK=true`, `GBP_API_MOCK=true` | See mode matrix in `.env.example` |
+| Real Google | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `*_API_ENABLED=true`, Ads developer token + MCC id | Disable mock flags |
+
+Full mode matrix and optional tuning keys: [`backend/.env.example`](backend/.env.example). Manual E2E env assumptions: [`backend/tests/MANUAL_E2E_CHECKLIST.md`](backend/tests/MANUAL_E2E_CHECKLIST.md).
+
+## Deployment topology (V1)
+
+| Component | Role | MVP hosting |
+|-----------|------|-------------|
+| **Frontend SPA** | React + Vite | Firebase Hosting |
+| **Backend API** | Express (`npm start`) | Railway (separate service) |
+| **Temporal worker** | `npm run temporal:worker` — executes setup workflows | Railway (separate service from API) |
+| **Temporal server** | Workflow engine + UI | Temporal Cloud (prod) or `docker/temporal/` (local dev) |
+| **MongoDB** | Persistence | MongoDB Atlas |
+
+**Process rule:** API and worker are separate Node processes. Both need `MONGODB_URI`, `TOKEN_ENCRYPTION_KEY`, and matching `TEMPORAL_*` / mock flags. Only the API needs `JWT_SECRET`.
+
+### Runbook: setup runs not progressing
+
+| Symptom | Where users see it | Ops checks |
+|---------|-------------------|------------|
+| Temporal unreachable at workflow start | `POST /api/v1/setup-runs` → **503** `temporal_unavailable`; run saved as `FAILED` | Temporal server up; `TEMPORAL_ADDRESS` correct; network from API to Temporal |
+| Worker down or wrong task queue | Setup stays **`RUNNING`**; progress/report pages show **stuck guidance** after ~5 min | Worker process running; logs show `Temporal worker ready — polling for tasks`; `TEMPORAL_TASK_QUEUE` matches API; exactly **one** worker per queue |
+| Worker/API Mongo mismatch | Activities fail or status never updates | Same `MONGODB_URI` on both processes |
+| Activity failures | Terminal `FAILED` or provisioning/manual-review states | Temporal UI → workflow history; Railway/Pino logs with `setupRunId` |
+
+Remediation execution tracker (phases, evidence): [`V1_REMEDIATION_EXECUTION.md`](V1_REMEDIATION_EXECUTION.md).
+
+## CI
+
+GitHub Actions [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs:
+
+- **Frontend:** lint, Vitest, typecheck, Vite build
+- **Backend:** Jest (287+ tests including orchestration config guards)
+- **Playwright smoke:** onboarding register flow + setup-run start/gating (no real Temporal/Google)
+
+Local Playwright smoke: `cd frontend && npm run test:e2e:smoke`
+
+**Real Google validation (Phase 4):** deferred 2026-05-31 — operator runs [`backend/tests/REAL_MODE_E2E_CHECKLIST.md`](backend/tests/REAL_MODE_E2E_CHECKLIST.md) after `npm run verify:real-mode-env`. Remediation sign-off: [`backend/tests/evidence/RELEASE_GATE_SIGNOFF.md`](backend/tests/evidence/RELEASE_GATE_SIGNOFF.md).
 
 ## Git remote
 

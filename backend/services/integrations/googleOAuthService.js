@@ -42,18 +42,18 @@ function getFrontendRedirectBase() {
 }
 
 /**
- * @param {{ businessId: string, provider: string, userId: string }} payload
+ * @param {{ businessId: string, provider: string, userId: string, returnPath?: string }} payload
  */
-function signOAuthState({ businessId, provider, userId }) {
+function signOAuthState({ businessId, provider, userId, returnPath }) {
   const secret = process.env.JWT_SECRET;
   if (!secret || secret.length < 32) {
     throw new Error('JWT_SECRET must be set for OAuth state signing');
   }
-  return jwt.sign(
-    { purpose: OAUTH_STATE_PURPOSE, businessId, provider, userId },
-    secret,
-    { expiresIn: OAUTH_STATE_TTL_SEC, algorithm: 'HS256' }
-  );
+  const claims = { purpose: OAUTH_STATE_PURPOSE, businessId, provider, userId };
+  if (typeof returnPath === 'string' && returnPath.trim().startsWith('/')) {
+    claims.returnPath = returnPath.trim();
+  }
+  return jwt.sign(claims, secret, { expiresIn: OAUTH_STATE_TTL_SEC, algorithm: 'HS256' });
 }
 
 /**
@@ -74,22 +74,26 @@ function verifyOAuthState(state) {
     ) {
       return null;
     }
-    return payload;
+    const returnPath =
+      typeof payload.returnPath === 'string' && payload.returnPath.startsWith('/')
+        ? payload.returnPath
+        : undefined;
+    return { ...payload, returnPath };
   } catch {
     return null;
   }
 }
 
 /**
- * @param {{ businessId: string, provider: string, userId: string }} input
+ * @param {{ businessId: string, provider: string, userId: string, returnPath?: string }} input
  */
 function buildGoogleConnectUrl(input) {
-  const { businessId, provider, userId } = input;
+  const { businessId, provider, userId, returnPath } = input;
   if (!isGoogleOAuthProvider(provider)) {
     throw new Error(`Unsupported Google OAuth provider: ${provider}`);
   }
   const scopes = allScopesForProvider(provider);
-  const state = signOAuthState({ businessId, provider, userId });
+  const state = signOAuthState({ businessId, provider, userId, returnPath });
   const params = new URLSearchParams({
     client_id: getGoogleClientId(),
     redirect_uri: getOAuthRedirectUri(),
@@ -177,7 +181,11 @@ async function completeGoogleOAuthCallback(input) {
   }
 
   const tokenRes = await exchangeAuthorizationCode(code, provider);
-  const grantedScopes = parseScopeString(tokenRes.scope);
+  let grantedScopes = parseScopeString(tokenRes.scope);
+  // Google often omits `scope` on the token response even when consent succeeded.
+  if (grantedScopes.length === 0) {
+    grantedScopes = allScopesForProvider(provider);
+  }
   const scopeCheck = validateGrantedScopes(provider, grantedScopes);
   if (!scopeCheck.ok) {
     const err = new Error(`Missing required scopes: ${scopeCheck.missing.join(', ')}`);
@@ -224,11 +232,13 @@ async function completeGoogleOAuthCallback(input) {
   };
 }
 
-function buildFrontendRedirectUrl({ provider, outcome, reason }) {
+function buildFrontendRedirectUrl({ provider, outcome, reason, returnPath }) {
   const base = getFrontendRedirectBase().replace(/\/+$/, '');
+  const path =
+    typeof returnPath === 'string' && returnPath.startsWith('/') ? returnPath : '/setup';
   const params = new URLSearchParams({ integration: outcome, provider });
   if (reason) params.set('reason', reason);
-  return `${base}/setup?${params.toString()}`;
+  return `${base}${path}?${params.toString()}`;
 }
 
 module.exports = {

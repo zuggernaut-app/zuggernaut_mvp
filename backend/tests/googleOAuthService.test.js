@@ -12,6 +12,15 @@ const { validateGrantedScopes, allScopesForProvider } = require('../constants/go
 const { decryptToken } = require('../lib/crypto/tokenEncryption');
 
 describe('googleOAuthService', () => {
+  it('buildGoogleConnectUrl requests adwords scope for google_ads', () => {
+    const url = buildGoogleConnectUrl({
+      businessId: '507f1f77bcf86cd799439011',
+      provider: 'google_ads',
+      userId: '507f1f77bcf86cd799439012',
+    });
+    expect(url).toContain(encodeURIComponent('https://www.googleapis.com/auth/adwords'));
+  });
+
   it('buildGoogleConnectUrl includes client_id and state', () => {
     const url = buildGoogleConnectUrl({
       businessId: '507f1f77bcf86cd799439011',
@@ -34,6 +43,17 @@ describe('googleOAuthService', () => {
     const payload = verifyOAuthState(state);
     expect(payload?.businessId).toBe('507f1f77bcf86cd799439011');
     expect(payload?.provider).toBe('google_ads');
+  });
+
+  it('verifyOAuthState preserves returnPath for dev diagnostics', () => {
+    const state = signOAuthState({
+      businessId: '507f1f77bcf86cd799439011',
+      provider: 'google_ads',
+      userId: '507f1f77bcf86cd799439012',
+      returnPath: '/dev/integrations',
+    });
+    const payload = verifyOAuthState(state);
+    expect(payload?.returnPath).toBe('/dev/integrations');
   });
 
   it('validateGrantedScopes detects missing scopes', () => {
@@ -72,13 +92,14 @@ describe('googleOAuthService', () => {
       .select('+accessTokenEnc +refreshTokenEnc scopes connectionHealth providerIdentifiers')
       .lean();
 
-    expect(row.connectionHealth).toBe('connected');
+    expect(row.connectionHealth).toBe('selection_required');
     expect(row.scopes?.length).toBeGreaterThan(0);
     expect(row.accessTokenEnc).toBeTruthy();
     expect(row.refreshTokenEnc).toBeTruthy();
     expect(decryptToken(row.accessTokenEnc)).toBe('mock-access-token');
-    expect(row.providerIdentifiers?.containerId).toBe('mock-container');
-    expect(row.providerIdentifiers?.accountId).toBe('mock-account');
+    expect(row.providerIdentifiers?.containerId).toBeUndefined();
+    expect(row.providerIdentifiers?.accountId).toBeUndefined();
+    expect(row.providerIdentifiers?.selectionRequired).toBe(true);
   });
 
   it('parseScopeString splits scope strings', () => {

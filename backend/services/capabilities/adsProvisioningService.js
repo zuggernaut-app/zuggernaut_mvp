@@ -4,7 +4,6 @@ const mongoose = require('mongoose');
 const { DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER } = require('../../constants/provisioning');
 const { adsProvisioningIdempotencyKey } = require('../../constants/idempotency');
 const {
-  listAccessibleCustomers,
   createCustomerClient,
   getGoogleAdsLoginCustomerId,
   normalizeCustomerId,
@@ -166,23 +165,28 @@ async function provisionGoogleAdsCustomer(input) {
         'google ads customer artifact reused'
       );
     } else {
-      const accessibleCustomerIds = await listAccessibleCustomers(accessToken);
+      const conn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
+        .select('providerIdentifiers')
+        .lean();
+      const storedAccessible = Array.isArray(conn?.providerIdentifiers?.accessibleCustomerIds)
+        ? conn.providerIdentifiers.accessibleCustomerIds.map(normalizeCustomerId).filter(Boolean)
+        : [];
 
-      if (accessibleCustomerIds.length > 0) {
+      if (storedAccessible.length > 0) {
         const loginCustomerId = normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
         customerResult = {
-          customerId: accessibleCustomerIds[0],
+          customerId: storedAccessible[0],
           ...(loginCustomerId ? { loginCustomerId, managerCustomerId: loginCustomerId } : {}),
-          accessibleCustomerIds,
-          provisioningSource: 'existing_accessible_customer',
-          resourceName: `customers/${accessibleCustomerIds[0]}`,
+          accessibleCustomerIds: storedAccessible,
+          provisioningSource: 'discovery_selected_customer',
+          resourceName: `customers/${storedAccessible[0]}`,
         };
         logger?.info?.(
           { businessId: String(businessId), setupRunId: String(setupRunId), customerId: customerResult.customerId },
-          'google ads accessible customer selected'
+          'google ads customer selected from discovery result'
         );
       } else {
-        const managerCustomerId = getGoogleAdsLoginCustomerId();
+        const managerCustomerId = getGoogleAdsLoginCustomerId({ required: true });
         const descriptiveName = await resolveCustomerDisplayName(businessId, customerName);
         const created = await createCustomerClient(accessToken, managerCustomerId, { descriptiveName });
         customerResult = {

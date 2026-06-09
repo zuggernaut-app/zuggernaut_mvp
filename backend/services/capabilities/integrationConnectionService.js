@@ -25,6 +25,7 @@ const CONNECTION_REASON = Object.freeze({
   INSUFFICIENT_SCOPES: 'insufficient_scopes',
   NEEDS_REAUTH: 'needs_reauth',
   PROVISIONING_REQUIRED: 'provisioning_required',
+  SELECTION_REQUIRED: 'selection_required',
 });
 
 const REQUIRED_FOR_SETUP = Object.freeze(['gtm', 'google_ads']);
@@ -51,6 +52,15 @@ function provisioningNextAction(provider) {
 }
 
 /**
+ * @param {string} provider
+ */
+function selectionNextAction(provider) {
+  if (provider === 'google_ads') return 'select_google_ads_customer';
+  if (provider === 'gtm') return 'select_gtm_container';
+  return `select_${provider}_resource`;
+}
+
+/**
  * @param {object} base
  * @param {string} provider
  * @param {object | null | undefined} identifiers
@@ -62,6 +72,47 @@ function buildProvisioningRequiredStatus(base, provider, identifiers) {
     reason: CONNECTION_REASON.PROVISIONING_REQUIRED,
     nextAction: provisioningNextAction(provider),
     identifiersMissing: getMissingIdentifierKeys(provider, identifiers),
+  };
+}
+
+/**
+ * @param {object} base
+ * @param {string} provider
+ * @param {object | null | undefined} identifiers
+ */
+function buildSelectionRequiredStatus(base, provider, identifiers) {
+  return {
+    ...base,
+    ready: false,
+    reason: CONNECTION_REASON.SELECTION_REQUIRED,
+    nextAction: selectionNextAction(provider),
+    identifiersMissing: getMissingIdentifierKeys(provider, identifiers),
+  };
+}
+
+/**
+ * @param {object} base
+ * @param {string} provider
+ * @param {{ connectionHealth?: string | null, providerIdentifiers?: object | null }} row
+ */
+function resolveIdentifierReadinessStatus(base, provider, row) {
+  if (
+    row.connectionHealth === 'selection_required' &&
+    !hasRequiredIdentifiers(provider, row.providerIdentifiers)
+  ) {
+    return buildSelectionRequiredStatus(base, provider, row.providerIdentifiers);
+  }
+
+  if (!hasRequiredIdentifiers(provider, row.providerIdentifiers)) {
+    return buildProvisioningRequiredStatus(base, provider, row.providerIdentifiers);
+  }
+
+  return {
+    ...base,
+    ready: true,
+    reason: CONNECTION_REASON.OK,
+    nextAction: null,
+    identifiersMissing: [],
   };
 }
 
@@ -100,7 +151,7 @@ async function getConnectionStatus(businessId, provider, opts = {}) {
       connectionHealth: null,
       nextAction: `connect_${provider}`,
       scopesGranted: [],
-      scopesMissing: getGoogleProviderOAuthConfig(provider)?.requiredScopes ?? [],
+      scopesMissing: [],
       providerIdentifiers: null,
       identifiersMissing: getMissingIdentifierKeys(provider, null),
     };
@@ -129,7 +180,9 @@ async function getConnectionStatus(businessId, provider, opts = {}) {
   }
 
   const oauthHealthy =
-    row.connectionHealth === 'connected' || row.connectionHealth === 'provisioning_required';
+    row.connectionHealth === 'connected' ||
+    row.connectionHealth === 'provisioning_required' ||
+    row.connectionHealth === 'selection_required';
   if (!oauthHealthy) {
     return {
       ...base,
@@ -177,16 +230,7 @@ async function getConnectionStatus(businessId, provider, opts = {}) {
         };
       }
     }
-    if (!hasRequiredIdentifiers(provider, row.providerIdentifiers)) {
-      return buildProvisioningRequiredStatus(base, provider, row.providerIdentifiers);
-    }
-    return {
-      ...base,
-      ready: true,
-      reason: CONNECTION_REASON.OK,
-      nextAction: null,
-      identifiersMissing: emptyIdentifiers,
-    };
+    return resolveIdentifierReadinessStatus(base, provider, row);
   }
 
   if (expired) {
@@ -199,16 +243,31 @@ async function getConnectionStatus(businessId, provider, opts = {}) {
     };
   }
 
-  if (!hasRequiredIdentifiers(provider, row.providerIdentifiers)) {
-    return buildProvisioningRequiredStatus(base, provider, row.providerIdentifiers);
-  }
+  return resolveIdentifierReadinessStatus(base, provider, row);
+}
+
+/**
+ * OAuth health only — does not require provider identifiers (customer/container IDs).
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {string} provider
+ * @param {{ attemptRefresh?: boolean }} [opts]
+ */
+async function getOAuthConnectionStatus(businessId, provider, opts = {}) {
+  const status = await getConnectionStatus(businessId, provider, opts);
+  const oauthFailureReasons = new Set([
+    CONNECTION_REASON.MISSING_CONNECTION,
+    CONNECTION_REASON.NOT_CONNECTED,
+    CONNECTION_REASON.MISSING_TOKENS,
+    CONNECTION_REASON.NEEDS_REAUTH,
+    CONNECTION_REASON.INSUFFICIENT_SCOPES,
+    CONNECTION_REASON.TOKEN_EXPIRED,
+  ]);
 
   return {
-    ...base,
-    ready: true,
-    reason: CONNECTION_REASON.OK,
-    nextAction: null,
-    identifiersMissing: emptyIdentifiers,
+    ...status,
+    oauthReady: !oauthFailureReasons.has(status.reason),
+    identifiersReady: status.ready,
   };
 }
 
@@ -259,6 +318,7 @@ module.exports = {
   REQUIRED_FOR_SETUP,
   REQUIRED_PROVIDER_IDENTIFIERS,
   getConnectionStatus,
+  getOAuthConnectionStatus,
   getAllConnectionStatuses,
   getRequiredSetupConnections,
   assertConnectionReady,

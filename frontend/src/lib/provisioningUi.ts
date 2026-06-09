@@ -75,7 +75,7 @@ export function canAttemptSetup(
 ): boolean {
   if (!status) return false
   if (status.ready) return true
-  return status.reason === 'provisioning_required'
+  return status.reason === 'provisioning_required' || status.reason === 'selection_required'
 }
 
 export function requiredProvidersReadyForSetup(
@@ -86,6 +86,7 @@ export function requiredProvidersReadyForSetup(
 
 export function integrationStatusLabel(status: IntegrationConnectionStatusDto): string {
   if (status.ready) return 'Connected'
+  if (status.reason === 'selection_required') return 'Account selection needed'
   if (status.reason === 'provisioning_required') return 'Provisioning approval needed'
   if (status.reason === 'insufficient_scopes') return 'Insufficient scopes'
   if (status.reason === 'token_expired' || status.reason === 'needs_reauth') {

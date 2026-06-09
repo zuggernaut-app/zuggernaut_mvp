@@ -47,6 +47,15 @@ describe('provisioningUi', () => {
     ).toBe('Provisioning approval needed')
   })
 
+  it('labels selection_required connections', () => {
+    expect(
+      integrationStatusLabel(conn({ provider: 'google_ads', reason: 'selection_required' })),
+    ).toBe('Account selection needed')
+    expect(canAttemptSetup(conn({ provider: 'google_ads', reason: 'selection_required' }))).toBe(
+      true,
+    )
+  })
+
   it('allows setup when OAuth-connected but provisioning is required', () => {
     expect(canAttemptSetup(conn({ provider: 'gtm', reason: 'provisioning_required' }))).toBe(true)
     expect(canAttemptSetup(conn({ provider: 'gtm', ready: true, reason: 'ok' }))).toBe(true)

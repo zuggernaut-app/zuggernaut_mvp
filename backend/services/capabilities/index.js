@@ -20,6 +20,13 @@ const {
 const { runStructuralVerification } = require('./structuralVerificationService');
 const { createAdsAutoCampaign, AdsProviderPreconditionError } = require('./adsAutoCampaignService');
 const {
+  verifyGoogleAdsOAuthConnection,
+  discoverAndPersistGoogleAdsCustomers,
+  ensureGoogleAdsProvisioningApproval,
+  assertGoogleAdsSetupReady,
+  GoogleAdsSetupError,
+} = require('./googleAdsSetupService');
+const {
   loadSetupReadyConnection,
   requireSetupReadyConnection,
   SetupReadyConnectionError,
@@ -56,4 +63,9 @@ module.exports = {
   SetupReadyConnectionError,
   normalizeGtmIdentifiers,
   validateGtmIdentifiers,
+  verifyGoogleAdsOAuthConnection,
+  discoverAndPersistGoogleAdsCustomers,
+  ensureGoogleAdsProvisioningApproval,
+  assertGoogleAdsSetupReady,
+  GoogleAdsSetupError,
 };

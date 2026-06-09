@@ -37,6 +37,11 @@ const {
   ProvisioningServiceError,
   GtmProvisioningError,
   AdsProvisioningError,
+  verifyGoogleAdsOAuthConnection,
+  discoverAndPersistGoogleAdsCustomers,
+  ensureGoogleAdsProvisioningApproval,
+  assertGoogleAdsSetupReady,
+  GoogleAdsSetupError,
 } = require('../services/capabilities');
 
 async function blockSetupForMissingProviders({
@@ -316,8 +321,8 @@ async function checkGtmPreconditionsActivity(input) {
 /**
  * @param {{ setupRunId: string, businessId: string }} input
  */
-async function checkGoogleAdsPreconditionsActivity(input) {
-  const logger = createLogger({ name: 'checkGoogleAdsPreconditionsActivity' });
+async function checkGoogleAdsConnectionActivity(input) {
+  const logger = createLogger({ name: 'checkGoogleAdsConnectionActivity' });
   const { rawRun, rawBiz, setupRunId, businessId } = parseSetupActivityIds(input);
 
   await markStepRunning({
@@ -328,18 +333,339 @@ async function checkGoogleAdsPreconditionsActivity(input) {
     logger,
   });
 
-  return handleProviderProvisioningPrecheck({
+  const status = await verifyGoogleAdsOAuthConnection(businessId, { attemptRefresh: true });
+  if (status.oauthReady) {
+    await markStepSuccess({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.CHECK_GOOGLE_ADS_CONNECTION,
+      provider: 'google_ads',
+      details: {
+        reason: status.reason,
+        scopesMissing: status.scopesMissing,
+        connectionHealth: status.connectionHealth,
+      },
+      logger,
+    });
+    return {
+      outcome: 'ok',
+      provider: 'google_ads',
+      ready: status.identifiersReady,
+      reason: status.reason,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+
+  return blockSetupForMissingProviders({
     setupRunId,
     businessId,
-    rawRun,
-    rawBiz,
-    provider: 'google_ads',
     stepName: SETUP_STEP_NAMES.CHECK_GOOGLE_ADS_CONNECTION,
-    patchStatus: S.ADS_PROVISIONING_REQUIRED,
-    outcomeKey: 'ads_provisioning_required',
-    metaKey: 'googleAdsProvisioning',
+    missing: ['google_ads'],
     logger,
   });
+}
+
+/**
+ * @param {{ setupRunId: string, businessId: string }} input
+ */
+async function discoverGoogleAdsCustomersActivity(input) {
+  const logger = createLogger({ name: 'discoverGoogleAdsCustomersActivity' });
+  const { rawRun, rawBiz, setupRunId, businessId } = parseSetupActivityIds(input);
+
+  await markStepRunning({
+    setupRunId,
+    businessId,
+    stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+    provider: 'google_ads',
+    logger,
+  });
+
+  try {
+    const discovery = await discoverAndPersistGoogleAdsCustomers({ businessId, setupRunId, logger });
+
+    if (discovery.outcome === 'ok') {
+      await markStepSuccess({
+        setupRunId,
+        businessId,
+        stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+        provider: 'google_ads',
+        details: {
+          customerId: discovery.customerId,
+          accessibleCustomerCount: discovery.accessibleCustomerIds.length,
+        },
+        logger,
+      });
+      return {
+        outcome: 'ok',
+        provider: 'google_ads',
+        customerId: discovery.customerId,
+        accessibleCustomerIds: discovery.accessibleCustomerIds,
+        setupRunId: rawRun,
+        businessId: rawBiz,
+      };
+    }
+
+    await markStepSkipped({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+      provider: 'google_ads',
+      details: {
+        provisioningRequired: true,
+        accessibleCustomerCount: 0,
+      },
+      logger,
+    });
+    await patchSetupRun(
+      setupRunId,
+      {
+        status: S.ADS_PROVISIONING_REQUIRED,
+        lastErrorSummary: 'Approve google_ads provisioning to continue setup.',
+      },
+      logger
+    );
+    await mergeSetupRunMeta(
+      setupRunId,
+      {
+        googleAdsProvisioning: 'pending_approval',
+        googleAdsDiscovery: 'provisioning_required',
+      },
+      logger
+    );
+
+    return {
+      outcome: 'ads_provisioning_required',
+      provider: 'google_ads',
+      accessibleCustomerIds: [],
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  } catch (err) {
+    const msg = safeErrorMessage(err, 'Google Ads customer discovery failed');
+    const code = err instanceof GoogleAdsSetupError ? err.code : 'ADS_DISCOVERY_FAILED';
+    await markStepFailed({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+      provider: 'google_ads',
+      summary: msg,
+      details: {
+        code,
+        googleAdsError: err instanceof GoogleAdsSetupError ? err.details ?? null : null,
+      },
+      logger,
+    });
+    await patchSetupRun(
+      setupRunId,
+      { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+      logger
+    );
+    return {
+      outcome: 'manual_review',
+      provider: 'google_ads',
+      errorCode: code,
+      message: msg,
+      googleAdsError: err instanceof GoogleAdsSetupError ? err.details ?? null : null,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+}
+
+/**
+ * @param {{ setupRunId: string, businessId: string }} input
+ */
+async function ensureGoogleAdsProvisioningApprovalActivity(input) {
+  const logger = createLogger({ name: 'ensureGoogleAdsProvisioningApprovalActivity' });
+  const { rawRun, rawBiz, setupRunId, businessId } = parseSetupActivityIds(input);
+
+  await markStepRunning({
+    setupRunId,
+    businessId,
+    stepName: SETUP_STEP_NAMES.ENSURE_GOOGLE_ADS_PROVISIONING_APPROVAL,
+    provider: 'google_ads',
+    logger,
+  });
+
+  const check = await ensureGoogleAdsProvisioningApproval({ businessId, setupRunId });
+
+  if (check.outcome === 'ready') {
+    await markStepSuccess({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.ENSURE_GOOGLE_ADS_PROVISIONING_APPROVAL,
+      provider: 'google_ads',
+      details: { outcome: check.outcome },
+      logger,
+    });
+    return {
+      outcome: 'ready',
+      provider: 'google_ads',
+      provisioningRequestId: check.provisioningRequestId,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+
+  if (check.outcome === 'pending_approval') {
+    await markStepSkipped({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.ENSURE_GOOGLE_ADS_PROVISIONING_APPROVAL,
+      provider: 'google_ads',
+      details: {
+        outcome: check.outcome,
+        provisioningRequestId: check.provisioningRequestId,
+      },
+      logger,
+    });
+    await mergeSetupRunMeta(
+      setupRunId,
+      {
+        googleAdsProvisioning: 'pending_approval',
+        provisioningRequestId: check.provisioningRequestId,
+      },
+      logger
+    );
+    return {
+      outcome: 'pending_approval',
+      provider: 'google_ads',
+      provisioningRequestId: check.provisioningRequestId,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+
+  if (check.outcome === 'approved') {
+    await markStepSuccess({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.ENSURE_GOOGLE_ADS_PROVISIONING_APPROVAL,
+      provider: 'google_ads',
+      details: {
+        outcome: check.outcome,
+        provisioningRequestId: check.provisioningRequestId,
+      },
+      logger,
+    });
+    return {
+      outcome: 'approved',
+      provider: 'google_ads',
+      provisioningRequestId: check.provisioningRequestId,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+
+  const msg = `google_ads provisioning approval is not available (${check.reason ?? check.outcome}).`;
+  await markStepFailed({
+    setupRunId,
+    businessId,
+    stepName: SETUP_STEP_NAMES.ENSURE_GOOGLE_ADS_PROVISIONING_APPROVAL,
+    provider: 'google_ads',
+    summary: msg,
+    details: {
+      outcome: check.outcome,
+      provisioningRequestId: check.provisioningRequestId,
+    },
+    logger,
+  });
+  await patchSetupRun(
+    setupRunId,
+    { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+    logger
+  );
+
+  return {
+    outcome: 'manual_review',
+    provider: 'google_ads',
+    provisioningRequestId: check.provisioningRequestId,
+    reason: check.outcome,
+    setupRunId: rawRun,
+    businessId: rawBiz,
+  };
+}
+
+/**
+ * DB-read-only check that persisted Google Ads identifiers are ready after provisioning.
+ * Does not call listAccessibleCustomers.
+ *
+ * @param {{ setupRunId: string, businessId: string }} input
+ */
+async function assertGoogleAdsSetupReadyActivity(input) {
+  const logger = createLogger({ name: 'assertGoogleAdsSetupReadyActivity' });
+  const { rawRun, rawBiz, setupRunId, businessId } = parseSetupActivityIds(input);
+
+  await markStepRunning({
+    setupRunId,
+    businessId,
+    stepName: SETUP_STEP_NAMES.VERIFY_GOOGLE_ADS_SETUP_READY,
+    provider: 'google_ads',
+    logger,
+  });
+
+  try {
+    const providerIdentifiers = await assertGoogleAdsSetupReady(businessId);
+    await markStepSuccess({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.VERIFY_GOOGLE_ADS_SETUP_READY,
+      provider: 'google_ads',
+      details: {
+        customerId: providerIdentifiers.customerId ?? null,
+        accessibleCustomerCount: Array.isArray(providerIdentifiers.accessibleCustomerIds)
+          ? providerIdentifiers.accessibleCustomerIds.length
+          : null,
+      },
+      logger,
+    });
+    return {
+      outcome: 'ok',
+      provider: 'google_ads',
+      customerId: providerIdentifiers.customerId ?? null,
+      accessibleCustomerIds: providerIdentifiers.accessibleCustomerIds ?? [],
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  } catch (err) {
+    const msg = safeErrorMessage(err, 'Google Ads setup readiness check failed');
+    const code = err instanceof GoogleAdsSetupError ? err.code : 'GOOGLE_ADS_SETUP_NOT_READY';
+    await markStepFailed({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.VERIFY_GOOGLE_ADS_SETUP_READY,
+      provider: 'google_ads',
+      summary: msg,
+      details: { code },
+      logger,
+    });
+    await patchSetupRun(
+      setupRunId,
+      { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+      logger
+    );
+    return {
+      outcome: 'manual_review',
+      provider: 'google_ads',
+      errorCode: code,
+      message: msg,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+}
+
+/**
+ * @deprecated Use checkGoogleAdsConnectionActivity + discoverGoogleAdsCustomersActivity.
+ * @param {{ setupRunId: string, businessId: string }} input
+ */
+async function checkGoogleAdsPreconditionsActivity(input) {
+  const conn = await checkGoogleAdsConnectionActivity(input);
+  if (conn.outcome !== 'ok') {
+    return conn;
+  }
+  return discoverGoogleAdsCustomersActivity(input);
 }
 
 /**
@@ -1048,6 +1374,10 @@ module.exports = {
   loadSetupContextActivity,
   checkGbpPreconditionsActivity,
   checkGtmPreconditionsActivity,
+  checkGoogleAdsConnectionActivity,
+  discoverGoogleAdsCustomersActivity,
+  ensureGoogleAdsProvisioningApprovalActivity,
+  assertGoogleAdsSetupReadyActivity,
   checkGoogleAdsPreconditionsActivity,
   checkProviderPreconditionsActivity,
   checkProvisioningApprovalActivity,

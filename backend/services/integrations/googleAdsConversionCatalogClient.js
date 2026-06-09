@@ -4,28 +4,19 @@ const axios = require('axios');
 const mongoose = require('mongoose');
 const { getFreshGoogleAccessToken } = require('./googleTokenService');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
+const {
+  GoogleAdsApiError,
+  buildGoogleAdsApiUrl,
+  buildGoogleAdsHeaders,
+  createGoogleAdsApiErrorFromResponse,
+  getGoogleAdsRequestTimeoutMs,
+  normalizeCustomerId,
+} = require('./googleAdsApiConfig');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
-const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION?.trim() || 'v18';
 const CONVERSION_ACTION_QUERY =
   'SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric FROM conversion_action WHERE conversion_action.status != \'REMOVED\'';
-
-class GoogleAdsApiError extends Error {
-  constructor(message, code = 'GOOGLE_ADS_API_ERROR') {
-    super(message);
-    this.name = 'GoogleAdsApiError';
-    this.code = code;
-  }
-}
-
-/**
- * @param {string | number | undefined} customerId
- */
-function normalizeCustomerId(customerId) {
-  if (customerId == null || customerId === '') return null;
-  return String(customerId).replace(/-/g, '').trim();
-}
 
 /**
  * @param {object} row — Google Ads conversionAction resource or mock row
@@ -143,36 +134,27 @@ async function fetchGoogleAdsConversionCatalogMock(businessId, customerIdOverrid
  * @param {string} customerId — digits only
  */
 async function searchConversionActions(accessToken, customerId) {
-  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.trim();
-  if (!developerToken) {
-    throw new GoogleAdsApiError(
-      'GOOGLE_ADS_DEVELOPER_TOKEN is required when Google Ads API is enabled.',
-      'GOOGLE_ADS_DEVELOPER_TOKEN_MISSING'
-    );
-  }
-
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/googleAds:search`;
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    'developer-token': developerToken,
-    'Content-Type': 'application/json',
-  };
-
-  const loginCustomerId = normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
-  if (loginCustomerId) {
-    headers['login-customer-id'] = loginCustomerId;
-  }
-
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
   const res = await axios.post(
     url,
     { query: CONVERSION_ACTION_QUERY },
-    { headers, timeout: 30000, validateStatus: () => true }
+    {
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
   );
 
   if (res.status < 200 || res.status >= 300) {
-    throw new GoogleAdsApiError(
-      `Google Ads conversion catalog search failed (${res.status})`,
-      'GOOGLE_ADS_CATALOG_SEARCH_FAILED'
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_CATALOG_SEARCH_FAILED',
+      {
+        label: 'Google Ads conversion catalog search',
+        action: 'googleAds:search',
+        customerIds: [customerId],
+      }
     );
   }
 

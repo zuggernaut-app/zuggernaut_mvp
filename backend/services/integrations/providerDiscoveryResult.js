@@ -1,6 +1,6 @@
 'use strict';
 
-const { PROVISIONING_REASON_CODES } = require('../../constants/enums');
+const { PROVISIONING_REASON_CODES, SELECTION_REASON_CODES } = require('../../constants/enums');
 const { REQUIRED_PROVIDER_IDENTIFIER_KEYS } = require('../../constants/provisioning');
 
 /**
@@ -74,8 +74,44 @@ function buildDiscoveryResult(provider, providerIdentifiers, opts = {}) {
   };
 }
 
+/**
+ * OAuth succeeded and accessible resources were discovered, but setup-ready identifiers
+ * require explicit user selection (no silent first-match default).
+ *
+ * @param {string} provider
+ * @param {object} providerIdentifiers
+ * @param {string} reason — SELECTION_REASON_CODES value
+ * @returns {ProviderDiscoveryResult}
+ */
+function buildSelectionRequiredResult(provider, providerIdentifiers, reason) {
+  return {
+    providerIdentifiers: {
+      ...providerIdentifiers,
+      selectionRequired: true,
+      discoveryReason: reason,
+    },
+    connectionHealth: 'selection_required',
+    reason,
+  };
+}
+
+/**
+ * @param {string} provider
+ */
+function defaultSelectionReason(provider) {
+  if (provider === 'google_ads') {
+    return SELECTION_REASON_CODES.find((c) => c === 'ADS_CUSTOMER_SELECTION_REQUIRED');
+  }
+  if (provider === 'gtm') {
+    return SELECTION_REASON_CODES.find((c) => c === 'GTM_RESOURCE_SELECTION_REQUIRED');
+  }
+  return null;
+}
+
 module.exports = {
   hasRequiredIdentifiers,
   getMissingIdentifierKeys,
   buildDiscoveryResult,
+  buildSelectionRequiredResult,
+  defaultSelectionReason,
 };

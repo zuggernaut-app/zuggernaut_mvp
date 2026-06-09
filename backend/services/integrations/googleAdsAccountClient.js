@@ -2,27 +2,24 @@
 
 const axios = require('axios');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
-const { buildDiscoveryResult } = require('./providerDiscoveryResult');
+const {
+  buildDiscoveryResult,
+  buildSelectionRequiredResult,
+  defaultSelectionReason,
+} = require('./providerDiscoveryResult');
+const {
+  GoogleAdsAccountError,
+  buildGoogleAdsApiUrl,
+  buildGoogleAdsHeaders,
+  createGoogleAdsApiErrorFromResponse,
+  getGoogleAdsLoginCustomerId,
+  getGoogleAdsRequestTimeoutMs,
+  normalizeCustomerId,
+  parseGoogleAdsApiError,
+} = require('./googleAdsApiConfig');
 
-const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION?.trim() || 'v18';
 const DEFAULT_CUSTOMER_CURRENCY = process.env.GOOGLE_ADS_DEFAULT_CURRENCY_CODE?.trim() || 'USD';
 const DEFAULT_CUSTOMER_TIME_ZONE = process.env.GOOGLE_ADS_DEFAULT_TIME_ZONE?.trim() || 'America/New_York';
-
-class GoogleAdsAccountError extends Error {
-  constructor(message, code = 'GOOGLE_ADS_ACCOUNT_ERROR') {
-    super(message);
-    this.name = 'GoogleAdsAccountError';
-    this.code = code;
-  }
-}
-
-/**
- * @param {string | number | undefined} customerId
- */
-function normalizeCustomerId(customerId) {
-  if (customerId == null || customerId === '') return null;
-  return String(customerId).replace(/-/g, '').trim();
-}
 
 /**
  * @param {string} resourceName — e.g. customers/1234567890
@@ -31,51 +28,6 @@ function customerIdFromResourceName(resourceName) {
   if (typeof resourceName !== 'string') return null;
   const match = resourceName.match(/^customers\/(\d+)$/);
   return match ? match[1] : normalizeCustomerId(resourceName.replace(/^customers\//, ''));
-}
-
-function getGoogleAdsDeveloperToken() {
-  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.trim();
-  if (!developerToken) {
-    throw new GoogleAdsAccountError(
-      'GOOGLE_ADS_DEVELOPER_TOKEN is required for Google Ads API calls.',
-      'GOOGLE_ADS_DEVELOPER_TOKEN_MISSING'
-    );
-  }
-  return developerToken;
-}
-
-function getGoogleAdsLoginCustomerId() {
-  const loginCustomerId = normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
-  if (!loginCustomerId) {
-    throw new GoogleAdsAccountError(
-      'GOOGLE_ADS_LOGIN_CUSTOMER_ID is required for MCC customer provisioning.',
-      'ADS_MCC_CONFIG_MISSING'
-    );
-  }
-  return loginCustomerId;
-}
-
-/**
- * @param {string} accessToken
- * @param {{ loginCustomerId?: string | null }} [opts]
- */
-function buildGoogleAdsHeaders(accessToken, opts = {}) {
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    'developer-token': getGoogleAdsDeveloperToken(),
-    'Content-Type': 'application/json',
-  };
-
-  const loginCustomerId =
-    opts.loginCustomerId !== undefined
-      ? normalizeCustomerId(opts.loginCustomerId)
-      : normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
-
-  if (loginCustomerId) {
-    headers['login-customer-id'] = loginCustomerId;
-  }
-
-  return headers;
 }
 
 /**
@@ -94,27 +46,27 @@ function normalizeCustomerClientResponse(data) {
 
 /**
  * @param {number} status
- * @param {object} [body]
+ * @param {unknown} body
+ * @param {string} managerId
  */
-function mapCreateCustomerError(status, body) {
-  const message =
-    typeof body?.error?.message === 'string'
-      ? body.error.message
-      : typeof body?.error?.status === 'string'
-        ? body.error.status
-        : `Google Ads createCustomerClient failed (${status})`;
+function mapCreateCustomerError(status, body, managerId) {
+  const parsed = parseGoogleAdsApiError(status, body, {
+    action: 'createCustomerClient',
+    customerIds: [managerId],
+  });
+  const message = parsed.message;
 
   if (status === 403) {
-    return new GoogleAdsAccountError(message, 'ADS_MCC_PERMISSION_DENIED');
+    return new GoogleAdsAccountError(message, 'ADS_MCC_PERMISSION_DENIED', parsed);
   }
   if (status === 400 && /billing|payment|budget/i.test(message)) {
-    return new GoogleAdsAccountError(message, 'ADS_BILLING_SETUP_REQUIRED');
+    return new GoogleAdsAccountError(message, 'ADS_BILLING_SETUP_REQUIRED', parsed);
   }
   if (status === 403 || status === 401) {
-    return new GoogleAdsAccountError(message, 'ADS_CUSTOMER_CREATE_DENIED');
+    return new GoogleAdsAccountError(message, 'ADS_CUSTOMER_CREATE_DENIED', parsed);
   }
 
-  return new GoogleAdsAccountError(message, 'ADS_CUSTOMER_CREATE_FAILED');
+  return new GoogleAdsAccountError(message, 'ADS_CUSTOMER_CREATE_FAILED', parsed);
 }
 
 /**
@@ -125,20 +77,26 @@ async function listAccessibleCustomers(accessToken) {
     return ['1234567890', '9876543210'];
   }
 
-  const headers = buildGoogleAdsHeaders(accessToken);
-  delete headers['Content-Type'];
+  // listAccessibleCustomers is account-agnostic — do not send login-customer-id (wrong MCC → 404).
+  const headers = buildGoogleAdsHeaders(accessToken, {
+    includeLoginCustomerId: false,
+    includeContentType: false,
+  });
 
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers:listAccessibleCustomers`;
+  const url = buildGoogleAdsApiUrl('customers:listAccessibleCustomers');
   const res = await axios.get(url, {
     headers,
-    timeout: 30000,
+    timeout: getGoogleAdsRequestTimeoutMs(),
     validateStatus: () => true,
   });
 
   if (res.status < 200 || res.status >= 300) {
-    throw new GoogleAdsAccountError(
-      `Google Ads listAccessibleCustomers failed (${res.status})`,
-      'GOOGLE_ADS_LIST_CUSTOMERS_FAILED'
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_LIST_CUSTOMERS_FAILED',
+      { label: 'Google Ads listAccessibleCustomers', action: 'listAccessibleCustomers' },
+      GoogleAdsAccountError
     );
   }
 
@@ -154,7 +112,7 @@ async function listAccessibleCustomers(accessToken) {
  *
  * @param {string} accessToken
  * @param {string} managerCustomerId
- * @param {{ descriptiveName: string, currencyCode?: string, timeZone?: string }} customerInput
+ * @param {{ descriptiveName: string, currencyCode?: string, timeZone?: string, testAccount?: boolean }} customerInput
  */
 async function createCustomerClient(accessToken, managerCustomerId, customerInput) {
   const descriptiveName = customerInput.descriptiveName?.trim();
@@ -178,25 +136,28 @@ async function createCustomerClient(accessToken, managerCustomerId, customerInpu
     throw new GoogleAdsAccountError('Manager customer id is required.', 'ADS_MCC_CONFIG_MISSING');
   }
 
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${managerId}:createCustomerClient`;
+  const url = buildGoogleAdsApiUrl(`customers/${managerId}:createCustomerClient`);
+  const customerClient = {
+    descriptiveName,
+    currencyCode: customerInput.currencyCode ?? DEFAULT_CUSTOMER_CURRENCY,
+    timeZone: customerInput.timeZone ?? DEFAULT_CUSTOMER_TIME_ZONE,
+  };
+  if (customerInput.testAccount === true) {
+    customerClient.testAccount = true;
+  }
+
   const res = await axios.post(
     url,
-    {
-      customerClient: {
-        descriptiveName,
-        currencyCode: customerInput.currencyCode ?? DEFAULT_CUSTOMER_CURRENCY,
-        timeZone: customerInput.timeZone ?? DEFAULT_CUSTOMER_TIME_ZONE,
-      },
-    },
+    { customerClient },
     {
       headers: buildGoogleAdsHeaders(accessToken, { loginCustomerId: managerId }),
-      timeout: 30000,
+      timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
   );
 
   if (res.status < 200 || res.status >= 300) {
-    throw mapCreateCustomerError(res.status, res.data);
+    throw mapCreateCustomerError(res.status, res.data, managerId);
   }
 
   const normalized = normalizeCustomerClientResponse(res.data);
@@ -215,8 +176,137 @@ async function createCustomerClient(accessToken, managerCustomerId, customerInpu
   };
 }
 
+const CUSTOMER_METADATA_QUERY =
+  'SELECT customer.id, customer.descriptive_name, customer.manager, customer.status, customer.test_account FROM customer LIMIT 1';
+
+/**
+ * @param {unknown} body
+ * @returns {string | null}
+ */
+function parseMetadataAuthorizationError(body) {
+  const details = Array.isArray(body?.error?.details) ? body.error.details : [];
+  const failure = details.find((row) => String(row['@type'] ?? '').includes('GoogleAdsFailure'));
+  const errors = Array.isArray(failure?.errors) ? failure.errors : [];
+  const first = errors[0];
+  if (!first?.errorCode || typeof first.errorCode !== 'object') {
+    return null;
+  }
+  return (
+    first.errorCode.authorizationError ??
+    first.errorCode.customerError ??
+    first.errorCode.requestError ??
+    null
+  );
+}
+
+/**
+ * @param {string} accessToken
+ * @param {string} customerId
+ */
+async function searchGoogleAdsCustomerMetadata(accessToken, customerId) {
+  const normalizedId = normalizeCustomerId(customerId);
+  if (!normalizedId) {
+    return null;
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    const isManager = normalizedId.endsWith('8860');
+    const isCancelled = normalizedId.endsWith('1557');
+    return {
+      customerId: normalizedId,
+      descriptiveName: isManager ? 'Zuggernaut AI Campaign Builder' : 'Zuggernaut',
+      manager: isManager,
+      status: isCancelled ? 'CANCELLED' : 'ENABLED',
+      testAccount: false,
+    };
+  }
+
+  const mccLogin = getGoogleAdsLoginCustomerId();
+  const headerVariants = [];
+  if (mccLogin && mccLogin !== normalizedId) {
+    headerVariants.push({ loginCustomerId: mccLogin });
+  }
+  headerVariants.push({ loginCustomerId: normalizedId });
+  headerVariants.push({ includeLoginCustomerId: false });
+
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedId}/googleAds:search`);
+  let lastAuthorizationError = null;
+
+  for (const headerOpts of headerVariants) {
+    const res = await axios.post(
+      url,
+      { query: CUSTOMER_METADATA_QUERY },
+      {
+        headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+        timeout: getGoogleAdsRequestTimeoutMs(),
+        validateStatus: () => true,
+      }
+    );
+
+    if (res.status >= 200 && res.status < 300) {
+      const row = Array.isArray(res.data?.results) ? res.data.results[0] : null;
+      const customer = row?.customer;
+      if (!customer) {
+        break;
+      }
+
+      return {
+        customerId: normalizeCustomerId(customer.id) ?? normalizedId,
+        descriptiveName: customer.descriptiveName ?? null,
+        manager: customer.manager === true,
+        status: customer.status ?? null,
+        testAccount: customer.testAccount === true,
+      };
+    }
+
+    lastAuthorizationError = parseMetadataAuthorizationError(res.data);
+    if (lastAuthorizationError === 'CUSTOMER_NOT_ENABLED') {
+      break;
+    }
+  }
+
+  return {
+    customerId: normalizedId,
+    descriptiveName: null,
+    manager: null,
+    status: lastAuthorizationError === 'CUSTOMER_NOT_ENABLED' ? 'CANCELLED' : null,
+    testAccount: null,
+    metadataError: true,
+    authorizationError: lastAuthorizationError,
+  };
+}
+
+/**
+ * @param {string} accessToken
+ * @param {string[]} customerIds
+ */
+async function describeAccessibleGoogleAdsCustomers(accessToken, customerIds) {
+  const loginCustomerId = getGoogleAdsLoginCustomerId();
+  const described = [];
+
+  for (const customerId of customerIds) {
+    const metadata = await searchGoogleAdsCustomerMetadata(accessToken, customerId);
+    described.push(
+      metadata ?? {
+        customerId: normalizeCustomerId(customerId),
+        descriptiveName: null,
+        manager: null,
+        status: null,
+        testAccount: null,
+        metadataError: true,
+      }
+    );
+  }
+
+  return {
+    loginCustomerId: loginCustomerId ? normalizeCustomerId(loginCustomerId) : null,
+    customers: described,
+  };
+}
+
 /**
  * Read-only Google Ads customer discovery — never creates or links customers.
+ * Does not auto-select customerId; user must choose via resource selection.
  *
  * @param {string} accessToken
  */
@@ -226,38 +316,419 @@ async function discoverGoogleAdsProviderIdentifiers(accessToken) {
 
     if (customerIds.length === 0) {
       return buildDiscoveryResult('google_ads', {
+        accessibleCustomerIds: [],
         discoveryReason: 'ADS_PROVISIONING_REQUIRED',
       });
     }
 
-    const loginCustomerId = normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
+    const loginCustomerId = getGoogleAdsLoginCustomerId();
     const providerIdentifiers = {
-      customerId: customerIds[0],
       accessibleCustomerIds: customerIds,
       ...(loginCustomerId ? { loginCustomerId, managerCustomerId: loginCustomerId } : {}),
+      discoveryRecordedAt: new Date().toISOString(),
     };
 
-    return buildDiscoveryResult('google_ads', providerIdentifiers);
+    return buildSelectionRequiredResult(
+      'google_ads',
+      providerIdentifiers,
+      defaultSelectionReason('google_ads')
+    );
   } catch (err) {
+    const discoveryError = err.code ?? 'ADS_DISCOVERY_FAILED';
+    const googleErrorSummary =
+      err instanceof GoogleAdsAccountError && err.details
+        ? {
+            statusCode: err.details.statusCode,
+            googleStatus: err.details.googleStatus,
+            message: err.details.message,
+            action: err.details.action,
+            redactedCustomerIds: err.details.redactedCustomerIds,
+          }
+        : null;
+
     return buildDiscoveryResult('google_ads', {
-      discoveryError: err.code ?? 'ADS_DISCOVERY_FAILED',
+      discoveryError,
       discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+      ...(googleErrorSummary ? { googleErrorSummary } : {}),
+      discoveryMessage: err instanceof Error ? err.message : 'Google Ads discovery failed.',
     });
   }
+}
+
+/**
+ * @param {string} accessToken
+ * @param {string} customerId — account context for the search (manager or client)
+ * @param {string} query
+ * @param {{ loginCustomerId?: string | null, includeLoginCustomerId?: boolean }} [opts]
+ */
+async function searchGoogleAds(accessToken, customerId, query, opts = {}) {
+  const normalizedId = normalizeCustomerId(customerId);
+  if (!normalizedId) {
+    throw new GoogleAdsAccountError('customerId is required for search.', 'ADS_SEARCH_INVALID');
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return [];
+  }
+
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedId}/googleAds:search`);
+  const res = await axios.post(
+    url,
+    { query },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, opts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_SEARCH_FAILED',
+      { label: 'Google Ads search', action: 'googleAds:search', customerIds: [normalizedId] },
+      GoogleAdsAccountError
+    );
+  }
+
+  return Array.isArray(res.data?.results) ? res.data.results : [];
+}
+
+const LINK_STATUS_PRIORITY = {
+  PENDING: 4,
+  ACTIVE: 3,
+  INACTIVE: 2,
+};
+
+/**
+ * @param {Array<Record<string, unknown>>} rows
+ * @param {'customerClientLink' | 'customerManagerLink'} fieldName
+ */
+function pickBestLinkFromRows(rows, fieldName) {
+  let best = null;
+  let bestScore = -1;
+  for (const row of rows) {
+    const link = row?.[fieldName];
+    if (!link || typeof link !== 'object') continue;
+    const status = typeof link.status === 'string' ? link.status : null;
+    const score = status ? (LINK_STATUS_PRIORITY[status] ?? 1) : 0;
+    if (score > bestScore) {
+      best = link;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+/**
+ * @param {Record<string, unknown> | null} link
+ * @param {{ clientCustomer?: string, managerCustomer?: string }} [defaults]
+ */
+function normalizeLinkRecord(link, defaults = {}) {
+  if (!link || typeof link !== 'object') {
+    return {
+      status: null,
+      managerLinkId: null,
+      resourceName: null,
+      clientCustomer: defaults.clientCustomer ?? null,
+      managerCustomer: defaults.managerCustomer ?? null,
+    };
+  }
+
+  return {
+    status: typeof link.status === 'string' ? link.status : null,
+    managerLinkId: link.managerLinkId != null ? String(link.managerLinkId) : null,
+    resourceName: typeof link.resourceName === 'string' ? link.resourceName : null,
+    clientCustomer:
+      typeof link.clientCustomer === 'string'
+        ? link.clientCustomer
+        : (defaults.clientCustomer ?? null),
+    managerCustomer:
+      typeof link.managerCustomer === 'string'
+        ? link.managerCustomer
+        : (defaults.managerCustomer ?? null),
+  };
+}
+
+/**
+ * @param {string} accessToken
+ * @param {string} managerCustomerId
+ * @param {string} clientCustomerId
+ */
+async function getCustomerClientLinkStatus(accessToken, managerCustomerId, clientCustomerId) {
+  const managerId = normalizeCustomerId(managerCustomerId);
+  const clientId = normalizeCustomerId(clientCustomerId);
+  if (!managerId || !clientId) {
+    throw new GoogleAdsAccountError('Manager and client customer ids are required.', 'ADS_LINK_INVALID');
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      status: 'ACTIVE',
+      managerLinkId: '1',
+      resourceName: `customers/${managerId}/customerClientLinks/1`,
+      clientCustomer: `customers/${clientId}`,
+      managerCustomer: `customers/${managerId}`,
+      source: 'manager',
+    };
+  }
+
+  const query = [
+    'SELECT customer_client_link.resource_name, customer_client_link.manager_link_id,',
+    'customer_client_link.status, customer_client_link.client_customer',
+    'FROM customer_client_link',
+    `WHERE customer_client_link.client_customer = 'customers/${clientId}'`,
+  ].join(' ');
+
+  const rows = await searchGoogleAds(accessToken, managerId, query, { loginCustomerId: managerId });
+  const link = pickBestLinkFromRows(rows, 'customerClientLink');
+  return normalizeLinkRecord(link, {
+    clientCustomer: `customers/${clientId}`,
+    managerCustomer: `customers/${managerId}`,
+  });
+}
+
+/**
+ * Pending invitations are often visible on the client account via CustomerManagerLink.
+ *
+ * @param {string} accessToken
+ * @param {string} clientCustomerId
+ * @param {string} managerCustomerId
+ */
+async function getCustomerManagerLinkStatus(accessToken, clientCustomerId, managerCustomerId) {
+  const clientId = normalizeCustomerId(clientCustomerId);
+  const managerId = normalizeCustomerId(managerCustomerId);
+  if (!clientId || !managerId) {
+    throw new GoogleAdsAccountError('Client and manager customer ids are required.', 'ADS_LINK_INVALID');
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      status: null,
+      managerLinkId: null,
+      resourceName: null,
+      clientCustomer: `customers/${clientId}`,
+      managerCustomer: `customers/${managerId}`,
+      source: 'client',
+    };
+  }
+
+  const query = [
+    'SELECT customer_manager_link.resource_name, customer_manager_link.manager_link_id,',
+    'customer_manager_link.status, customer_manager_link.manager_customer',
+    'FROM customer_manager_link',
+    `WHERE customer_manager_link.manager_customer = 'customers/${managerId}'`,
+  ].join(' ');
+
+  const rows = await searchGoogleAds(accessToken, clientId, query, { loginCustomerId: clientId });
+  const link = pickBestLinkFromRows(rows, 'customerManagerLink');
+  return normalizeLinkRecord(link, {
+    clientCustomer: `customers/${clientId}`,
+    managerCustomer: `customers/${managerId}`,
+  });
+}
+
+/**
+ * Combine manager-side and client-side link views, preferring PENDING then ACTIVE.
+ *
+ * @param {string} accessToken
+ * @param {string} managerCustomerId
+ * @param {string} clientCustomerId
+ */
+async function resolveMccLinkStatus(accessToken, managerCustomerId, clientCustomerId) {
+  const [managerView, clientView] = await Promise.all([
+    getCustomerClientLinkStatus(accessToken, managerCustomerId, clientCustomerId),
+    getCustomerManagerLinkStatus(accessToken, clientCustomerId, managerCustomerId),
+  ]);
+
+  const managerLink = { ...managerView, source: 'manager' };
+  const clientLink = { ...clientView, source: 'client' };
+  const pending =
+    [clientLink, managerLink].find((link) => link.status === 'PENDING' && link.managerLinkId) ?? null;
+  const active =
+    [managerLink, clientLink].find((link) => link.status === 'ACTIVE') ?? null;
+  const linkStatus = pending ?? active ?? (managerLink.status ? managerLink : clientLink);
+
+  const activeLink = active ?? null;
+
+  return {
+    managerView: managerLink,
+    clientView: clientLink,
+    pending,
+    active: activeLink,
+    linkStatus,
+    linkReady: isMccLinkActive({ managerView: managerLink, clientView: clientLink }),
+  };
+}
+
+/**
+ * @param {{ managerView?: { status?: string | null }, clientView?: { status?: string | null } }} resolved
+ */
+function isMccLinkActive(resolved) {
+  return (
+    resolved?.managerView?.status === 'ACTIVE' || resolved?.clientView?.status === 'ACTIVE'
+  );
+}
+
+/**
+ * Invite a client account to link under a manager (PENDING).
+ *
+ * @param {string} accessToken
+ * @param {string} managerCustomerId
+ * @param {string} clientCustomerId
+ */
+async function createCustomerClientLinkInvitation(accessToken, managerCustomerId, clientCustomerId) {
+  const managerId = normalizeCustomerId(managerCustomerId);
+  const clientId = normalizeCustomerId(clientCustomerId);
+  if (!managerId || !clientId) {
+    throw new GoogleAdsAccountError('Manager and client customer ids are required.', 'ADS_LINK_INVALID');
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      resourceName: `customers/${managerId}/customerClientLinks/999`,
+      status: 'PENDING',
+      managerLinkId: '999',
+    };
+  }
+
+  const url = buildGoogleAdsApiUrl(`customers/${managerId}/customerClientLinks:mutate`);
+  const res = await axios.post(
+    url,
+    {
+      operation: {
+        create: {
+          clientCustomer: `customers/${clientId}`,
+          status: 'PENDING',
+        },
+      },
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, { loginCustomerId: managerId }),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'ADS_CLIENT_LINK_CREATE_FAILED',
+      { label: 'CustomerClientLink create', action: 'customerClientLinks:mutate', customerIds: [managerId, clientId] },
+      GoogleAdsAccountError
+    );
+  }
+
+  const resourceName = res.data?.result?.resourceName ?? null;
+  if (!resourceName) {
+    throw new GoogleAdsAccountError(
+      'CustomerClientLink mutate returned no resource name.',
+      'ADS_CLIENT_LINK_INVALID_RESPONSE'
+    );
+  }
+
+  const query = `SELECT customer_client_link.manager_link_id, customer_client_link.status FROM customer_client_link WHERE customer_client_link.resource_name = '${resourceName}'`;
+  const rows = await searchGoogleAds(accessToken, managerId, query, { loginCustomerId: managerId });
+  const link = rows[0]?.customerClientLink ?? {};
+
+  return {
+    resourceName,
+    status: link.status ?? 'PENDING',
+    managerLinkId: link.managerLinkId != null ? String(link.managerLinkId) : null,
+  };
+}
+
+/**
+ * Accept a manager invitation from the client account side (ACTIVE).
+ *
+ * @param {string} accessToken
+ * @param {string} clientCustomerId
+ * @param {string} managerCustomerId
+ * @param {string | number} managerLinkId
+ */
+async function acceptCustomerManagerLink(accessToken, clientCustomerId, managerCustomerId, managerLinkId) {
+  const clientId = normalizeCustomerId(clientCustomerId);
+  const managerId = normalizeCustomerId(managerCustomerId);
+  const linkId = managerLinkId != null ? String(managerLinkId).trim() : '';
+  if (!clientId || !managerId || !linkId) {
+    throw new GoogleAdsAccountError(
+      'clientCustomerId, managerCustomerId, and managerLinkId are required.',
+      'ADS_LINK_INVALID'
+    );
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      resourceName: `customers/${clientId}/customerManagerLinks/${managerId}~${linkId}`,
+      status: 'ACTIVE',
+    };
+  }
+
+  const resourceName = `customers/${clientId}/customerManagerLinks/${managerId}~${linkId}`;
+  const url = buildGoogleAdsApiUrl(`customers/${clientId}/customerManagerLinks:mutate`);
+  const res = await axios.post(
+    url,
+    {
+      operations: [
+        {
+          update: {
+            resourceName,
+            status: 'ACTIVE',
+          },
+          updateMask: 'status',
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, { loginCustomerId: clientId }),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'ADS_MANAGER_LINK_ACCEPT_FAILED',
+      { label: 'CustomerManagerLink accept', action: 'customerManagerLinks:mutate', customerIds: [clientId, managerId] },
+      GoogleAdsAccountError
+    );
+  }
+
+  return {
+    resourceName: res.data?.results?.[0]?.resourceName ?? resourceName,
+    status: 'ACTIVE',
+  };
 }
 
 module.exports = {
   GoogleAdsAccountError,
   normalizeCustomerId,
   customerIdFromResourceName,
-  getGoogleAdsDeveloperToken,
   getGoogleAdsLoginCustomerId,
   buildGoogleAdsHeaders,
   normalizeCustomerClientResponse,
+  searchGoogleAds,
+  pickBestLinkFromRows,
+  getCustomerClientLinkStatus,
+  getCustomerManagerLinkStatus,
+  resolveMccLinkStatus,
+  isMccLinkActive,
+  createCustomerClientLinkInvitation,
+  acceptCustomerManagerLink,
   listAccessibleCustomers: (accessToken) =>
     withProviderRateLimit('google_ads', () => listAccessibleCustomers(accessToken)),
   createCustomerClient: (accessToken, managerCustomerId, customerInput) =>
     withProviderRateLimit('google_ads', () => createCustomerClient(accessToken, managerCustomerId, customerInput)),
   discoverGoogleAdsProviderIdentifiers: (accessToken) =>
     withProviderRateLimit('google_ads', () => discoverGoogleAdsProviderIdentifiers(accessToken)),
+  searchGoogleAdsCustomerMetadata: (accessToken, customerId) =>
+    withProviderRateLimit('google_ads', () => searchGoogleAdsCustomerMetadata(accessToken, customerId)),
+  describeAccessibleGoogleAdsCustomers: (accessToken, customerIds) =>
+    withProviderRateLimit('google_ads', () =>
+      describeAccessibleGoogleAdsCustomers(accessToken, customerIds)
+    ),
 };

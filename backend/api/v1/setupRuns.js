@@ -7,6 +7,10 @@ const SetupRun = mongoose.model('SetupRun');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
 const { requireAuth } = require('./middleware/requireAuth');
 const { getTemporalClient } = require('../../lib/temporalClient');
+const {
+  SETUP_RUN_WORKFLOW_NAME,
+  resolveTemporalTaskQueue,
+} = require('../../constants/temporalDefaults');
 const { buildSetupRunReport } = require('../../services/reports/setupRunReportService');
 const { detectStuckSetupRun } = require('../../services/setupRunStuckDetection');
 
@@ -49,11 +53,11 @@ router.post('/', requireAuth, async (req, res) => {
   });
 
   const workflowId = `setup-run-${setupRun._id.toString()}`;
-  const taskQueue = process.env.TEMPORAL_TASK_QUEUE || 'setup-run';
+  const taskQueue = resolveTemporalTaskQueue();
 
   try {
     const client = await getTemporalClient();
-    await client.workflow.start('setupRunWorkflow', {
+    await client.workflow.start(SETUP_RUN_WORKFLOW_NAME, {
       taskQueue,
       workflowId,
       args: [

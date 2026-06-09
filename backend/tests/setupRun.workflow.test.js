@@ -12,7 +12,10 @@ const mocks = {
   loadSetupContextActivity: jest.fn(),
   checkGbpPreconditionsActivity: jest.fn(),
   checkGtmPreconditionsActivity: jest.fn(),
-  checkGoogleAdsPreconditionsActivity: jest.fn(),
+  checkGoogleAdsConnectionActivity: jest.fn(),
+  discoverGoogleAdsCustomersActivity: jest.fn(),
+  ensureGoogleAdsProvisioningApprovalActivity: jest.fn(),
+  assertGoogleAdsSetupReadyActivity: jest.fn(),
   checkProvisioningApprovalActivity: jest.fn(),
   provisionGtmResourcesActivity: jest.fn(),
   provisionGoogleAdsCustomerActivity: jest.fn(),
@@ -60,7 +63,10 @@ function happyPathDefaults() {
   });
   mocks.checkGbpPreconditionsActivity.mockResolvedValue({ outcome: 'ok', ready: true });
   mocks.checkGtmPreconditionsActivity.mockResolvedValue({ outcome: 'ok' });
-  mocks.checkGoogleAdsPreconditionsActivity.mockResolvedValue({ outcome: 'ok' });
+  mocks.checkGoogleAdsConnectionActivity.mockResolvedValue({ outcome: 'ok' });
+  mocks.discoverGoogleAdsCustomersActivity.mockResolvedValue({ outcome: 'ok' });
+  mocks.ensureGoogleAdsProvisioningApprovalActivity.mockResolvedValue({ outcome: 'ready' });
+  mocks.assertGoogleAdsSetupReadyActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.checkProvisioningApprovalActivity.mockResolvedValue({ outcome: 'ready' });
   mocks.provisionGtmResourcesActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.provisionGoogleAdsCustomerActivity.mockResolvedValue({ outcome: 'ok' });
@@ -89,7 +95,11 @@ describe('setupRunWorkflow', () => {
       setupRunId: 'run1',
       businessId: 'biz1',
     });
-    expect(mocks.checkGoogleAdsPreconditionsActivity).toHaveBeenCalledWith({
+    expect(mocks.checkGoogleAdsConnectionActivity).toHaveBeenCalledWith({
+      setupRunId: 'run1',
+      businessId: 'biz1',
+    });
+    expect(mocks.discoverGoogleAdsCustomersActivity).toHaveBeenCalledWith({
       setupRunId: 'run1',
       businessId: 'biz1',
     });
@@ -180,7 +190,7 @@ describe('setupRunWorkflow', () => {
       provider: 'gtm',
     });
     expect(mocks.provisionGtmResourcesActivity).not.toHaveBeenCalled();
-    expect(mocks.checkGoogleAdsPreconditionsActivity).not.toHaveBeenCalled();
+    expect(mocks.checkGoogleAdsConnectionActivity).not.toHaveBeenCalled();
     expect(mocks.runGbpAuditActivity).not.toHaveBeenCalled();
     expect(out.terminal).toBe(T.GTM_PROVISIONING_REQUIRED);
   });
@@ -209,21 +219,19 @@ describe('setupRunWorkflow', () => {
   });
 
   it('stops with ads_provisioning_required when approval is pending', async () => {
-    mocks.checkGoogleAdsPreconditionsActivity.mockResolvedValue({
+    mocks.discoverGoogleAdsCustomersActivity.mockResolvedValue({
       outcome: 'ads_provisioning_required',
-      provisioningRequestId: 'req-ads-1',
     });
-    mocks.checkProvisioningApprovalActivity.mockResolvedValue({
+    mocks.ensureGoogleAdsProvisioningApprovalActivity.mockResolvedValue({
       outcome: 'pending_approval',
       provisioningRequestId: 'req-ads-1',
     });
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.checkProvisioningApprovalActivity).toHaveBeenCalledWith({
+    expect(mocks.ensureGoogleAdsProvisioningApprovalActivity).toHaveBeenCalledWith({
       setupRunId: 'run1',
       businessId: 'biz1',
-      provider: 'google_ads',
     });
     expect(mocks.provisionGoogleAdsCustomerActivity).not.toHaveBeenCalled();
     expect(mocks.runGbpAuditActivity).not.toHaveBeenCalled();
@@ -231,15 +239,16 @@ describe('setupRunWorkflow', () => {
   });
 
   it('provisions Google Ads and continues when approval exists', async () => {
-    mocks.checkGoogleAdsPreconditionsActivity
-      .mockResolvedValueOnce({
-        outcome: 'ads_provisioning_required',
-        provisioningRequestId: 'req-ads-1',
-      })
-      .mockResolvedValueOnce({ outcome: 'ok' });
-    mocks.checkProvisioningApprovalActivity.mockResolvedValue({
+    mocks.discoverGoogleAdsCustomersActivity.mockResolvedValueOnce({
+      outcome: 'ads_provisioning_required',
+    });
+    mocks.ensureGoogleAdsProvisioningApprovalActivity.mockResolvedValue({
       outcome: 'approved',
       provisioningRequestId: 'req-ads-1',
+    });
+    mocks.assertGoogleAdsSetupReadyActivity.mockResolvedValue({
+      outcome: 'ok',
+      customerId: '1234567890',
     });
 
     const out = await setupRunWorkflow({ setupRunId: 'run1' });
@@ -249,8 +258,36 @@ describe('setupRunWorkflow', () => {
       businessId: 'biz1',
       provisioningRequestId: 'req-ads-1',
     });
-    expect(mocks.checkGoogleAdsPreconditionsActivity).toHaveBeenCalledTimes(2);
+    expect(mocks.discoverGoogleAdsCustomersActivity).toHaveBeenCalledTimes(1);
+    expect(mocks.assertGoogleAdsSetupReadyActivity).toHaveBeenCalledWith({
+      setupRunId: 'run1',
+      businessId: 'biz1',
+    });
     expect(out.terminal).toBe(T.SUCCEEDED);
+  });
+
+  it('stops with manual review when post-provision readiness check fails', async () => {
+    mocks.discoverGoogleAdsCustomersActivity.mockResolvedValueOnce({
+      outcome: 'ads_provisioning_required',
+    });
+    mocks.ensureGoogleAdsProvisioningApprovalActivity.mockResolvedValue({
+      outcome: 'approved',
+      provisioningRequestId: 'req-ads-1',
+    });
+    mocks.assertGoogleAdsSetupReadyActivity.mockResolvedValue({
+      outcome: 'manual_review',
+      errorCode: 'GOOGLE_ADS_IDENTIFIERS_MISSING',
+    });
+
+    const out = await setupRunWorkflow({ setupRunId: 'run1' });
+
+    expect(mocks.provisionGoogleAdsCustomerActivity).toHaveBeenCalled();
+    expect(mocks.discoverGoogleAdsCustomersActivity).toHaveBeenCalledTimes(1);
+    expect(mocks.assertGoogleAdsSetupReadyActivity).toHaveBeenCalledTimes(1);
+    expect(out.terminal).toBe(T.MANUAL_REVIEW);
+    expect(out.pre).toEqual(
+      expect.objectContaining({ errorCode: 'GOOGLE_ADS_IDENTIFIERS_MISSING' })
+    );
   });
 
   it('stops before provider work when GTM precondition requires manual review', async () => {
@@ -261,15 +298,15 @@ describe('setupRunWorkflow', () => {
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.checkGoogleAdsPreconditionsActivity).not.toHaveBeenCalled();
+    expect(mocks.checkGoogleAdsConnectionActivity).not.toHaveBeenCalled();
     expect(mocks.runGbpAuditActivity).not.toHaveBeenCalled();
     expect(mocks.fetchAdsConversionCatalogActivity).not.toHaveBeenCalled();
     expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
     expect(out.terminal).toBe(T.MANUAL_REVIEW);
   });
 
-  it('stops before provider work when Google Ads precondition requires manual review', async () => {
-    mocks.checkGoogleAdsPreconditionsActivity.mockResolvedValue({
+  it('stops before provider work when Google Ads connection requires manual review', async () => {
+    mocks.checkGoogleAdsConnectionActivity.mockResolvedValue({
       outcome: T.MANUAL_REVIEW,
       missingProviders: ['google_ads'],
     });

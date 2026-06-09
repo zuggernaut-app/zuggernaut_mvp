@@ -10,6 +10,8 @@ const repoRoot = path.resolve(__dirname, '..')
 
 /** Mirrors {@link ./e2e/constants.ts JWT length rule} — backend refuses shorter secrets outside NODE_ENV=test. */
 const PLAYWRIGHT_JWT_SECRET = 'playwright-e2e-jwt-secret-at-least-thirty-two-chars-xx'
+const PLAYWRIGHT_TOKEN_ENCRYPTION_KEY =
+  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
 
 export default defineConfig({
   testDir: './e2e',
@@ -36,6 +38,15 @@ export default defineConfig({
         ...process.env,
         PORT: String(E2E_BACKEND_PORT),
         JWT_SECRET: PLAYWRIGHT_JWT_SECRET,
+        TOKEN_ENCRYPTION_KEY: PLAYWRIGHT_TOKEN_ENCRYPTION_KEY,
+        TEMPORAL_E2E_MOCK: 'true',
+        GOOGLE_OAUTH_MOCK: 'true',
+        GTM_API_MOCK: 'true',
+        GOOGLE_ADS_API_MOCK: 'true',
+        GBP_API_MOCK: 'true',
+        GOOGLE_CLIENT_ID: 'playwright-e2e-google-client-id',
+        GOOGLE_CLIENT_SECRET: 'playwright-e2e-google-client-secret',
+        FRONTEND_ORIGIN: 'http://127.0.0.1:5173',
       },
       url: `${E2E_API_ORIGIN}/api/v1/health`,
       reuseExistingServer: false,

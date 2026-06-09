@@ -3,9 +3,14 @@
 const axios = require('axios');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
 const { getFreshGoogleAccessToken } = require('./googleTokenService');
-const { normalizeCustomerId, GoogleAdsApiError } = require('./googleAdsConversionCatalogClient');
-
-const GOOGLE_ADS_API_VERSION = process.env.GOOGLE_ADS_API_VERSION?.trim() || 'v18';
+const {
+  GoogleAdsApiError,
+  buildGoogleAdsApiUrl,
+  buildGoogleAdsHeaders,
+  createGoogleAdsApiErrorFromResponse,
+  getGoogleAdsRequestTimeoutMs,
+  normalizeCustomerId,
+} = require('./googleAdsApiConfig');
 
 /**
  * @param {string} customerId — digits only
@@ -41,7 +46,7 @@ async function createCampaignBudget(ctx) {
   }
 
   const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/campaignBudgets:mutate`;
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/campaignBudgets:mutate`);
   const res = await axios.post(
     url,
     {
@@ -57,13 +62,13 @@ async function createCampaignBudget(ctx) {
       ],
     },
     {
-      headers: buildHeaders(accessToken),
-      timeout: 30000,
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
   );
 
-  const resourceName = extractMutateResourceName(res, 'campaign budget');
+  const resourceName = extractMutateResourceName(res, 'campaign budget', customerId);
   return { resourceName, source: 'google_ads_api' };
 }
 
@@ -82,7 +87,7 @@ async function createCampaign(ctx) {
   }
 
   const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/campaigns:mutate`;
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/campaigns:mutate`);
   const res = await axios.post(
     url,
     {
@@ -99,13 +104,13 @@ async function createCampaign(ctx) {
       ],
     },
     {
-      headers: buildHeaders(accessToken),
-      timeout: 30000,
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
   );
 
-  const resourceName = extractMutateResourceName(res, 'campaign');
+  const resourceName = extractMutateResourceName(res, 'campaign', customerId);
   return { resourceName, source: 'google_ads_api' };
 }
 
@@ -124,7 +129,7 @@ async function createAdGroup(ctx) {
   }
 
   const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/adGroups:mutate`;
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/adGroups:mutate`);
   const res = await axios.post(
     url,
     {
@@ -140,13 +145,13 @@ async function createAdGroup(ctx) {
       ],
     },
     {
-      headers: buildHeaders(accessToken),
-      timeout: 30000,
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
   );
 
-  const resourceName = extractMutateResourceName(res, 'ad group');
+  const resourceName = extractMutateResourceName(res, 'ad group', customerId);
   return { resourceName, source: 'google_ads_api' };
 }
 
@@ -165,7 +170,7 @@ async function createResponsiveSearchAd(ctx) {
   }
 
   const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/adGroupAds:mutate`;
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/adGroupAds:mutate`);
   const res = await axios.post(
     url,
     {
@@ -186,49 +191,28 @@ async function createResponsiveSearchAd(ctx) {
       ],
     },
     {
-      headers: buildHeaders(accessToken),
-      timeout: 30000,
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
   );
 
-  const resourceName = extractMutateResourceName(res, 'ad group ad');
+  const resourceName = extractMutateResourceName(res, 'ad group ad', customerId);
   return { resourceName, source: 'google_ads_api' };
-}
-
-/**
- * @param {string} accessToken
- */
-function buildHeaders(accessToken) {
-  const developerToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN?.trim();
-  if (!developerToken) {
-    throw new GoogleAdsApiError(
-      'GOOGLE_ADS_DEVELOPER_TOKEN is required when Google Ads API is enabled.',
-      'GOOGLE_ADS_DEVELOPER_TOKEN_MISSING'
-    );
-  }
-
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    'developer-token': developerToken,
-    'Content-Type': 'application/json',
-  };
-
-  const loginCustomerId = normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
-  if (loginCustomerId) {
-    headers['login-customer-id'] = loginCustomerId;
-  }
-
-  return headers;
 }
 
 /**
  * @param {import('axios').AxiosResponse} res
  * @param {string} label
  */
-function extractMutateResourceName(res, label) {
+function extractMutateResourceName(res, label, customerId) {
   if (res.status < 200 || res.status >= 300) {
-    throw new GoogleAdsApiError(`Google Ads ${label} mutate failed (${res.status})`, 'GOOGLE_ADS_MUTATE_FAILED');
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_MUTATE_FAILED',
+      { label: `Google Ads ${label} mutate`, action: `${label}:mutate`, customerIds: [customerId] }
+    );
   }
 
   const resourceName = res.data?.results?.[0]?.resourceName;
@@ -261,7 +245,7 @@ async function pauseAdsCampaign(ctx) {
   }
 
   const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/campaigns:mutate`;
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/campaigns:mutate`);
   const res = await axios.post(
     url,
     {
@@ -276,14 +260,19 @@ async function pauseAdsCampaign(ctx) {
       ],
     },
     {
-      headers: buildHeaders(accessToken),
-      timeout: 30000,
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
   );
 
   if (res.status < 200 || res.status >= 300) {
-    throw new GoogleAdsApiError(`Google Ads campaign pause failed (${res.status})`, 'GOOGLE_ADS_PAUSE_FAILED');
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_PAUSE_FAILED',
+      { label: 'Google Ads campaign pause', action: 'campaigns:mutate', customerIds: [customerId] }
+    );
   }
 
   return { outcome: 'paused', source: 'google_ads_api' };
