@@ -4,11 +4,11 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { DevGoogleAdsOAuthLabPage } from './DevGoogleAdsOAuthLabPage'
 
-vi.mock('../api/devIntegrations', () => ({
+vi.mock('../../api/dev/devIntegrations', () => ({
   isDevIntegrationsEnabled: vi.fn(),
 }))
 
-vi.mock('../api/googleAdsOAuthLab', () => ({
+vi.mock('../../api/dev/googleAdsOAuthLab', () => ({
   createSandboxBusiness: vi.fn(),
   fetchGoogleAdsOAuthLabConnectUrl: vi.fn(),
   fetchGoogleAdsResourceOptions: vi.fn(),
@@ -17,8 +17,8 @@ vi.mock('../api/googleAdsOAuthLab', () => ({
   runGoogleAdsReadWriteTest: vi.fn(),
 }))
 
-import { isDevIntegrationsEnabled } from '../api/devIntegrations'
-import * as labApi from '../api/googleAdsOAuthLab'
+import { isDevIntegrationsEnabled } from '../../api/dev/devIntegrations'
+import * as labApi from '../../api/dev/googleAdsOAuthLab'
 
 describe('DevGoogleAdsOAuthLabPage', () => {
   beforeEach(() => {

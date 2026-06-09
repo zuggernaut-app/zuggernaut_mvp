@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ApiError } from '../api/client'
-import { isDevIntegrationsEnabled } from '../api/devIntegrations'
+import { ApiError } from '../../../../../frontend/src/api/client'
+import { isDevIntegrationsEnabled } from '../../api/dev/devIntegrations'
 import {
   createSandboxBusiness,
   fetchGbpOAuthLabConnectUrl,
@@ -10,10 +10,10 @@ import {
   type GbpReadTestResult,
   type OAuthLabStage,
   type OAuthTraceResult,
-} from '../api/gbpOAuthLab'
-import { ErrorAlert } from '../components/feedback/ErrorAlert'
-import { InlineLoading } from '../components/feedback/InlineLoading'
-import { PageLayout } from '../components/layout/PageLayout'
+} from '../../api/dev/gbpOAuthLab'
+import { ErrorAlert } from '../../../../../frontend/src/components/feedback/ErrorAlert'
+import { InlineLoading } from '../../../../../frontend/src/components/feedback/InlineLoading'
+import { PageLayout } from '../../../../../frontend/src/components/layout/PageLayout'
 
 function stageStatus(stage: OAuthLabStage): string {
   if (stage.skipped) return 'SKIP'

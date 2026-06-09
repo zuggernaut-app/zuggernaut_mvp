@@ -10,11 +10,11 @@ import { BusinessReviewPage } from '../pages/BusinessReviewPage'
 import { StartSetupPage } from '../pages/StartSetupPage'
 import { SetupProgressPage } from '../pages/SetupProgressPage'
 import { SetupReportPage } from '../pages/SetupReportPage'
-import { DevIntegrationsPage } from '../pages/DevIntegrationsPage'
-import { DevGoogleAdsOAuthLabPage } from '../pages/DevGoogleAdsOAuthLabPage'
-import { DevGtmOAuthLabPage } from '../pages/DevGtmOAuthLabPage'
-import { DevGbpOAuthLabPage } from '../pages/DevGbpOAuthLabPage'
-import { isDevIntegrationsEnabled } from '../api/devIntegrations'
+import { DevIntegrationsPage } from '../../../dev-tools/frontend/src/pages/dev/DevIntegrationsPage'
+import { DevGoogleAdsOAuthLabPage } from '../../../dev-tools/frontend/src/pages/dev/DevGoogleAdsOAuthLabPage'
+import { DevGtmOAuthLabPage } from '../../../dev-tools/frontend/src/pages/dev/DevGtmOAuthLabPage'
+import { DevGbpOAuthLabPage } from '../../../dev-tools/frontend/src/pages/dev/DevGbpOAuthLabPage'
+import { isDevIntegrationsEnabled } from '../../../dev-tools/frontend/src/api/dev/devIntegrations'
 
 export function AppRoutes(): ReactElement {
   return (

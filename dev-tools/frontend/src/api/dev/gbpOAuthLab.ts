@@ -1,4 +1,4 @@
-import { apiRequest } from './client'
+import { apiRequest } from '../../../../../frontend/src/api/client'
 import { createSandboxBusiness, type SandboxBusinessResponse } from './devIntegrations'
 
 export interface OAuthLabStage {

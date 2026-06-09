@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ApiError } from '../api/client'
+import { ApiError } from '../../../../../frontend/src/api/client'
 import {
   createSandboxBusiness,
   fetchDevGoogleConnectUrl,
@@ -23,13 +23,13 @@ import {
   type GoogleAdsResourceOptionsResult,
   type GtmResourceOptionsResult,
   type SmokeTestResult,
-} from '../api/devIntegrations'
-import type { ScrapeRunDto } from '../types/api'
-import type { IntegrationProvider } from '../api/integrations'
-import { ErrorAlert } from '../components/feedback/ErrorAlert'
-import { InlineLoading } from '../components/feedback/InlineLoading'
-import { PageLayout } from '../components/layout/PageLayout'
-import { integrationStatusLabel } from '../lib/provisioningUi'
+} from '../../api/dev/devIntegrations'
+import type { ScrapeRunDto } from '../../../../../frontend/src/types/api'
+import type { IntegrationProvider } from '../../../../../frontend/src/api/integrations'
+import { ErrorAlert } from '../../../../../frontend/src/components/feedback/ErrorAlert'
+import { InlineLoading } from '../../../../../frontend/src/components/feedback/InlineLoading'
+import { PageLayout } from '../../../../../frontend/src/components/layout/PageLayout'
+import { integrationStatusLabel } from '../../../../../frontend/src/lib/provisioningUi'
 
 const PROVIDERS: IntegrationProvider[] = ['google_ads', 'gtm', 'gbp']
 

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { DevIntegrationsPage } from './DevIntegrationsPage'
 
-vi.mock('../api/devIntegrations', () => ({
+vi.mock('../../api/dev/devIntegrations', () => ({
   isDevIntegrationsEnabled: vi.fn(),
   createSandboxBusiness: vi.fn(),
   fetchDiagnosticsOverview: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('../api/devIntegrations', () => ({
   fetchDiagnosticRun: vi.fn(),
 }))
 
-import * as devApi from '../api/devIntegrations'
+import * as devApi from '../../api/dev/devIntegrations'
 
 describe('DevIntegrationsPage', () => {
   beforeEach(() => {

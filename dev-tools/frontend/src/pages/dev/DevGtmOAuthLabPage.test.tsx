@@ -4,11 +4,11 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { DevGtmOAuthLabPage } from './DevGtmOAuthLabPage'
 
-vi.mock('../api/devIntegrations', () => ({
+vi.mock('../../api/dev/devIntegrations', () => ({
   isDevIntegrationsEnabled: vi.fn(),
 }))
 
-vi.mock('../api/gtmOAuthLab', () => ({
+vi.mock('../../api/dev/gtmOAuthLab', () => ({
   createSandboxBusiness: vi.fn(),
   fetchGtmOAuthLabConnectUrl: vi.fn(),
   fetchGtmResourceOptions: vi.fn(),
@@ -17,8 +17,8 @@ vi.mock('../api/gtmOAuthLab', () => ({
   saveGtmSelection: vi.fn(),
 }))
 
-import { isDevIntegrationsEnabled } from '../api/devIntegrations'
-import * as labApi from '../api/gtmOAuthLab'
+import { isDevIntegrationsEnabled } from '../../api/dev/devIntegrations'
+import * as labApi from '../../api/dev/gtmOAuthLab'
 
 describe('DevGtmOAuthLabPage', () => {
   beforeEach(() => {

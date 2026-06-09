@@ -3,19 +3,19 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { DevGbpOAuthLabPage } from './DevGbpOAuthLabPage'
 
-vi.mock('../api/devIntegrations', () => ({
+vi.mock('../../api/dev/devIntegrations', () => ({
   isDevIntegrationsEnabled: vi.fn(),
 }))
 
-vi.mock('../api/gbpOAuthLab', () => ({
+vi.mock('../../api/dev/gbpOAuthLab', () => ({
   createSandboxBusiness: vi.fn(),
   fetchGbpOAuthLabConnectUrl: vi.fn(),
   runGbpOAuthTrace: vi.fn(),
   runGbpReadTest: vi.fn(),
 }))
 
-import { isDevIntegrationsEnabled } from '../api/devIntegrations'
-import * as labApi from '../api/gbpOAuthLab'
+import { isDevIntegrationsEnabled } from '../../api/dev/devIntegrations'
+import * as labApi from '../../api/dev/gbpOAuthLab'
 
 describe('DevGbpOAuthLabPage', () => {
   beforeEach(() => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ApiError } from '../api/client'
-import { isDevIntegrationsEnabled } from '../api/devIntegrations'
+import { ApiError } from '../../../../../frontend/src/api/client'
+import { isDevIntegrationsEnabled } from '../../api/dev/devIntegrations'
 import {
   createSandboxBusiness,
   fetchGtmOAuthLabConnectUrl,
@@ -13,10 +13,10 @@ import {
   type GtmReadWriteTestResult,
   type OAuthLabStage,
   type OAuthTraceResult,
-} from '../api/gtmOAuthLab'
-import { ErrorAlert } from '../components/feedback/ErrorAlert'
-import { InlineLoading } from '../components/feedback/InlineLoading'
-import { PageLayout } from '../components/layout/PageLayout'
+} from '../../api/dev/gtmOAuthLab'
+import { ErrorAlert } from '../../../../../frontend/src/components/feedback/ErrorAlert'
+import { InlineLoading } from '../../../../../frontend/src/components/feedback/InlineLoading'
+import { PageLayout } from '../../../../../frontend/src/components/layout/PageLayout'
 
 function stageStatus(stage: OAuthLabStage): string {
   if (stage.skipped) return 'SKIP'

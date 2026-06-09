@@ -1,6 +1,6 @@
-import type { ScrapeRunDto, ScrapeRunPollResponse, ScrapeStartResponse } from '../types/api'
-import { apiRequest } from './client'
-import type { IntegrationProvider } from './integrations'
+import type { ScrapeRunDto, ScrapeRunPollResponse, ScrapeStartResponse } from '../../../../../frontend/src/types/api'
+import { apiRequest } from '../../../../../frontend/src/api/client'
+import type { IntegrationProvider } from '../../../../../frontend/src/api/integrations'
 
 export interface SandboxBusinessResponse {
   businessId: string
