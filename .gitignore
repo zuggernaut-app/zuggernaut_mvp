@@ -32,3 +32,7 @@ frontend/coverage/
 # Playwright (frontend)
 frontend/playwright-report/
 frontend/test-results/
+
+# Temporary development files
+temp_dev_files/
+older files/
