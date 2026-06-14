@@ -20,6 +20,7 @@ const mocks = {
   provisionGtmResourcesActivity: jest.fn(),
   provisionGoogleAdsCustomerActivity: jest.fn(),
   runGbpAuditActivity: jest.fn(),
+  manageAdsConversionActionsActivity: jest.fn(),
   runStructuralVerificationActivity: jest.fn(),
   fetchAdsConversionCatalogActivity: jest.fn(),
   runGtmConversionSetupActivity: jest.fn(),
@@ -62,7 +63,7 @@ function happyPathDefaults() {
     },
   });
   mocks.checkGbpPreconditionsActivity.mockResolvedValue({ outcome: 'ok', ready: true });
-  mocks.checkGtmPreconditionsActivity.mockResolvedValue({ outcome: 'ok' });
+  mocks.checkGtmPreconditionsActivity.mockResolvedValue({ outcome: 'ok', ready: true });
   mocks.checkGoogleAdsConnectionActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.discoverGoogleAdsCustomersActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.ensureGoogleAdsProvisioningApprovalActivity.mockResolvedValue({ outcome: 'ready' });
@@ -71,6 +72,12 @@ function happyPathDefaults() {
   mocks.provisionGtmResourcesActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.provisionGoogleAdsCustomerActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.runGbpAuditActivity.mockResolvedValue({ outcome: 'skipped' });
+  mocks.manageAdsConversionActionsActivity.mockResolvedValue({
+    outcome: 'ok',
+    slotsResolved: 2,
+    created: 0,
+    reused: 2,
+  });
   mocks.fetchAdsConversionCatalogActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.runGtmConversionSetupActivity.mockResolvedValue({ outcome: 'ok' });
   mocks.runStructuralVerificationActivity.mockResolvedValue({ outcome: 'pass', detail: {} });
@@ -104,6 +111,10 @@ describe('setupRunWorkflow', () => {
       businessId: 'biz1',
     });
     expect(mocks.runGbpAuditActivity).toHaveBeenCalledWith({
+      setupRunId: 'run1',
+      businessId: 'biz1',
+    });
+    expect(mocks.manageAdsConversionActionsActivity).toHaveBeenCalledWith({
       setupRunId: 'run1',
       businessId: 'biz1',
     });
@@ -172,49 +183,20 @@ describe('setupRunWorkflow', () => {
     expect(out.gbp).toEqual(expect.objectContaining({ outcome: 'skipped' }));
   });
 
-  it('stops with gtm_provisioning_required when approval is pending', async () => {
+  it('continues when GTM is optional and not setup-ready', async () => {
     mocks.checkGtmPreconditionsActivity.mockResolvedValue({
-      outcome: 'gtm_provisioning_required',
-      provisioningRequestId: 'req-gtm-1',
-    });
-    mocks.checkProvisioningApprovalActivity.mockResolvedValue({
-      outcome: 'pending_approval',
-      provisioningRequestId: 'req-gtm-1',
-    });
-
-    const out = await setupRunWorkflow({ setupRunId: 'x' });
-
-    expect(mocks.checkProvisioningApprovalActivity).toHaveBeenCalledWith({
-      setupRunId: 'run1',
-      businessId: 'biz1',
-      provider: 'gtm',
-    });
-    expect(mocks.provisionGtmResourcesActivity).not.toHaveBeenCalled();
-    expect(mocks.checkGoogleAdsConnectionActivity).not.toHaveBeenCalled();
-    expect(mocks.runGbpAuditActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.GTM_PROVISIONING_REQUIRED);
-  });
-
-  it('provisions GTM and continues when approval exists', async () => {
-    mocks.checkGtmPreconditionsActivity
-      .mockResolvedValueOnce({
-        outcome: 'gtm_provisioning_required',
-        provisioningRequestId: 'req-gtm-1',
-      })
-      .mockResolvedValueOnce({ outcome: 'ok' });
-    mocks.checkProvisioningApprovalActivity.mockResolvedValue({
-      outcome: 'approved',
-      provisioningRequestId: 'req-gtm-1',
+      outcome: 'not_ready',
+      ready: false,
+      reason: 'provisioning_required',
     });
 
     const out = await setupRunWorkflow({ setupRunId: 'run1' });
 
-    expect(mocks.provisionGtmResourcesActivity).toHaveBeenCalledWith({
-      setupRunId: 'run1',
-      businessId: 'biz1',
-      provisioningRequestId: 'req-gtm-1',
-    });
-    expect(mocks.checkGtmPreconditionsActivity).toHaveBeenCalledTimes(2);
+    expect(mocks.checkProvisioningApprovalActivity).not.toHaveBeenCalled();
+    expect(mocks.provisionGtmResourcesActivity).not.toHaveBeenCalled();
+    expect(mocks.runGtmConversionSetupActivity).not.toHaveBeenCalled();
+    expect(mocks.checkGoogleAdsConnectionActivity).toHaveBeenCalled();
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
     expect(out.terminal).toBe(T.SUCCEEDED);
   });
 
@@ -290,19 +272,19 @@ describe('setupRunWorkflow', () => {
     );
   });
 
-  it('stops before provider work when GTM precondition requires manual review', async () => {
+  it('continues when GTM is not connected (optional)', async () => {
     mocks.checkGtmPreconditionsActivity.mockResolvedValue({
-      outcome: T.MANUAL_REVIEW,
-      missingProviders: ['gtm'],
+      outcome: 'not_ready',
+      ready: false,
+      reason: 'missing_connection',
     });
 
-    const out = await setupRunWorkflow({ setupRunId: 'x' });
+    const out = await setupRunWorkflow({ setupRunId: 'run1' });
 
-    expect(mocks.checkGoogleAdsConnectionActivity).not.toHaveBeenCalled();
-    expect(mocks.runGbpAuditActivity).not.toHaveBeenCalled();
-    expect(mocks.fetchAdsConversionCatalogActivity).not.toHaveBeenCalled();
-    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.MANUAL_REVIEW);
+    expect(mocks.checkGoogleAdsConnectionActivity).toHaveBeenCalled();
+    expect(mocks.runGtmConversionSetupActivity).not.toHaveBeenCalled();
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
   });
 
   it('stops before provider work when Google Ads connection requires manual review', async () => {
@@ -314,9 +296,45 @@ describe('setupRunWorkflow', () => {
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
     expect(mocks.runGbpAuditActivity).not.toHaveBeenCalled();
+    expect(mocks.manageAdsConversionActionsActivity).not.toHaveBeenCalled();
     expect(mocks.fetchAdsConversionCatalogActivity).not.toHaveBeenCalled();
     expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
     expect(out.terminal).toBe(T.MANUAL_REVIEW);
+  });
+
+  it('stops with manual_review when conversion action management needs review', async () => {
+    mocks.manageAdsConversionActionsActivity.mockResolvedValue({
+      outcome: 'manual_review',
+      message: 'Conversion action creation is disabled and required slots are unfilled.',
+    });
+
+    const out = await setupRunWorkflow({ setupRunId: 'run1' });
+
+    expect(mocks.manageAdsConversionActionsActivity).toHaveBeenCalled();
+    expect(mocks.fetchAdsConversionCatalogActivity).not.toHaveBeenCalled();
+    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
+    expect(out.terminal).toBe(T.MANUAL_REVIEW);
+    expect(out.manage).toEqual(
+      expect.objectContaining({ outcome: 'manual_review' })
+    );
+  });
+
+  it('stops with failed when conversion action creation fails', async () => {
+    mocks.manageAdsConversionActionsActivity.mockResolvedValue({
+      outcome: 'creation_failed',
+      message: 'Google Ads API error',
+      errorCode: 'GOOGLE_ADS_MUTATE_FAILED',
+    });
+
+    const out = await setupRunWorkflow({ setupRunId: 'run1' });
+
+    expect(mocks.manageAdsConversionActionsActivity).toHaveBeenCalled();
+    expect(mocks.fetchAdsConversionCatalogActivity).not.toHaveBeenCalled();
+    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
+    expect(out.terminal).toBe(T.FAILED);
+    expect(out.manage).toEqual(
+      expect.objectContaining({ outcome: 'creation_failed' })
+    );
   });
 
   it('returns gbp_blocked when GBP audit fails unexpectedly', async () => {
@@ -329,7 +347,7 @@ describe('setupRunWorkflow', () => {
     expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
   });
 
-  it('stops before Ads creation when structural verification needs tracking fix', async () => {
+  it('continues to Ads creation when structural verification needs tracking fix', async () => {
     mocks.runStructuralVerificationActivity.mockResolvedValue({
       outcome: T.NEEDS_TRACKING_FIX,
       detail: { summary: 'snippet' },
@@ -337,11 +355,11 @@ describe('setupRunWorkflow', () => {
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.NEEDS_TRACKING_FIX);
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
   });
 
-  it('stops before Ads creation when structural verification needs snippet install', async () => {
+  it('continues to Ads creation when structural verification needs snippet install', async () => {
     mocks.runStructuralVerificationActivity.mockResolvedValue({
       outcome: T.SNIPPET_PENDING,
       detail: { summary: 'install snippet' },
@@ -349,11 +367,11 @@ describe('setupRunWorkflow', () => {
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.SNIPPET_PENDING);
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
   });
 
-  it('stops before Ads creation when structural verification needs manual review', async () => {
+  it('continues to Ads creation when structural verification needs manual review', async () => {
     mocks.runStructuralVerificationActivity.mockResolvedValue({
       outcome: T.MANUAL_REVIEW,
       detail: { summary: 'cannot fetch website' },
@@ -361,8 +379,8 @@ describe('setupRunWorkflow', () => {
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.MANUAL_REVIEW);
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
   });
 
   it('returns deterministic summary on success', async () => {
@@ -398,7 +416,7 @@ describe('setupRunWorkflow', () => {
     expect(proxyActivities).toHaveBeenCalledTimes(4);
   });
 
-  it('does not call Ads campaign before structural verification on blocking outcomes', async () => {
+  it('still creates Ads campaign after non-pass structural verification outcomes', async () => {
     const terminals = ['needs_tracking_fix', 'snippet_pending', 'manual_review'];
     for (const terminal of terminals) {
       Object.values(mocks).forEach((fn) => fn.mockReset());
@@ -409,8 +427,8 @@ describe('setupRunWorkflow', () => {
       });
 
       const out = await setupRunWorkflow({ setupRunId: 'run-block' });
-      expect(out.terminal).toBe(terminal);
-      expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
+      expect(out.terminal).toBe(T.SUCCEEDED);
+      expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
     }
   });
 });

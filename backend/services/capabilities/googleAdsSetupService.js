@@ -10,13 +10,14 @@ const {
   ensureSetupProvisioningRequest,
   checkSetupProvisioningApproval,
 } = require('./integrationProvisioningService');
-const { hasRequiredIdentifiers } = require('../integrations/providerDiscoveryResult');
 const { listAccessibleCustomers } = require('../integrations/googleAdsAccountClient');
 const { getFreshGoogleAccessToken } = require('../integrations/googleTokenService');
 const {
   getGoogleAdsLoginCustomerId,
   GoogleAdsAccountError,
+  normalizeCustomerId,
 } = require('../integrations/googleAdsApiConfig');
+const { hasRequiredIdentifiers } = require('../integrations/providerDiscoveryResult');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
@@ -59,9 +60,59 @@ async function discoverAndPersistGoogleAdsCustomers(input) {
   const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
 
   try {
+    const existing = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
+      .select('providerIdentifiers')
+      .lean();
+    const priorIdentifiers = existing?.providerIdentifiers ?? {};
+
     const customerIds = await listAccessibleCustomers(accessToken);
     const loginCustomerId = getGoogleAdsLoginCustomerId();
     const recordedAt = new Date().toISOString();
+    const savedCustomerId = normalizeCustomerId(priorIdentifiers.customerId);
+
+    if (
+      savedCustomerId &&
+      customerIds.map(String).includes(savedCustomerId) &&
+      hasRequiredIdentifiers('google_ads', priorIdentifiers)
+    ) {
+      const providerIdentifiers = {
+        ...priorIdentifiers,
+        customerId: savedCustomerId,
+        accessibleCustomerIds: customerIds,
+        ...(loginCustomerId ? { loginCustomerId, managerCustomerId: loginCustomerId } : {}),
+        discoveryRecordedAt: recordedAt,
+        discoverySource: setupRunId ? 'setup_workflow' : 'diagnostics',
+        selectionRequired: false,
+      };
+
+      await IntegrationConnection.findOneAndUpdate(
+        { businessId, provider: 'google_ads' },
+        {
+          $set: {
+            connectionHealth: 'connected',
+            providerIdentifiers,
+          },
+        }
+      );
+
+      logger?.info?.(
+        {
+          businessId: String(businessId),
+          setupRunId: setupRunId ? String(setupRunId) : null,
+          customerId: savedCustomerId,
+          accessibleCount: customerIds.length,
+          connectionHealth: 'connected',
+        },
+        'google ads customer discovery reused saved selection'
+      );
+
+      return {
+        outcome: 'ok',
+        customerId: savedCustomerId,
+        accessibleCustomerIds: customerIds,
+        providerIdentifiers,
+      };
+    }
 
     const providerIdentifiers = {
       ...(customerIds.length > 0

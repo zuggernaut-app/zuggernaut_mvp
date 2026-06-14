@@ -7,7 +7,7 @@ const {
   provisioningArtifactIdempotencyKey,
 } = require('../services/capabilities/gtmProvisioningService');
 const {
-  createGtmAccount,
+  listGtmAccounts,
   createGtmContainer,
   resolveOrCreateWorkspace,
 } = require('../services/integrations/googleTagManagerClient');
@@ -21,7 +21,7 @@ jest.mock('../services/integrations/googleTagManagerClient', () => {
   const actual = jest.requireActual('../services/integrations/googleTagManagerClient');
   return {
     ...actual,
-    createGtmAccount: jest.fn(),
+    listGtmAccounts: jest.fn(),
     createGtmContainer: jest.fn(),
     resolveOrCreateWorkspace: jest.fn(),
     getGtmAccessToken: jest.fn(),
@@ -36,11 +36,13 @@ describe('gtmProvisioningService', () => {
     jest.clearAllMocks();
     process.env.GTM_API_MOCK = 'true';
     require('../services/integrations/googleTagManagerClient').getGtmAccessToken.mockResolvedValue('test-token');
-    createGtmAccount.mockResolvedValue({
-      accountId: 'prov-account-1',
-      name: 'Zuggernaut GTM',
-      path: 'accounts/prov-account-1',
-    });
+    listGtmAccounts.mockResolvedValue([
+      {
+        accountId: 'prov-account-1',
+        name: 'Zuggernaut GTM',
+        path: 'accounts/prov-account-1',
+      },
+    ]);
     createGtmContainer.mockResolvedValue({
       containerId: 'prov-container-1',
       publicContainerId: 'GTM-PROV1',
@@ -153,7 +155,7 @@ describe('gtmProvisioningService', () => {
       logger,
     });
 
-    createGtmAccount.mockClear();
+    listGtmAccounts.mockClear();
     createGtmContainer.mockClear();
     resolveOrCreateWorkspace.mockClear();
 
@@ -174,7 +176,7 @@ describe('gtmProvisioningService', () => {
       logger,
     });
 
-    expect(createGtmAccount).not.toHaveBeenCalled();
+    expect(listGtmAccounts).not.toHaveBeenCalled();
     expect(createGtmContainer).not.toHaveBeenCalled();
     expect(resolveOrCreateWorkspace).not.toHaveBeenCalled();
 
@@ -183,9 +185,9 @@ describe('gtmProvisioningService', () => {
     expect(count).toBe(3);
   });
 
-  it('marks provisioning request failed on API error', async () => {
+  it('marks provisioning request failed when no GTM account exists', async () => {
     const { bc, run, request } = await seedApprovedProvisioning();
-    createGtmAccount.mockRejectedValueOnce(Object.assign(new Error('GTM account denied'), { code: 'GTM_CREATE_FAILED' }));
+    listGtmAccounts.mockResolvedValueOnce([]);
 
     await expect(
       provisionGtmResources({
@@ -194,11 +196,11 @@ describe('gtmProvisioningService', () => {
         provisioningRequestId: request._id,
         logger,
       })
-    ).rejects.toThrow('GTM account denied');
+    ).rejects.toMatchObject({ code: 'GTM_ACCOUNT_NOT_FOUND' });
 
     const updatedRequest = await mongoose.model('IntegrationProvisioningRequest').findById(request._id).lean();
     expect(updatedRequest.status).toBe('failed');
-    expect(updatedRequest.errorCode).toBe('GTM_CREATE_FAILED');
+    expect(updatedRequest.errorCode).toBe('GTM_ACCOUNT_NOT_FOUND');
   });
 
   it('uses stable idempotency keys for provisioning artifacts', () => {

@@ -6,7 +6,11 @@ const {
   validateGrantedScopes,
   getGoogleProviderOAuthConfig,
 } = require('../../constants/googleOAuth');
-const { REQUIRED_PROVIDER_IDENTIFIER_KEYS } = require('../../constants/provisioning');
+const {
+  REQUIRED_PROVIDER_IDENTIFIER_KEYS,
+  REQUIRED_FOR_SETUP_PROVIDERS,
+  OPTIONAL_FOR_SETUP_PROVIDERS,
+} = require('../../constants/provisioning');
 const {
   hasRequiredIdentifiers,
   getMissingIdentifierKeys,
@@ -26,9 +30,10 @@ const CONNECTION_REASON = Object.freeze({
   NEEDS_REAUTH: 'needs_reauth',
   PROVISIONING_REQUIRED: 'provisioning_required',
   SELECTION_REQUIRED: 'selection_required',
+  GTM_ACCOUNT_REQUIRED: 'gtm_account_required',
 });
 
-const REQUIRED_FOR_SETUP = Object.freeze(['gtm', 'google_ads']);
+const REQUIRED_FOR_SETUP = REQUIRED_FOR_SETUP_PROVIDERS;
 
 /** @deprecated Use REQUIRED_PROVIDER_IDENTIFIER_KEYS from constants/provisioning.js */
 const REQUIRED_PROVIDER_IDENTIFIERS = REQUIRED_PROVIDER_IDENTIFIER_KEYS;
@@ -92,10 +97,32 @@ function buildSelectionRequiredStatus(base, provider, identifiers) {
 
 /**
  * @param {object} base
+ * @param {object | null | undefined} identifiers
+ */
+function buildGtmAccountRequiredStatus(base, identifiers) {
+  return {
+    ...base,
+    ready: false,
+    reason: CONNECTION_REASON.GTM_ACCOUNT_REQUIRED,
+    nextAction: 'create_gtm_account_manually',
+    identifiersMissing: getMissingIdentifierKeys('gtm', identifiers),
+  };
+}
+
+/**
+ * @param {object} base
  * @param {string} provider
  * @param {{ connectionHealth?: string | null, providerIdentifiers?: object | null }} row
  */
 function resolveIdentifierReadinessStatus(base, provider, row) {
+  if (
+    provider === 'gtm' &&
+    row.providerIdentifiers?.discoveryReason === 'GTM_ACCOUNT_NOT_FOUND' &&
+    !hasRequiredIdentifiers(provider, row.providerIdentifiers)
+  ) {
+    return buildGtmAccountRequiredStatus(base, row.providerIdentifiers);
+  }
+
   if (
     row.connectionHealth === 'selection_required' &&
     !hasRequiredIdentifiers(provider, row.providerIdentifiers)
@@ -303,9 +330,11 @@ async function getRequiredSetupConnections(businessId) {
 function assertConnectionReady(status) {
   if (status.ready) return;
   const hint =
-    status.reason === CONNECTION_REASON.PROVISIONING_REQUIRED
-      ? `Approve provisioning for ${status.provider} to create setup-ready resources before continuing.`
-      : `Connect ${status.provider} before continuing.`;
+    status.reason === CONNECTION_REASON.GTM_ACCOUNT_REQUIRED
+      ? 'Create a GTM account at https://tagmanager.google.com, refresh integrations, then continue setup.'
+      : status.reason === CONNECTION_REASON.PROVISIONING_REQUIRED
+        ? `Approve provisioning for ${status.provider} to create setup-ready resources before continuing.`
+        : `Connect ${status.provider} before continuing.`;
   const err = new Error(`Provider ${status.provider} is not ready (${status.reason}). ${hint}`);
   err.code = 'PROVIDER_NOT_READY';
   err.provider = status.provider;
@@ -316,6 +345,7 @@ function assertConnectionReady(status) {
 module.exports = {
   CONNECTION_REASON,
   REQUIRED_FOR_SETUP,
+  OPTIONAL_FOR_SETUP_PROVIDERS,
   REQUIRED_PROVIDER_IDENTIFIERS,
   getConnectionStatus,
   getOAuthConnectionStatus,

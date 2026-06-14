@@ -4,6 +4,20 @@ const mongoose = require('mongoose');
  * Canonical confirmed business inputs; never overwrite from scrape without user confirmation.
  * Tenant key is `businessId` (stable across integrations and referenced by other collections).
  * @see mvp_implementation_plan.md → Database Architecture Strategy (`BusinessContext`).
+ *
+ * @typedef {object} ConversionStrategy
+ * @property {'calls'|'forms'|'both'} resolvedPrimaryGoal
+ * @property {ConversionSlotRequirement[]} requiredSlots
+ * @property {'scrape_goals'|'user_confirmed_goals'|'default'} derivedFrom
+ * @property {string} derivedAt — ISO timestamp
+ *
+ * @typedef {object} ConversionSlotRequirement
+ * @property {string} slot — 'call' | 'form'
+ * @property {string} logicalCategory
+ * @property {boolean} required
+ * @property {'existing'|'create'|'pending'} resolution — filled later by the manage step
+ * @property {string|null} externalId — filled when resolved
+ * @property {string|null} resourceName — filled when resolved
  */
 const businessContextSchema = new mongoose.Schema(
   {
@@ -28,6 +42,8 @@ const businessContextSchema = new mongoose.Schema(
     contactMethods: { type: mongoose.Schema.Types.Mixed, default: undefined },
     audienceSignals: { type: mongoose.Schema.Types.Mixed, default: undefined },
     goals: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    /** Derived conversion strategy — populated by goal-to-ads mapping, never by user directly. */
+    conversionStrategy: { type: mongoose.Schema.Types.Mixed, default: undefined },
     differentiators: { type: String, trim: true },
     orderValueHint: { type: String, trim: true },
     /** Raw scrape output — never map into confirmed fields without explicit user save */

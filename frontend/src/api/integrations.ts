@@ -26,16 +26,24 @@ export interface GoogleConnectUrlResponse {
 
 export async function fetchIntegrationStatus(
   businessId: string,
+  options?: { rediscover?: boolean },
 ): Promise<IntegrationStatusResponse> {
   const q = new URLSearchParams({ businessId })
+  if (options?.rediscover) {
+    q.set('rediscover', 'true')
+  }
   return apiRequest<IntegrationStatusResponse>(`/integrations/status?${q.toString()}`)
 }
 
 export async function fetchGoogleConnectUrl(
   provider: IntegrationProvider,
   businessId: string,
+  returnPath = '/setup',
 ): Promise<GoogleConnectUrlResponse> {
   const q = new URLSearchParams({ businessId })
+  if (returnPath.startsWith('/') && !returnPath.startsWith('//')) {
+    q.set('returnPath', returnPath)
+  }
   return apiRequest<GoogleConnectUrlResponse>(
     `/integrations/google/${provider}/connect-url?${q.toString()}`,
   )
@@ -126,4 +134,116 @@ export async function cancelProvisioningRequest(
     `/integrations/provisioning/requests/${requestId}/cancel`,
     { method: 'POST', body: { businessId } },
   )
+}
+
+export interface GtmWorkspaceOption {
+  workspaceId: string
+  name: string | null
+  path?: string | null
+}
+
+export interface GtmContainerOption {
+  containerId: string
+  name: string | null
+  publicContainerId: string | null
+  usageContext: string[]
+  workspaces: GtmWorkspaceOption[]
+}
+
+export interface GtmAccountOption {
+  accountId: string
+  name: string | null
+  path?: string | null
+  containers: GtmContainerOption[]
+}
+
+export interface GtmResourceOptionsResult {
+  businessId: string
+  provider: 'gtm'
+  selectionRequired: boolean
+  reason: string | null
+  accounts: GtmAccountOption[]
+  selected: {
+    accountId: string
+    accountName: string | null
+    containerId: string
+    containerName: string | null
+    publicContainerId: string | null
+    workspaceId: string
+    workspaceName: string | null
+    selectedAt: string | null
+  } | null
+}
+
+export interface GoogleAdsCustomerOption {
+  customerId: string
+  formattedCustomerId: string
+  descriptiveName: string | null
+  kind: string
+  status: string | null
+  testAccount?: boolean
+  selectable: boolean
+  nonSelectableReason: string | null
+  loginCustomerId?: string | null
+}
+
+export interface GoogleAdsResourceOptionsResult {
+  businessId: string
+  provider: 'google_ads'
+  selectionRequired: boolean
+  reason: string | null
+  options: GoogleAdsCustomerOption[]
+  suggestedCustomerId: string | null
+  selected: {
+    customerId: string
+    formattedCustomerId: string
+    descriptiveName: string | null
+    kind: string
+    status: string | null
+    selectedAt: string | null
+  } | null
+  accessibleCustomerIds: string[]
+  loginCustomerId: string | null
+}
+
+export interface GtmSelectionBody {
+  businessId: string
+  accountId: string
+  containerId: string
+  workspaceId: string
+}
+
+export interface GoogleAdsSelectionBody {
+  businessId: string
+  customerId: string
+}
+
+export async function fetchGtmResourceOptions(
+  businessId: string,
+): Promise<{ result: GtmResourceOptionsResult }> {
+  const q = new URLSearchParams({ businessId })
+  return apiRequest<{ result: GtmResourceOptionsResult }>(
+    `/integrations/gtm/resource-options?${q.toString()}`,
+  )
+}
+
+export async function saveGtmSelection(
+  body: GtmSelectionBody,
+): Promise<{ result: GtmResourceOptionsResult & { providerIdentifiers?: Record<string, unknown> } }> {
+  return apiRequest(`/integrations/gtm/selection`, { method: 'PUT', body })
+}
+
+export async function fetchGoogleAdsResourceOptions(
+  businessId: string,
+): Promise<{ result: GoogleAdsResourceOptionsResult }> {
+  const q = new URLSearchParams({ businessId })
+  return apiRequest<{ result: GoogleAdsResourceOptionsResult }>(
+    `/integrations/google_ads/resource-options?${q.toString()}`,
+  )
+}
+
+export async function saveGoogleAdsSelection(
+  body: GoogleAdsSelectionBody,
+): Promise<{ result: GoogleAdsResourceOptionsResult & { providerIdentifiers?: Record<string, unknown> } }> {
+  return apiRequest(`/integrations/google_ads/selection`, { method: 'PUT', body })
 }

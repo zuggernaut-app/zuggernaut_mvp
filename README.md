@@ -140,6 +140,10 @@ Full mode matrix and optional tuning keys: [`backend/.env.example`](backend/.env
 
 Remediation execution tracker (phases, evidence): [`V1_REMEDIATION_EXECUTION.md`](V1_REMEDIATION_EXECUTION.md).
 
+## Production deploy
+
+Step-by-step Firebase + Railway + Atlas + Temporal Cloud: [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
 ## CI
 
 GitHub Actions [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs:

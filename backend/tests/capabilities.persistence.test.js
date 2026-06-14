@@ -188,7 +188,13 @@ describe('capability services persistence', () => {
       await IntegrationArtifact.countDocuments({ setupRunId: run._id, artifactType: 'ads_ad' })
     ).toBe(1);
     expect(
-      await IntegrationArtifact.countDocuments({ setupRunId: run._id, artifactType: 'ads_conversion_link' })
-    ).toBeGreaterThanOrEqual(1);
+      await IntegrationArtifact.countDocuments({ setupRunId: run._id, artifactType: 'ads_custom_conversion_goal' })
+    ).toBe(1);
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run._id,
+        artifactType: 'ads_conversion_goal_campaign_config',
+      })
+    ).toBe(1);
   });
 });

@@ -62,6 +62,12 @@ describe('structuralVerificationService', () => {
         'GTM-ABC'
       )
     ).toBe(true);
+    expect(
+      detectSnippetInHtml(
+        '<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-ABC"></iframe></noscript>',
+        'GTM-ABC'
+      )
+    ).toBe(true);
     expect(detectSnippetInHtml('<html>no tag manager</html>', 'GTM-MOCK')).toBe(false);
   });
 
@@ -97,6 +103,28 @@ describe('structuralVerificationService', () => {
     expect(verdict.evidence.snippetPresent).toBe(false);
   });
 
+  it('skips when GTM is not setup-ready', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const SetupRun = mongoose.model('SetupRun');
+    const user = await User.create({ email: 'verify-gtm-optional@test.com' });
+    const bc = await BusinessContext.create({
+      userId: user._id,
+      confirmedAt: new Date(),
+      websiteUrl: 'https://acme.example',
+    });
+    const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
+
+    const verdict = await runStructuralVerification({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      logger,
+    });
+
+    expect(verdict.result).toBe('skipped');
+    expect(verdict.evidence.gtmOptional).toBe(true);
+  });
+
   it('returns manual_review_required when website URL is missing', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
@@ -104,6 +132,7 @@ describe('structuralVerificationService', () => {
     const user = await User.create({ email: 'verify-no-url@test.com' });
     const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
     const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
+    await connectGoogleIntegrations(bc.businessId);
 
     const verdict = await runStructuralVerification({
       setupRunId: run._id,
@@ -127,12 +156,19 @@ describe('structuralVerificationService', () => {
       websiteUrl: 'https://acme.example',
     });
     const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
-    await IntegrationConnection.create({
-      businessId: bc.businessId,
-      provider: 'gtm',
-      connectionHealth: 'connected',
-      providerIdentifiers: { containerId: 'only-container' },
-    });
+    await connectGoogleIntegrations(bc.businessId);
+    await IntegrationConnection.findOneAndUpdate(
+      { businessId: bc.businessId, provider: 'gtm' },
+      {
+        $set: {
+          providerIdentifiers: {
+            accountId: 'acct-1',
+            containerId: 'only-container',
+            workspaceId: 'ws-1',
+          },
+        },
+      }
+    );
 
     const verdict = await runStructuralVerification({
       setupRunId: run._id,
@@ -148,7 +184,6 @@ describe('structuralVerificationService', () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
     const SetupRun = mongoose.model('SetupRun');
-    const IntegrationConnection = mongoose.model('IntegrationConnection');
     const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 
     const user = await User.create({ email: 'verify-no-tags@test.com' });
@@ -158,12 +193,7 @@ describe('structuralVerificationService', () => {
       websiteUrl: 'https://acme.example',
     });
     const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
-    await IntegrationConnection.create({
-      businessId: bc.businessId,
-      provider: 'gtm',
-      connectionHealth: 'connected',
-      providerIdentifiers: { publicContainerId: 'GTM-MOCK' },
-    });
+    await connectGoogleIntegrations(bc.businessId);
     await IntegrationArtifact.create({
       setupRunId: run._id,
       businessId: bc.businessId,

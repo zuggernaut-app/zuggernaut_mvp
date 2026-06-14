@@ -8,6 +8,7 @@
 const SETUP_ACTIVITY_POLICIES = Object.freeze({
   control: {
     startToCloseTimeout: '2 minutes',
+    scheduleToCloseTimeout: '5 minutes',
     retry: {
       maximumAttempts: 3,
       initialInterval: '1s',
@@ -17,6 +18,7 @@ const SETUP_ACTIVITY_POLICIES = Object.freeze({
   },
   precondition: {
     startToCloseTimeout: '1 minute',
+    scheduleToCloseTimeout: '3 minutes',
     retry: {
       maximumAttempts: 2,
       initialInterval: '1s',
@@ -26,6 +28,7 @@ const SETUP_ACTIVITY_POLICIES = Object.freeze({
   },
   read: {
     startToCloseTimeout: '5 minutes',
+    scheduleToCloseTimeout: '12 minutes',
     retry: {
       maximumAttempts: 4,
       initialInterval: '2s',
@@ -35,6 +38,7 @@ const SETUP_ACTIVITY_POLICIES = Object.freeze({
   },
   mutate: {
     startToCloseTimeout: '10 minutes',
+    scheduleToCloseTimeout: '20 minutes',
     retry: {
       maximumAttempts: 3,
       initialInterval: '3s',

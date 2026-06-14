@@ -33,7 +33,7 @@ vi.mock('../hooks/useIntegrationConnections', () => ({
     connectProvider: vi.fn(),
     providerLabels: {
       gbp: 'Google Business Profile (optional)',
-      gtm: 'Google Tag Manager (required)',
+      gtm: 'Google Tag Manager (optional, recommended)',
       google_ads: 'Google Ads (required)',
     },
     statusLabel: (s: { ready: boolean }) => (s.ready ? 'Connected' : 'Not connected'),
@@ -221,6 +221,93 @@ describe('SetupProgressPage', () => {
     expect(section).toHaveTextContent('2 items')
   })
 
+  it('shows provisioning and structural verification status from run meta', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'STRUCTURAL_VERIFIED',
+          lastErrorSummary: null,
+          meta: {
+            gtmProvisioning: 'provisioned',
+            gtmProvisioningRequestId: 'req-gtm-1',
+            structuralVerification: { missing: [], snippetPresent: true, publicContainerId: 'GTM-MOCK' },
+            structuralVerificationSummary: 'Structural verification passed.',
+          },
+        },
+        steps: [
+          {
+            id: 'step-verify',
+            stepName: 'structural_verification',
+            provider: 'gtm',
+            status: 'success',
+            attemptCount: 1,
+            startedAt: null,
+            endedAt: null,
+            lastErrorSummary: null,
+            details: null,
+          },
+        ],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByRole('heading', { name: /Provisioning status/i })).toBeInTheDocument()
+    expect(screen.getByText(/Google Tag Manager/)).toBeInTheDocument()
+    expect(screen.getByText(/provisioned/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Structural verification/i })).toBeInTheDocument()
+    expect(screen.getByText('Structural verification passed.')).toBeInTheDocument()
+  })
+
+  it('shows GBP guidance when profile is missing but setup continued', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'GBP_AUDIT_COMPLETE',
+          lastErrorSummary: null,
+          meta: {
+            gbpAudit: 'guidance',
+            gbpGuidance: {
+              code: 'GBP_NO_LOCATIONS',
+              title: 'No Google Business Profile location found',
+              message:
+                'Your Google account has a Business Profile account but no locations. Add or claim a business location in Google Business Profile to enable the audit.',
+              blocking: false,
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/No Google Business Profile location found/i)).toBeInTheDocument()
+    expect(screen.getByText(/optional for setup/i)).toBeInTheDocument()
+  })
+
   it('shows GBP skipped notice when audit was not run', async () => {
     seedSession({ userId: TEST_IDS.user })
 
@@ -247,6 +334,73 @@ describe('SetupProgressPage', () => {
     renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
 
     expect(await screen.findByText(/GBP audit skipped/i)).toBeInTheDocument()
+  })
+
+  it('shows conversion action summary when management succeeded in run meta', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'RUNNING',
+          lastErrorSummary: null,
+          meta: {
+            conversionActionManagement: 'ok',
+            conversionActionSlotsResolved: 2,
+            conversionActionsCreated: 1,
+            conversionActionsReused: 1,
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    const heading = await screen.findByRole('heading', { name: /Conversion actions/i })
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section).toHaveTextContent('created 1 missing conversion action')
+    expect(section).toHaveTextContent('Reused')
+    expect(section).toHaveTextContent('Created')
+  })
+
+  it('does not show conversion action summary before management succeeds', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'RUNNING',
+          lastErrorSummary: null,
+          meta: { catalog: 'ready' },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: false,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    await screen.findByText('RUNNING')
+    expect(screen.queryByRole('heading', { name: /Conversion actions/i })).not.toBeInTheDocument()
   })
 
   it('shows Ads conversion catalog summary when present in run meta', async () => {
@@ -408,8 +562,8 @@ describe('SetupProgressPage', () => {
     renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
 
     expect(await screen.findByText(/Install the Google Tag Manager snippet/i)).toBeInTheDocument()
-    expect(screen.getByText('GTM-MOCK')).toBeInTheDocument()
-    expect(screen.getByText(/Verification details/i)).toBeInTheDocument()
+    expect(screen.getAllByText('GTM-MOCK').length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { name: /Structural verification/i })).toBeInTheDocument()
   })
 
   it('shows structural verification missing items for tracking fix', async () => {
@@ -442,7 +596,7 @@ describe('SetupProgressPage', () => {
     renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
 
     expect(await screen.findByText(/Tracking setup needs attention/i)).toBeInTheDocument()
-    const heading = screen.getByRole('heading', { name: /Verification details/i })
+    const heading = screen.getByRole('heading', { name: /Structural verification/i })
     const section = heading.closest('section')
     expect(section).toHaveTextContent('published container version')
   })

@@ -1,5 +1,7 @@
 'use strict';
 
+const { SCRAPE_QUALITY, buildEmptyScrapeSuggestion } = require('../../constants/onboarding');
+
 function socialTotal(socials) {
   if (!socials || typeof socials !== 'object') return 0;
   return Object.values(socials).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
@@ -91,8 +93,8 @@ function mergePhoneCandidates(a, b) {
 }
 
 function pickBusinessName(merged, websiteUrl) {
-  if (merged.ogSiteName) return String(merged.ogSiteName);
-  if (merged.jsonLdNames[0]) return String(merged.jsonLdNames[0]);
+  if (merged.ogSiteName) return String(merged.ogSiteName).trim();
+  if (merged.jsonLdNames[0]) return String(merged.jsonLdNames[0]).trim();
   const t = merged.titles.find((x) => x && x.title && x.title.length > 2);
   if (t) {
     const title = String(t.title).replace(/\s*[|\u2013\u2014-]\s*.*$/, '').trim();
@@ -107,16 +109,106 @@ function pickBusinessName(merged, websiteUrl) {
   }
 }
 
-function deriveServicesHint(merged) {
-  if (merged.signalScore > 0) {
-    const base = ['Core service offering', 'Consultation'];
-    return base;
+function buildContactMethods(merged) {
+  const contact = {};
+  if (merged.emails.length) contact.emails = merged.emails.slice(0, 3);
+  if (merged.phones.length) contact.phones = merged.phones.slice(0, 3);
+  const socials = {};
+  for (const [k, v] of Object.entries(merged.socials || {})) {
+    if (Array.isArray(v) && v.length) socials[k] = v.slice(0, 2);
   }
-  return ['—'];
+  if (Object.keys(socials).length) contact.socials = socials;
+  return Object.keys(contact).length ? contact : null;
 }
 
-function deriveAreasHint(merged) {
-  return merged.signalScore > 0 ? ['Service area TBD'] : ['—'];
+function deriveServices(merged) {
+  const services = [];
+  const desc = merged.metaDescription;
+  if (desc) {
+    const parts = desc
+      .split(/[,;•|]/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 3 && s.length < 80);
+    services.push(...parts);
+  }
+  for (const entry of merged.titles || []) {
+    const title = entry?.title ? String(entry.title).trim() : '';
+    if (!title || title.length < 4 || title.length > 60) continue;
+    const cleaned = title.replace(/\s*[|\u2013\u2014-]\s*.*$/, '').trim();
+    if (cleaned && !services.includes(cleaned)) services.push(cleaned);
+  }
+  const unique = [...new Set(services)].slice(0, 8);
+  if (unique.length) return unique;
+  if (merged.signalScore > 0) return ['General services'];
+  return [];
+}
+
+function deriveServiceAreas(merged, websiteUrl) {
+  const areas = [];
+  const desc = merged.metaDescription || '';
+  const matches = [
+    ...desc.matchAll(/\b(?:serving|located in|based in|service area[s]?:?)\s+([A-Za-z0-9\s,.-]{3,48})/gi),
+  ];
+  for (const m of matches) {
+    const area = m[1]?.trim();
+    if (area) areas.push(area.replace(/\.$/, ''));
+  }
+  if (!areas.length && merged.host) {
+    areas.push(`${merged.host} area`);
+  }
+  if (!areas.length) {
+    try {
+      const host = new URL(websiteUrl).hostname.replace(/^www\./, '');
+      if (host) areas.push(`${host} area`);
+    } catch {
+      /* skip */
+    }
+  }
+  return [...new Set(areas)].slice(0, 5);
+}
+
+function deriveIndustry(merged) {
+  const text = `${merged.metaDescription || ''} ${merged.ogSiteName || ''}`.toLowerCase();
+  const hints = [
+    ['plumb', 'Plumbing & HVAC'],
+    ['hvac', 'Plumbing & HVAC'],
+    ['dental', 'Dental & Healthcare'],
+    ['clinic', 'Healthcare'],
+    ['lawyer', 'Legal Services'],
+    ['attorney', 'Legal Services'],
+    ['restaurant', 'Food & Hospitality'],
+    ['roofing', 'Home Services'],
+    ['cleaning', 'Cleaning Services'],
+    ['landscap', 'Landscaping'],
+    ['electric', 'Electrical Services'],
+  ];
+  for (const [needle, label] of hints) {
+    if (text.includes(needle)) return label;
+  }
+  return merged.signalScore > 2 ? 'Local services' : null;
+}
+
+function deriveGoals(merged, contactMethods) {
+  if (!contactMethods) return null;
+  const goals = { primary: 'generate_leads' };
+  if (contactMethods.phones?.length) goals.preferredContact = 'phone';
+  else if (contactMethods.emails?.length) goals.preferredContact = 'email';
+  return goals;
+}
+
+function assessScrapeQuality(merged, status) {
+  if (status === 'BLOCKED' || status === 'FAILED') return SCRAPE_QUALITY.NONE;
+  if (merged.signalScore >= 4) return SCRAPE_QUALITY.STRONG;
+  if (merged.signalScore > 0) return SCRAPE_QUALITY.WEAK;
+  return SCRAPE_QUALITY.NONE;
+}
+
+function buildDifferentiators(merged, scrapeQuality) {
+  if (merged.metaDescription) return String(merged.metaDescription).trim();
+  if (scrapeQuality === SCRAPE_QUALITY.WEAK) {
+    return 'Limited public signals found — review and add your differentiators manually.';
+  }
+  return 'Could not extract rich text from this site automatically. Enter your value proposition manually.';
 }
 
 /**
@@ -147,6 +239,7 @@ function normalizeScrapeResult(input) {
 
   if (robots && robots.allowed === false) {
     status = 'BLOCKED';
+    warnings.push('robots_disallowed');
   } else {
     const staticBlocked = !!staticRes?.blocked;
     const headBlocked = headlessRes ? !!headlessRes.blocked : false;
@@ -154,6 +247,7 @@ function normalizeScrapeResult(input) {
 
     if (!anyData && staticBlocked && (headlessRes == null || headBlocked)) {
       status = 'BLOCKED';
+      warnings.push('site_blocked');
     } else if (!anyData) {
       status = 'PARTIAL';
       warnings.push('no_signals_extracted');
@@ -163,24 +257,35 @@ function normalizeScrapeResult(input) {
     }
   }
 
-  const businessName = `${pickBusinessName(merged, websiteUrl)} (draft from website)`;
+  const scrapeQuality = assessScrapeQuality(merged, status);
+  const contactMethods = buildContactMethods(merged);
+  const emptyFallback = buildEmptyScrapeSuggestion(websiteUrl);
 
-  const suggested = {
-    businessName,
-    industry: 'Local services',
-    services: deriveServicesHint(merged),
-    serviceAreas: deriveAreasHint(merged),
-    differentiators:
-      merged.metaDescription ||
-      (merged.signalScore > 0
-        ? 'Extracted from public site content.'
-        : 'Could not extract rich text from this site automatically.'),
-    orderValueHint: 'unknown',
-  };
+  const suggested =
+    scrapeQuality === SCRAPE_QUALITY.NONE
+      ? {
+          ...emptyFallback,
+          businessName: pickBusinessName(merged, websiteUrl),
+          differentiators: buildDifferentiators(merged, scrapeQuality),
+          scrapeQuality,
+          manualFallback: true,
+        }
+      : {
+          businessName: pickBusinessName(merged, websiteUrl),
+          industry: deriveIndustry(merged),
+          services: deriveServices(merged),
+          serviceAreas: deriveServiceAreas(merged, websiteUrl),
+          contactMethods,
+          goals: deriveGoals(merged, contactMethods),
+          differentiators: buildDifferentiators(merged, scrapeQuality),
+          orderValueHint: merged.signalScore >= 4 ? 'medium' : 'unknown',
+          scrapeQuality,
+          manualFallback: false,
+        };
 
   const rawPayload = {
     source: 'enterprise_scraper_v1',
-    schemaVersion: 1,
+    schemaVersion: 2,
     scrapeRunId,
     websiteUrl,
     status,
@@ -198,6 +303,7 @@ function normalizeScrapeResult(input) {
       staticBlocked: !!staticRes?.blocked,
       headlessBlocked: headlessRes ? !!headlessRes.blocked : false,
       signalScore: merged.signalScore,
+      scrapeQuality,
     },
   };
 

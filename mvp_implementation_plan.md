@@ -22,7 +22,7 @@ Create a new implementation guide at `docs/v1-implementation-plan.md` that can b
 V1 product outcome:
 - First-time user onboarding captures and confirms business requirements.
 - Google integrations are connected with explicit user consent and provider-safe access.
-- Google Ads is managed through Zuggernaut's MCC-backed Google Ads API model where available.
+- Google Ads is managed through Zuggernaut's MCC-backed Google Ads API model where available, **with strict enforcement of critical campaign parameters.**
 - GTM is provisioned or selected through the user's OAuth grant; if missing, Zuggernaut can create a GTM account/container with explicit permission.
 - GBP remains read-only in V1: audit available profile data and show missing information; do not create or modify GBP resources.
 - GTM conversion tracking is configured and verified before Ads campaign creation.
@@ -64,12 +64,15 @@ Steps:
 - Store confirmed business context separately from raw scrape output.
 
 Output:
-- `BusinessContext` is the canonical business input for all later blocks.
+- `BusinessContext` is the canonical business input for all later blocks, **and must contain all parameters required for Google Ads campaign creation as per the prioritized list.**
 
 ### Block 2: Google Ads Setup Module (V1 Channel Block)
 This is the first channel block to build.
 
 First-time setup layer:
+- **Pre-requisites for Workflow Progression:**
+    - The `BusinessContext` must be clear and complete with all necessary data for campaign creation.
+    - A valid and healthy Google Ads connection must be established and verified.
 - Connect Google Ads with OAuth and MCC-backed Google Ads API access.
 - Discover or provision a Google Ads customer account through the MCC flow where allowed.
 - Connect GTM with OAuth per client.
@@ -78,7 +81,8 @@ First-time setup layer:
 - If GBP is missing, show missing-profile guidance; do not create or mutate GBP in V1.
 - Fetch or create required conversion actions in Google Ads.
 - Create GTM conversion tracking configuration.
-- Create initial Google Ads campaigns after structural verification.
+- **Create initial Google Ads campaigns after structural verification, strictly enforcing parameters from the Core Campaign Definition & Strategy, Ad Group Structure & Ad Creative, and Core Targeting & Conversion Goal Linking buckets.**
+- The workflow will not proceed if any critical parameters are missing or invalid.
 
 Repeated-use layer, deferred but model-aware:
 - Return to change configuration.
@@ -91,15 +95,15 @@ The implementation guide will include this flow:
 ```mermaid
 flowchart TD
   user["User"] --> onboarding["Block 1: Business Onboarding"]
-  onboarding --> businessContext["BusinessContext"]
+  onboarding --> businessContext["BusinessContext (validated for critical parameters)"]
   businessContext --> connect["Connect Google Integrations"]
   connect --> discover["Discover or Provision Resources"]
   discover --> setupRun["SetupRun Workflow"]
   setupRun --> gbpAudit["GBP Read-Only Audit"]
-  setupRun --> adsCatalog["Ads Conversion Catalog"]
+  setupRun --> adsCatalog["Ads Conversion Catalog (create if missing)"]
   setupRun --> gtmSetup["GTM Conversion Setup"]
   gtmSetup --> verification["Structural Verification"]
-  verification --> adsCreate["Google Ads Campaign Creation"]
+  verification --> adsCreate["Google Ads Campaign Creation (with strict parameter enforcement)"]
   adsCreate --> running["Running Dashboard"]
 ```
 
@@ -109,21 +113,21 @@ MongoDB collections are defined with Mongoose in `backend/models/`. The goal is 
 
 ### Mental model
 
-| Concern | Model(s) |
-|--------|-----------|
-| Identity | `User` |
-| Canonical business inputs (confirmed by user) | `BusinessContext` |
-| Workflow run state (Temporal + dashboard) | `SetupRun`, `SetupStepExecution` |
-| OAuth and connection health per integration | `IntegrationConnection` |
-| Read-only payloads fetched from providers (audit, catalogs, snapshots) | `ProviderSnapshot` |
+| Concern                                          | Model(s)              |
+|--------------------------------------------------|-----------------------|
+| Identity                                         | `User`                |
+| Canonical business inputs (confirmed by user)    | `BusinessContext`     |
+| Workflow run state (Temporal + dashboard)        | `SetupRun`, `SetupStepExecution` |
+| OAuth and connection health per integration      | `IntegrationConnection` |
+| Read-only payloads fetched from providers (audit, catalogs, snapshots) | `ProviderSnapshot`    |
 | Resources **created or selected** in external systems (ids for idempotent retries) | `IntegrationArtifact` |
-| GBP audit conclusions vs `BusinessContext` | `AuditReport` |
-| Intended Google Ads structure **before** create | `CampaignPlan` |
+| GBP audit conclusions vs `BusinessContext`       | `AuditReport`         |
+| Intended Google Ads structure **before** create | `CampaignPlan`        |
 
 ### Core models (V1)
 
 - **`User`**: Authentication identity (e.g. email, linking to OAuth subject). References `businessId` or primary `BusinessContext` as product design dictates.
-- **`BusinessContext`**: Single source of truth for **confirmed** business fields after onboarding/edits; never overwritten by raw scrape output without user confirmation (`businessId`).
+- **`BusinessContext`**: Single source of truth for **confirmed** business fields after onboarding/edits; never overwritten by raw scrape output without user confirmation (`businessId`). **Must contain all parameters required for Google Ads campaign creation as per the prioritized list.**
 - **`SetupRun`**: One record per orchestrated setup attempt; ties to Temporal workflow id/state; aggregates status for UI (`businessId`).
 - **`SetupStepExecution`**: One record per logical step inside a run (GBP audit, catalog fetch, GTM setup, verification, campaign creation); tracks status, errors, retries (`setupRunId`, `businessId`, `provider`, `stepName`).
 - **`IntegrationConnection`**: Per provider (GBP / GTM / Google Ads)—tokens, expiry, scopes, provider account identifiers; **encrypt at rest**, never expose tokens to frontend; selective `select:false` fields.
@@ -136,7 +140,7 @@ MongoDB collections are defined with Mongoose in `backend/models/`. The goal is 
 
 - Every tenant-scoped document includes **`businessId`** for isolation and indexing.
 - **`SetupRun`** is the backbone for workflow-visible state in MongoDB (Temporal holds execution; Mongo holds durable summaries for API/dashboard).
-- **`IntegrationArtifact`** is the source of truth for **external resource ids** and supports **idempotent** activities (“find by `setupRunId` + `provider` + `artifactType` + `externalId` before create”).
+- **`IntegrationArtifact`** is the source of truth for **external resource ids** and supports **idempotent** activities (“find by `setupRunId` + `provider` + `artifactType` + stable logical identity” (`externalId` / idempotency keys)). Duplicate external creates on retry are unacceptable in V1.
 - Raw scrape output must never overwrite **`BusinessContext`** without user confirmation.
 
 ### Implementation notes
@@ -239,7 +243,7 @@ Rules:
 - **Provider-changing activities must be idempotent.** Before create/mutate, look up **`IntegrationArtifact`** (and **`ProviderSnapshot`** for read-only payloads) keyed by **`setupRunId` + `provider` + `artifactType` + stable logical identity** (`externalId` / idempotency keys). Duplicate external creates on retry are unacceptable in V1.
 - **Secrets stay out of workflow arguments.** Load OAuth/access material inside activities from **`IntegrationConnection`** (encrypted fields stay server-side; never serialize tokens through workflow signals/inputs destined for histories you do not intend to treat as opaque).
 - **Logging on every setup-facing activity.** Include **`setupRunId`**, **`businessId`**, **`stepName`**, and **`provider`** where applicable (aligned with Phase 2 logging).
-- **Explicit timeouts and retry policies.** Set **`startToCloseTimeout`** and **`RetryPolicy`** per activity defaults are fine globally; tighten or broaden per risky calls (OAuth, publishes, Ads mutations). Validation errors should usually be **non-retryable**.
+- **Explicit timeouts and retry policies.** Set **`startToCloseTimeout`** and **`RetryPolicy`** per activity defaults are fine globally; tighten or broaden per risky calls (OAuth, publishes, Ads mutations). Validation errors should usually be **non-retryable** and indicate a need for user intervention or `BusinessContext` refinement.
 - **Workflow versioning.** When workflow **logic meaningfully changes**, use Temporal **patch/versioning flows** compatible with replay; do not freely rewrite live workflow definitions ignoring in-flight runs.
 - **Extending channels later.** Adding a provider = new enums + `backend/services/capabilities/<provider>/` + new activities—reuse **`SetupRun` / `IntegrationArtifact`** patterns before inventing parallel models.
 
@@ -250,6 +254,7 @@ Backend instructions:
 - Create versioned APIs for starting onboarding, submitting a website URL, saving confirmed business context, and starting setup.
 - Reuse scraper logic from `backend/services/scraper.js`, but normalize the result into `BusinessContext`.
 - Preserve fallback manual entry when scrape fails.
+- **Implement validation to ensure `BusinessContext` contains all parameters required by Google Ads campaign creation (from the prioritized buckets 1-3) before initiating campaign setup.**
 
 Frontend instructions:
 - Use the existing demo flow patterns from `frontend/src/demo/steps/DemoStep0.jsx`.
@@ -285,7 +290,7 @@ Instructions:
 
 Provider rules:
 - **GTM:** discover accounts, containers, and workspaces via Tag Manager API. If none exist, ask permission to create a GTM account and web container via `POST /tagmanager/v2/accounts` and `POST /tagmanager/v2/accounts/{accountId}/containers`. The authenticated user becomes the account owner.
-- **Google Ads:** use MCC-backed Google Ads API flow where available. Discover or create/select a customer account through the MCC model before campaign setup. Requires `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, and appropriate MCC permissions.
+- **Google Ads:** use MCC-backed Google Ads API flow where available. Discover or create/select a customer account through the MCC model before campaign setup. Requires `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, and appropriate MCC permissions. **The workflow will strictly ensure a provisioned and valid Google Ads customer account before proceeding to campaign creation.**
 - **GBP:** read only. Discover accessible accounts/locations for audit. If none exist, show guidance and missing-profile status; do not create or modify GBP in V1.
 
 Required provider identifiers:
@@ -319,7 +324,7 @@ Instructions:
 - Require a setup-ready Google Ads `customerId` (discovered or provisioned via Phase 5A) before catalog fetch.
 - Fetch conversion actions from Google Ads after Ads connection.
 - Normalize conversion actions into logical categories: calls, forms, both.
-- For primary goal `Both`, deterministically select one call conversion and one form conversion where available.
+- For primary goal `Both`, deterministically select one call conversion and one form conversion where available, **or programmatically create them if missing and required, ensuring they meet the criteria for Core Targeting & Conversion Goal Linking.**
 - Persist full catalog fetch in `ProviderSnapshot`; persist selected conversion identifiers in `IntegrationArtifact` for idempotent linkage.
 
 ### Phase 8: GTM Conversion Setup Capability
@@ -364,6 +369,11 @@ Instructions:
 - Do not create campaigns until the selected or provisioned customer account is persisted.
 - Store MCC/login customer metadata needed for future mutations.
 - Use confirmed `BusinessContext` and selected conversions.
+- **Implement strict validation and explicit parameter definition for campaign creation based on the following prioritized buckets:**
+    1.  **Core Campaign Definition & Strategy**: Ensure all required fields (e.g., Campaign Name, Type, Status, Budget, Bidding Strategy, Network Settings, Compliance) are present and valid.
+    2.  **Ad Group Structure & Ad Creative**: Ensure all required fields for Ad Group and Responsive Search Ad (e.g., Ad Group Name/Type/Status, Ad Group Ad Status, Headlines/Descriptions with character limits and minimum counts, Final URL) are present and valid.
+    3.  **Core Targeting & Conversion Goal Linking**: Ensure all required fields for Keywords, Geographic Targeting, and Campaign Conversion Goal linkage (e.g., Keyword Text/Match Type, Geo Target Constants, Campaign Conversion Goal linkage to valid Conversion Actions) are present and valid.
+- If any required parameter from these buckets is missing or invalid, the workflow step will fail and provide clear error messages.
 - Start with a simple deterministic campaign structure.
 - Avoid complex optimization logic in V1.
 - Store campaign, ad group, ad, and conversion mapping IDs in `IntegrationArtifact`.
@@ -426,7 +436,7 @@ Do not implement these in V1:
 ## Definition of Done For V1
 V1 is done when:
 - A new user can register/login and complete business onboarding.
-- Confirmed `BusinessContext` is stored.
+- Confirmed `BusinessContext` is stored, **and contains all parameters required for Google Ads campaign creation as per the prioritized list.**
 - The user can connect required Google integrations.
 - Missing GTM resources are detected and can be provisioned after explicit approval.
 - Missing Google Ads customer access is detected and resolved through the MCC-backed Ads provisioning/selection flow where available.
@@ -434,7 +444,7 @@ V1 is done when:
 - GBP audit is generated read-only when a GBP profile is accessible; missing GBP access is surfaced as guidance, not a blocker.
 - Google Ads conversion catalog is fetched or required conversion actions are made available.
 - GTM conversion tracking is configured and structurally verified.
-- Google Ads campaigns are created automatically after verification.
+- Google Ads campaigns are created automatically after verification, **with all parameters from the Core Campaign Definition & Strategy, Ad Group Structure & Ad Creative, and Core Targeting & Conversion Goal Linking buckets explicitly defined and validated.**
 - The dashboard shows GBP audit, GTM status, Ads campaign status, provisioning status, and stuck-state recovery instructions.
 - Retries do not duplicate external GTM or Ads resources.
 

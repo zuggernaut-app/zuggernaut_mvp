@@ -38,6 +38,28 @@ async function recordSetupFailureSupport(ctx) {
   return compensation;
 }
 
+/**
+ * Records recovery metadata for non-failed terminal setup states (snippet pending, tracking fix).
+ * @param {object} ctx
+ */
+async function recordSetupRecoveryState(ctx) {
+  const { setupRunId, failedStep, errorCode, summary, logger } = ctx;
+
+  await mergeSetupRunMeta(
+    setupRunId,
+    {
+      supportState: {
+        failedStep,
+        errorCode: errorCode ?? null,
+        summary: summary ?? null,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+    logger
+  );
+}
+
 module.exports = {
   recordSetupFailureSupport,
+  recordSetupRecoveryState,
 };

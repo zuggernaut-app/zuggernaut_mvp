@@ -5,7 +5,7 @@
  * Used to populate IntegrationProvisioningRequest.requestedResources.
  */
 const DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER = Object.freeze({
-  gtm: Object.freeze(['gtm_account', 'gtm_container', 'gtm_workspace']),
+  gtm: Object.freeze(['gtm_container', 'gtm_workspace']),
   google_ads: Object.freeze(['google_ads_customer']),
   gbp: Object.freeze([]),
 });
@@ -17,7 +17,15 @@ const REQUIRED_PROVIDER_IDENTIFIER_KEYS = Object.freeze({
   gbp: Object.freeze([]),
 });
 
+/** Providers that must be setup-ready before starting a setup run. */
+const REQUIRED_FOR_SETUP_PROVIDERS = Object.freeze(['google_ads']);
+
+/** Connected when possible; workflow continues without these (GBP audit / GTM tags). */
+const OPTIONAL_FOR_SETUP_PROVIDERS = Object.freeze(['gtm', 'gbp']);
+
 module.exports = {
   DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER,
   REQUIRED_PROVIDER_IDENTIFIER_KEYS,
+  REQUIRED_FOR_SETUP_PROVIDERS,
+  OPTIONAL_FOR_SETUP_PROVIDERS,
 };

@@ -12,10 +12,11 @@ const {
   SCRAPE_WORKFLOW_NAME,
   resolveTemporalTaskQueue,
 } = require('../../constants/temporalDefaults');
+const { SCRAPE_TERMINAL_STATUSES } = require('../../constants/onboarding');
 
 const router = express.Router();
 
-const TERMINAL_SCRAPE_STATUSES = new Set(['SUCCEEDED', 'PARTIAL', 'BLOCKED', 'FAILED']);
+const TERMINAL_SCRAPE_STATUSES = new Set(SCRAPE_TERMINAL_STATUSES);
 
 router.post('/business', requireAuth, async (req, res) => {
   const userId = new mongoose.Types.ObjectId(req.user.id);
@@ -171,6 +172,11 @@ router.get('/business/:businessId/scrape-runs/:scrapeRunId', requireAuth, async 
       ? scrapeRun.resultSuggested
       : null;
 
+  const scrapeQuality =
+    suggested && typeof suggested.scrapeQuality === 'string' ? suggested.scrapeQuality : null;
+  const manualFallback =
+    suggested && typeof suggested.manualFallback === 'boolean' ? suggested.manualFallback : null;
+
   return res.status(200).json({
     scrapeRun: {
       id: scrapeRun._id.toString(),
@@ -180,6 +186,8 @@ router.get('/business/:businessId/scrape-runs/:scrapeRunId', requireAuth, async 
       status: scrapeRun.status,
       lastErrorSummary: scrapeRun.lastErrorSummary ?? null,
       suggested,
+      scrapeQuality,
+      manualFallback,
       createdAt: scrapeRun.createdAt,
       updatedAt: scrapeRun.updatedAt,
     },

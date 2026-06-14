@@ -10,8 +10,28 @@ const {
   validateHttpUrl,
   MAX_SINGLE_LINE_FIELD,
 } = require('../../lib/validation');
+const { BUSINESS_CONTEXT_CONFIRM_REQUIRED } = require('../../constants/onboarding');
 
 const router = express.Router();
+
+function serializeBusinessContext(doc) {
+  return {
+    businessId: doc.businessId.toString(),
+    userId: doc.userId.toString(),
+    websiteUrl: doc.websiteUrl ?? null,
+    businessName: doc.businessName ?? null,
+    industry: doc.industry ?? null,
+    services: doc.services ?? [],
+    serviceAreas: doc.serviceAreas ?? [],
+    contactMethods: doc.contactMethods ?? null,
+    audienceSignals: doc.audienceSignals ?? null,
+    goals: doc.goals ?? null,
+    differentiators: doc.differentiators ?? null,
+    orderValueHint: doc.orderValueHint ?? null,
+    confirmedAt: doc.confirmedAt ?? null,
+    updatedAt: doc.updatedAt,
+  };
+}
 
 /** Canonical fields users may confirm/edit (PUT body subset). */
 const EDITABLE_FIELDS = new Set([
@@ -26,6 +46,27 @@ const EDITABLE_FIELDS = new Set([
   'differentiators',
   'orderValueHint',
 ]);
+
+router.get('/:businessId', requireAuth, async (req, res) => {
+  const businessIdRaw = req.params.businessId;
+  if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
+    return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
+  }
+  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  const userId = new mongoose.Types.ObjectId(req.user.id);
+
+  const doc = await BusinessContext.findOne({ businessId, userId }).lean();
+  if (!doc) {
+    return res.status(404).json({
+      error: 'not_found',
+      message: 'Business context not found for this user',
+    });
+  }
+
+  return res.status(200).json({
+    businessContext: serializeBusinessContext(doc),
+  });
+});
 
 router.put('/:businessId', requireAuth, async (req, res, next) => {
   const businessIdRaw = req.params.businessId;
@@ -119,6 +160,16 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
     }
   }
 
+  for (const field of BUSINESS_CONTEXT_CONFIRM_REQUIRED) {
+    const value = doc[field];
+    if (typeof value !== 'string' || !value.trim()) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: `${field} is required to confirm business context`,
+      });
+    }
+  }
+
   doc.confirmedAt = new Date();
   try {
     await doc.save();
@@ -132,22 +183,7 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
   }
 
   return res.status(200).json({
-    businessContext: {
-      businessId: doc.businessId.toString(),
-      userId: doc.userId.toString(),
-      websiteUrl: doc.websiteUrl ?? null,
-      businessName: doc.businessName ?? null,
-      industry: doc.industry ?? null,
-      services: doc.services ?? [],
-      serviceAreas: doc.serviceAreas ?? [],
-      contactMethods: doc.contactMethods ?? null,
-      audienceSignals: doc.audienceSignals ?? null,
-      goals: doc.goals ?? null,
-      differentiators: doc.differentiators ?? null,
-      orderValueHint: doc.orderValueHint ?? null,
-      confirmedAt: doc.confirmedAt,
-      updatedAt: doc.updatedAt,
-    },
+    businessContext: serializeBusinessContext(doc),
   });
 });
 

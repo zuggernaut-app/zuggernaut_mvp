@@ -15,7 +15,7 @@ const {
   mergeSetupRunMeta,
 } = require('./lib/setupLifecycle');
 const { parseSetupActivityIds, safeErrorMessage } = require('./lib/setupActivityInput');
-const { recordSetupFailureSupport } = require('./lib/setupFailureSupport');
+const { recordSetupFailureSupport, recordSetupRecoveryState } = require('./lib/setupFailureSupport');
 const {
   getConnectionStatus,
   getAllConnectionStatuses,
@@ -43,6 +43,7 @@ const {
   assertGoogleAdsSetupReady,
   GoogleAdsSetupError,
 } = require('../services/capabilities');
+const conversionActionManagement = require('../services/capabilities/adsConversionActionManagementService');
 
 async function blockSetupForMissingProviders({
   setupRunId,
@@ -232,6 +233,21 @@ async function loadSetupContextActivity(input) {
 
   await patchSetupRun(setupRunId, { status: S.RUNNING, lastErrorSummary: null }, logger);
 
+  try {
+    const strategy = conversionActionManagement.deriveConversionStrategy(bc);
+    await conversionActionManagement.persistConversionStrategy(businessId, strategy, logger);
+  } catch (err) {
+    logger.warn(
+      {
+        setupRunId: rawId,
+        businessId: businessId.toString(),
+        stepName: SETUP_STEP_NAMES.LOAD_CONTEXT,
+        error: safeErrorMessage(err),
+      },
+      'conversion strategy derivation failed'
+    );
+  }
+
   logger.info(
     {
       setupRunId: rawId,
@@ -304,18 +320,58 @@ async function checkGtmPreconditionsActivity(input) {
     logger,
   });
 
-  return handleProviderProvisioningPrecheck({
+  const status = await getConnectionStatus(businessId, 'gtm');
+  if (status.ready) {
+    await markStepSuccess({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.CHECK_GTM_CONNECTION,
+      provider: 'gtm',
+      details: status,
+      logger,
+    });
+    return {
+      outcome: 'ok',
+      provider: 'gtm',
+      ready: true,
+      reason: status.reason,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+
+  await markStepSkipped({
     setupRunId,
     businessId,
-    rawRun,
-    rawBiz,
-    provider: 'gtm',
     stepName: SETUP_STEP_NAMES.CHECK_GTM_CONNECTION,
-    patchStatus: S.GTM_PROVISIONING_REQUIRED,
-    outcomeKey: 'gtm_provisioning_required',
-    metaKey: 'gtmProvisioning',
+    provider: 'gtm',
+    details: {
+      optional: true,
+      reason: status.reason,
+      nextAction: status.nextAction,
+      identifiersMissing: status.identifiersMissing,
+    },
     logger,
   });
+  await mergeSetupRunMeta(
+    setupRunId,
+    {
+      gtmOptional: true,
+      gtmNudgeReason: status.reason,
+      gtmNudgeNextAction: status.nextAction ?? null,
+    },
+    logger
+  );
+
+  return {
+    outcome: 'not_ready',
+    provider: 'gtm',
+    ready: false,
+    reason: status.reason,
+    nextAction: status.nextAction,
+    setupRunId: rawRun,
+    businessId: rawBiz,
+  };
 }
 
 /**
@@ -401,6 +457,60 @@ async function discoverGoogleAdsCustomersActivity(input) {
         provider: 'google_ads',
         customerId: discovery.customerId,
         accessibleCustomerIds: discovery.accessibleCustomerIds,
+        setupRunId: rawRun,
+        businessId: rawBiz,
+      };
+    }
+
+    if (discovery.outcome === 'selection_required') {
+      const msg = 'Select a Google Ads customer on the setup page before continuing.';
+      await markStepSkipped({
+        setupRunId,
+        businessId,
+        stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+        provider: 'google_ads',
+        details: {
+          selectionRequired: true,
+          accessibleCustomerCount: discovery.accessibleCustomerIds?.length ?? 0,
+        },
+        logger,
+      });
+      await patchSetupRun(
+        setupRunId,
+        { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+        logger
+      );
+      return {
+        outcome: 'manual_review',
+        provider: 'google_ads',
+        errorCode: 'ADS_CUSTOMER_SELECTION_REQUIRED',
+        message: msg,
+        accessibleCustomerIds: discovery.accessibleCustomerIds ?? [],
+        setupRunId: rawRun,
+        businessId: rawBiz,
+      };
+    }
+
+    if (discovery.outcome !== 'provisioning_required') {
+      const msg = `Unexpected Google Ads discovery outcome: ${discovery.outcome}`;
+      await markStepFailed({
+        setupRunId,
+        businessId,
+        stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+        provider: 'google_ads',
+        summary: msg,
+        logger,
+      });
+      await patchSetupRun(
+        setupRunId,
+        { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+        logger
+      );
+      return {
+        outcome: 'manual_review',
+        provider: 'google_ads',
+        errorCode: 'ADS_DISCOVERY_UNEXPECTED',
+        message: msg,
         setupRunId: rawRun,
         businessId: rawBiz,
       };
@@ -699,7 +809,7 @@ async function checkProviderPreconditionsActivity(input) {
     setupRunId,
     businessId,
     stepName: SETUP_STEP_NAMES.PROVIDER_PRECONDITIONS,
-    details: { required: ['gtm', 'google_ads'] },
+    details: { required: ['google_ads'] },
     logger,
   });
 
@@ -759,6 +869,11 @@ async function runGbpAuditActivity(input) {
         },
         logger
       );
+      await patchSetupRun(
+        setupRunId,
+        { status: S.GBP_AUDIT_COMPLETE, lastErrorSummary: null },
+        logger
+      );
       return {
         outcome: 'skipped',
         setupRunId: rawRun,
@@ -779,6 +894,11 @@ async function runGbpAuditActivity(input) {
     await mergeSetupRunMeta(
       setupRunId,
       { gbpAudit: 'complete', gbpAuditSummary: audit.summary },
+      logger
+    );
+    await patchSetupRun(
+      setupRunId,
+      { status: S.GBP_AUDIT_COMPLETE, lastErrorSummary: null },
       logger
     );
     return { outcome: 'ok', setupRunId: rawRun, businessId: rawBiz, summary: audit.summary };
@@ -827,6 +947,11 @@ async function fetchAdsConversionCatalogActivity(input) {
       { catalog: 'ready', catalogSummary: catalog.summary },
       logger
     );
+    await patchSetupRun(
+      setupRunId,
+      { status: S.CONVERSION_CATALOG_READY, lastErrorSummary: null },
+      logger
+    );
     return {
       outcome: 'ok',
       setupRunId: rawRun,
@@ -868,6 +993,25 @@ async function runGtmConversionSetupActivity(input) {
     logger,
   });
 
+  const gtmStatus = await getConnectionStatus(businessId, 'gtm');
+  if (!gtmStatus.ready) {
+    await markStepSkipped({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.GTM_CONVERSION_SETUP,
+      provider: 'gtm',
+      details: { optional: true, reason: gtmStatus.reason, nextAction: gtmStatus.nextAction },
+      logger,
+    });
+    return {
+      outcome: 'skipped',
+      provider: 'gtm',
+      reason: gtmStatus.reason,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+
   try {
     const result = await runGtmConversionSetup({ setupRunId, businessId, logger });
     await markStepSuccess({
@@ -881,6 +1025,11 @@ async function runGtmConversionSetupActivity(input) {
     await mergeSetupRunMeta(
       setupRunId,
       { gtm: 'setup_complete', gtmSummary: result.summary },
+      logger
+    );
+    await patchSetupRun(
+      setupRunId,
+      { status: S.GTM_SETUP_COMPLETE, lastErrorSummary: null },
       logger
     );
     return { outcome: 'ok', setupRunId: rawRun, businessId: rawBiz, summary: result.summary };
@@ -940,6 +1089,23 @@ async function runStructuralVerificationActivity(input) {
     throw ApplicationFailure.nonRetryable(msg, 'StructuralVerificationError');
   }
 
+  if (verdict.result === 'skipped') {
+    await markStepSkipped({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION,
+      provider: 'gtm',
+      details: { evidence: verdict.evidence, summary: verdict.summary, optional: true },
+      logger,
+    });
+    await mergeSetupRunMeta(
+      setupRunId,
+      { structuralVerification: verdict.evidence, structuralVerificationSummary: verdict.summary },
+      logger
+    );
+    return { outcome: 'pass', skipped: true, setupRunId: rawRun, businessId: rawBiz, detail: verdict };
+  }
+
   if (verdict.result === 'pass') {
     await markStepSuccess({
       setupRunId,
@@ -952,9 +1118,13 @@ async function runStructuralVerificationActivity(input) {
     await mergeSetupRunMeta(
       setupRunId,
       { structuralVerification: verdict.evidence, structuralVerificationSummary: verdict.summary },
+      logger,
+    );
+    await patchSetupRun(
+      setupRunId,
+      { status: S.STRUCTURAL_VERIFIED, lastErrorSummary: null },
       logger
     );
-    await patchSetupRun(setupRunId, { lastErrorSummary: null }, logger);
     return { outcome: 'pass', setupRunId: rawRun, businessId: rawBiz, detail: verdict };
   }
 
@@ -981,6 +1151,13 @@ async function runStructuralVerificationActivity(input) {
       },
       logger
     );
+    await recordSetupRecoveryState({
+      setupRunId,
+      failedStep: SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION,
+      errorCode: 'GTM_SNIPPET_PENDING',
+      summary: verdict.summary,
+      logger,
+    });
     return { outcome: 'snippet_pending', setupRunId: rawRun, businessId: rawBiz, detail: verdict };
   }
 
@@ -1007,6 +1184,13 @@ async function runStructuralVerificationActivity(input) {
       },
       logger
     );
+    await recordSetupRecoveryState({
+      setupRunId,
+      failedStep: SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION,
+      errorCode: 'SETUP_NEEDS_TRACKING_FIX',
+      summary: verdict.summary,
+      logger,
+    });
     return { outcome: 'needs_tracking_fix', setupRunId: rawRun, businessId: rawBiz, detail: verdict };
   }
 
@@ -1077,13 +1261,33 @@ async function createAdsCampaignActivity(input) {
   } catch (err) {
     const msg = safeErrorMessage(err, 'Ads campaign creation failed');
     const code = err instanceof AdsProviderPreconditionError ? err.code : 'AdsCampaignError';
+    const googleAdsDetails =
+      err instanceof AdsProviderPreconditionError ? err.googleAdsDetails : undefined;
+    logger.error(
+      {
+        setupRunId: rawRun,
+        businessId: rawBiz,
+        stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
+        provider: 'google_ads',
+        code,
+        fieldViolations: googleAdsDetails?.fieldViolations ?? [],
+        googleAdsErrors: googleAdsDetails?.googleAdsErrors ?? [],
+        requestId: googleAdsDetails?.requestId ?? null,
+      },
+      'ads campaign creation failed'
+    );
     await markStepFailed({
       setupRunId,
       businessId,
       stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
       provider: 'google_ads',
       summary: msg,
-      details: err instanceof AdsProviderPreconditionError ? { code: err.code } : undefined,
+      details: {
+        code,
+        fieldViolations: googleAdsDetails?.fieldViolations ?? [],
+        googleAdsErrors: googleAdsDetails?.googleAdsErrors ?? [],
+        requestId: googleAdsDetails?.requestId ?? null,
+      },
       logger,
     });
     await recordSetupFailureSupport({
@@ -1370,6 +1574,147 @@ async function provisionGoogleAdsCustomerActivity(input) {
   }
 }
 
+/**
+ * Resolves required conversion action slots via catalog match and optional creation.
+ * @see activities/lib/manageAdsConversionActionsActivity.contract.js
+ * @param {{ setupRunId: string, businessId: string }} input
+ */
+async function manageAdsConversionActionsActivity(input) {
+  const logger = createLogger({ name: 'manageAdsConversionActionsActivity' });
+  const { rawRun, rawBiz, setupRunId, businessId } = parseSetupActivityIds(input);
+
+  await markStepRunning({
+    setupRunId,
+    businessId,
+    stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+    provider: 'google_ads',
+    logger,
+  });
+
+  try {
+    const result = await conversionActionManagement.manageConversionActions({
+      setupRunId,
+      businessId,
+      logger,
+    });
+
+    if (result.outcome === 'ok') {
+      await markStepSuccess({
+        setupRunId,
+        businessId,
+        stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+        provider: 'google_ads',
+        details: {
+          slotsResolved: result.slotsResolved,
+          created: result.created,
+          reused: result.reused,
+          resolvedPrimaryGoal: result.strategy?.resolvedPrimaryGoal ?? null,
+        },
+        logger,
+      });
+      await mergeSetupRunMeta(
+        setupRunId,
+        {
+          conversionActionManagement: 'ok',
+          conversionActionSlotsResolved: result.slotsResolved,
+          conversionActionsCreated: result.created,
+          conversionActionsReused: result.reused,
+        },
+        logger
+      );
+      return {
+        outcome: 'ok',
+        slotsResolved: result.slotsResolved,
+        created: result.created,
+        reused: result.reused,
+        setupRunId: rawRun,
+        businessId: rawBiz,
+      };
+    }
+
+    if (result.outcome === 'missing_goal_data') {
+      const msg = result.message ?? 'Business goals are required to derive conversion strategy.';
+      await markStepFailed({
+        setupRunId,
+        businessId,
+        stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+        provider: 'google_ads',
+        summary: msg,
+        details: { code: 'CONVERSION_STRATEGY_MISSING_GOALS' },
+        logger,
+      });
+      await patchSetupRun(
+        setupRunId,
+        { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+        logger
+      );
+      return {
+        outcome: 'manual_review',
+        message: msg,
+        errorCode: 'CONVERSION_STRATEGY_MISSING_GOALS',
+        setupRunId: rawRun,
+        businessId: rawBiz,
+      };
+    }
+
+    if (result.outcome === 'creation_failed') {
+      const msg = result.message ?? 'Conversion action creation failed';
+      const code = result.errorCode ?? 'CONVERSION_ACTION_CREATE_FAILED';
+      await markStepFailed({
+        setupRunId,
+        businessId,
+        stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+        provider: 'google_ads',
+        summary: msg,
+        details: { code, created: result.created ?? 0, reused: result.reused ?? 0 },
+        logger,
+      });
+      await patchSetupRun(setupRunId, { status: S.FAILED, lastErrorSummary: msg }, logger);
+      return {
+        outcome: 'creation_failed',
+        message: msg,
+        errorCode: code,
+        setupRunId: rawRun,
+        businessId: rawBiz,
+      };
+    }
+
+    const msg = result.message ?? 'Conversion action management requires manual review.';
+    await markStepFailed({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      provider: 'google_ads',
+      summary: msg,
+      details: { manualReview: true },
+      logger,
+    });
+    await patchSetupRun(
+      setupRunId,
+      { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+      logger
+    );
+    return {
+      outcome: 'manual_review',
+      message: msg,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  } catch (err) {
+    const msg = safeErrorMessage(err, 'Conversion action management failed');
+    await markStepFailed({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      provider: 'google_ads',
+      summary: msg,
+      logger,
+    });
+    await patchSetupRun(setupRunId, { status: S.FAILED, lastErrorSummary: msg }, logger);
+    throw ApplicationFailure.nonRetryable(msg, 'ConversionActionManagementError');
+  }
+}
+
 module.exports = {
   loadSetupContextActivity,
   checkGbpPreconditionsActivity,
@@ -1384,6 +1729,7 @@ module.exports = {
   provisionGtmResourcesActivity,
   provisionGoogleAdsCustomerActivity,
   runGbpAuditActivity,
+  manageAdsConversionActionsActivity,
   fetchAdsConversionCatalogActivity,
   runGtmConversionSetupActivity,
   runStructuralVerificationActivity,

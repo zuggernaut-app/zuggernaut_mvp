@@ -11,7 +11,10 @@ const {
   isGoogleOAuthProvider,
 } = require('../../constants/googleOAuth');
 const { encryptToken } = require('../../lib/crypto/tokenEncryption');
+const { PROVIDERS } = require('../../constants/enums');
 const { discoverProviderConnection } = require('./providerDiscoveryService');
+const { mergeRediscoveryWithSavedSelection } = require('./providerDiscoveryResult');
+const { getFreshGoogleAccessToken } = require('./googleTokenService');
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
 const OAUTH_STATE_PURPOSE = 'google_oauth_connect';
@@ -232,6 +235,50 @@ async function completeGoogleOAuthCallback(input) {
   };
 }
 
+/**
+ * Re-run read-only discovery for OAuth-connected providers (e.g. after manual GTM account creation).
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {readonly string[]} [providers]
+ */
+async function rediscoverConnectedIntegrations(businessId, providers = PROVIDERS) {
+  const updated = [];
+
+  for (const provider of providers) {
+    const row = await IntegrationConnection.findOne({ businessId, provider })
+      .select('+accessTokenEnc +refreshTokenEnc connectionHealth providerIdentifiers')
+      .lean();
+
+    if (!row) continue;
+    if (row.connectionHealth === 'needs_reauth') continue;
+    if (!row.accessTokenEnc && !row.refreshTokenEnc) continue;
+
+    try {
+      const accessToken = await getFreshGoogleAccessToken({ businessId, provider });
+      const discovery = await discoverProviderConnection(provider, accessToken);
+      const merged = mergeRediscoveryWithSavedSelection(
+        provider,
+        row.providerIdentifiers,
+        discovery
+      );
+      await IntegrationConnection.findOneAndUpdate(
+        { businessId, provider },
+        {
+          $set: {
+            connectionHealth: merged.connectionHealth,
+            providerIdentifiers: merged.providerIdentifiers,
+          },
+        }
+      );
+      updated.push(provider);
+    } catch {
+      // Keep the last known connection state when discovery cannot run.
+    }
+  }
+
+  return updated;
+}
+
 function buildFrontendRedirectUrl({ provider, outcome, reason, returnPath }) {
   const base = getFrontendRedirectBase().replace(/\/+$/, '');
   const path =
@@ -252,4 +299,5 @@ module.exports = {
   parseScopeString,
   getOAuthRedirectUri,
   fetchProviderIdentifiers,
+  rediscoverConnectedIntegrations,
 };

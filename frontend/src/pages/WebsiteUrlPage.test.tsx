@@ -12,7 +12,10 @@ function renderSuggestions(): ReturnType<typeof render> {
       <OnboardingProvider>
         <Routes>
           <Route path="/onboarding/suggestions" element={<WebsiteUrlPage />} />
-          <Route path="/onboarding/business" element={<div data-testid="business-target">business</div>} />
+          <Route
+            path="/onboarding/business"
+            element={<div data-testid="business-target">business</div>}
+          />
           <Route path="/onboarding/review" element={<div data-testid="review-target">review</div>} />
         </Routes>
       </OnboardingProvider>
@@ -25,15 +28,7 @@ describe('WebsiteUrlPage', () => {
     seedSession({})
   })
 
-  it('redirects to business start when draft or preview is missing', async () => {
-    renderSuggestions()
-
-    await waitFor(() => {
-      expect(screen.getByTestId('business-target')).toBeInTheDocument()
-    })
-  })
-
-  it('redirects when scrape preview missing', async () => {
+  it('redirects when scrape preview is missing', async () => {
     seedSession({ userId: TEST_IDS.user, businessId: TEST_IDS.business })
 
     renderSuggestions()
@@ -43,53 +38,34 @@ describe('WebsiteUrlPage', () => {
     })
   })
 
-  it('lists suggestion fields and navigates to review', async () => {
+  it('shows weak scrape warning and navigates to review', async () => {
     seedSession({
       userId: TEST_IDS.user,
       businessId: TEST_IDS.business,
       scrapePreview: {
-        websiteUrl: 'https://shop.example',
+        websiteUrl: 'https://weak.example',
+        scrapeStatus: 'PARTIAL',
+        scrapeQuality: 'weak',
         suggested: {
-          businessName: 'ShopCo',
-          industry: 'Retail',
-          services: ['a', 'b'],
-          serviceAreas: ['north'],
-          differentiators: 'Fast',
-          orderValueHint: '50',
+          businessName: 'Weak Co',
+          services: [],
+          contactMethods: { emails: ['hi@weak.example'] },
         },
       },
     })
 
+    const user = userEvent.setup()
     renderSuggestions()
 
     await screen.findByRole('heading', { name: /suggested business details/i })
-    expect(screen.getByText('https://shop.example')).toBeInTheDocument()
-    expect(screen.getByText('ShopCo')).toBeInTheDocument()
-    expect(screen.getByText('Retail')).toBeInTheDocument()
-    expect(screen.getByText('a')).toBeInTheDocument()
-    expect(screen.getByText('Fast')).toBeInTheDocument()
+    expect(screen.getByText(/limited data was extracted/i)).toBeInTheDocument()
+    expect(screen.getByText('Weak Co')).toBeInTheDocument()
+    expect(screen.getByText(/hi@weak.example/)).toBeInTheDocument()
 
-    await userEvent.setup().click(screen.getByRole('button', { name: /review & edit details/i }))
+    await user.click(screen.getByRole('button', { name: /review & edit details/i }))
 
     await waitFor(() => {
       expect(screen.getByTestId('review-target')).toBeInTheDocument()
     })
-  })
-
-  it('renders dashes when suggestion fields are absent', async () => {
-    seedSession({
-      userId: TEST_IDS.user,
-      businessId: TEST_IDS.business,
-      scrapePreview: {
-        websiteUrl: 'https://minimal.example',
-        suggested: {},
-      },
-    })
-
-    renderSuggestions()
-
-    await screen.findByRole('heading', { name: /suggested business details/i })
-    const dashes = screen.getAllByText('—')
-    expect(dashes.length).toBeGreaterThanOrEqual(4)
   })
 })

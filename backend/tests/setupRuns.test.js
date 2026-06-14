@@ -270,10 +270,12 @@ describe('setup-runs API', () => {
         outcome: expect.any(Object),
         stuckState: expect.any(Object),
         gbpAudit: expect.any(Object),
+        conversionActions: expect.any(Object),
         adsCatalog: expect.any(Object),
         gtmSetup: expect.any(Object),
         structuralVerification: expect.any(Object),
         adsCampaign: expect.any(Object),
+        recommendations: expect.any(Array),
         steps: expect.any(Array),
       })
     );

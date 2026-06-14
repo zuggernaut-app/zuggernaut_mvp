@@ -103,6 +103,7 @@ const capabilities = require('../services/capabilities');
 const { SETUP_STEP_NAMES } = require('../constants/setupWorkflow');
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { allScopesForProvider } = require('../constants/googleOAuth');
+const { connectGoogleIntegrations } = require('./fixtures/setupRunFixtures');
 const {
   loadSetupContextActivity,
   checkGbpPreconditionsActivity,
@@ -115,6 +116,7 @@ const {
   provisionGtmResourcesActivity,
   provisionGoogleAdsCustomerActivity,
   runGbpAuditActivity,
+  manageAdsConversionActionsActivity,
   fetchAdsConversionCatalogActivity,
   runGtmConversionSetupActivity,
   runStructuralVerificationActivity,
@@ -234,6 +236,72 @@ describe('setupRun activities (with mocked capabilities)', () => {
     expect(updatedRun.status).toBe('RUNNING');
   });
 
+  it('loadSetupContextActivity persists conversionStrategy from goals', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const SetupRun = mongoose.model('SetupRun');
+
+    const user = await User.create({ email: 'act-strategy@test.com' });
+    const bc = await BusinessContext.create({
+      userId: user._id,
+      confirmedAt: new Date(),
+      goals: { primary: 'calls' },
+    });
+    const run = await SetupRun.create({ businessId: bc.businessId, status: 'USER_INPUT_COLLECTED' });
+
+    const out = await loadSetupContextActivity({ setupRunId: run._id.toString() });
+    expect(out.outcome).toBe('ok');
+
+    const updated = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+    expect(updated.conversionStrategy).toBeDefined();
+    expect(updated.conversionStrategy.resolvedPrimaryGoal).toBe('calls');
+    expect(updated.conversionStrategy.derivedFrom).toBe('user_confirmed_goals');
+    expect(updated.conversionStrategy.requiredSlots).toHaveLength(1);
+    expect(updated.conversionStrategy.requiredSlots[0].resolution).toBe('pending');
+  });
+
+  it('loadSetupContextActivity derives default strategy when goals are null', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const SetupRun = mongoose.model('SetupRun');
+
+    const user = await User.create({ email: 'act-strategy-default@test.com' });
+    const bc = await BusinessContext.create({
+      userId: user._id,
+      confirmedAt: new Date(),
+      goals: null,
+    });
+    const run = await SetupRun.create({ businessId: bc.businessId, status: 'USER_INPUT_COLLECTED' });
+
+    const out = await loadSetupContextActivity({ setupRunId: run._id.toString() });
+    expect(out.outcome).toBe('ok');
+
+    const updated = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+    expect(updated.conversionStrategy.resolvedPrimaryGoal).toBe('both');
+    expect(updated.conversionStrategy.derivedFrom).toBe('default');
+    expect(updated.conversionStrategy.requiredSlots).toHaveLength(2);
+  });
+
+  it('loadSetupContextActivity still succeeds when conversion strategy derivation fails', async () => {
+    const BusinessContext = mongoose.model('BusinessContext');
+    const managementService = require('../services/capabilities/adsConversionActionManagementService');
+    const deriveSpy = jest
+      .spyOn(managementService, 'deriveConversionStrategy')
+      .mockImplementation(() => {
+        throw new Error('derivation boom');
+      });
+
+    const { bc, run } = await seedRun('act-strategy-fail@test.com');
+
+    const out = await loadSetupContextActivity({ setupRunId: run._id.toString() });
+    expect(out.outcome).toBe('ok');
+
+    const updated = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+    expect(updated.conversionStrategy).toBeUndefined();
+
+    deriveSpy.mockRestore();
+  });
+
   it('loadSetupContextActivity marks step failed when BusinessContext missing', async () => {
     const BusinessContext = mongoose.model('BusinessContext');
     const SetupRun = mongoose.model('SetupRun');
@@ -255,8 +323,7 @@ describe('setupRun activities (with mocked capabilities)', () => {
     expect(updatedRun.status).toBe('FAILED');
   });
 
-  it('checkGtmPreconditionsActivity marks manual review when GTM missing', async () => {
-    const SetupRun = mongoose.model('SetupRun');
+  it('checkGtmPreconditionsActivity skips when GTM is not connected', async () => {
     const SetupStepExecution = mongoose.model('SetupStepExecution');
     const { bc, run } = await seedRun('act2@test.com');
 
@@ -264,21 +331,17 @@ describe('setupRun activities (with mocked capabilities)', () => {
       setupRunId: run._id.toString(),
       businessId: bc.businessId.toString(),
     });
-    expect(out.outcome).toBe('manual_review');
-
-    const updated = await SetupRun.findById(run._id).lean();
-    expect(updated.status).toBe('SETUP_NEEDS_MANUAL_REVIEW');
+    expect(out.outcome).toBe('not_ready');
+    expect(out.ready).toBe(false);
 
     const step = await SetupStepExecution.findOne({
       setupRunId: run._id,
       stepName: SETUP_STEP_NAMES.CHECK_GTM_CONNECTION,
     }).lean();
-    expect(step.status).toBe('failed');
-    expect(step.lastErrorSummary).toContain('gtm');
+    expect(step.status).toBe('skipped');
   });
 
-  it('checkGtmPreconditionsActivity returns provisioning_required when identifiers missing', async () => {
-    const SetupRun = mongoose.model('SetupRun');
+  it('checkGtmPreconditionsActivity skips when GTM OAuth is connected but not setup-ready', async () => {
     const SetupStepExecution = mongoose.model('SetupStepExecution');
     const IntegrationConnection = mongoose.model('IntegrationConnection');
     const { bc, run } = await seedRun('act-gtm-prov@test.com');
@@ -297,17 +360,94 @@ describe('setupRun activities (with mocked capabilities)', () => {
       setupRunId: run._id.toString(),
       businessId: bc.businessId.toString(),
     });
-    expect(out.outcome).toBe('gtm_provisioning_required');
-    expect(capabilities.ensureSetupProvisioningRequest).toHaveBeenCalled();
-
-    const updated = await SetupRun.findById(run._id).lean();
-    expect(updated.status).toBe('GTM_PROVISIONING_REQUIRED');
+    expect(out.outcome).toBe('not_ready');
+    expect(out.reason).toBe('provisioning_required');
+    expect(capabilities.ensureSetupProvisioningRequest).not.toHaveBeenCalled();
 
     const step = await SetupStepExecution.findOne({
       setupRunId: run._id,
       stepName: SETUP_STEP_NAMES.CHECK_GTM_CONNECTION,
     }).lean();
     expect(step.status).toBe('skipped');
+  });
+
+  it('discoverGoogleAdsCustomersActivity returns ok when saved customer is still accessible', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const { bc, run } = await seedRun('act-ads-saved@test.com');
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: {
+        customerId: '7809414862',
+        accessibleCustomerIds: ['7809414862'],
+        selectionRequired: false,
+        selectedAt: new Date().toISOString(),
+        selectionSource: 'product_setup',
+      },
+    });
+    process.env.GOOGLE_ADS_API_MOCK = 'false';
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'test-dev-token';
+    const axios = require('axios');
+    jest.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { resourceNames: ['customers/7809414862', 'customers/2940178860'] },
+    });
+
+    const out = await discoverGoogleAdsCustomersActivity({
+      setupRunId: run._id.toString(),
+      businessId: bc.businessId.toString(),
+    });
+
+    expect(out.outcome).toBe('ok');
+    expect(out.customerId).toBe('7809414862');
+
+    const step = await SetupStepExecution.findOne({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+    }).lean();
+    expect(step.status).toBe('success');
+  });
+
+  it('discoverGoogleAdsCustomersActivity returns manual_review when selection is still required', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const { bc, run } = await seedRun('act-ads-select@test.com');
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'selection_required',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: { selectionRequired: true },
+    });
+    process.env.GOOGLE_ADS_API_MOCK = 'false';
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'test-dev-token';
+    const axios = require('axios');
+    jest.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { resourceNames: ['customers/1234567890'] },
+    });
+
+    const out = await discoverGoogleAdsCustomersActivity({
+      setupRunId: run._id.toString(),
+      businessId: bc.businessId.toString(),
+    });
+
+    expect(out.outcome).toBe('manual_review');
+    expect(out.errorCode).toBe('ADS_CUSTOMER_SELECTION_REQUIRED');
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.status).toBe('SETUP_NEEDS_MANUAL_REVIEW');
   });
 
   it('discoverGoogleAdsCustomersActivity returns provisioning_required when no accessible customers', async () => {
@@ -503,6 +643,7 @@ describe('setupRun activities (with mocked capabilities)', () => {
   });
 
   it('runGbpAuditActivity persists audit via capability service when GBP connected', async () => {
+    const SetupRun = mongoose.model('SetupRun');
     const SetupStepExecution = mongoose.model('SetupStepExecution');
     const IntegrationConnection = mongoose.model('IntegrationConnection');
     const { bc, run } = await seedRun('act3@test.com');
@@ -529,6 +670,9 @@ describe('setupRun activities (with mocked capabilities)', () => {
     }).lean();
     expect(step.status).toBe('success');
     expect(step.details?.summary?.presentCount).toBe(1);
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.status).toBe('GBP_AUDIT_COMPLETE');
   });
 
   it('runGbpAuditActivity skips with guidance when GBP profile is missing', async () => {
@@ -581,6 +725,173 @@ describe('setupRun activities (with mocked capabilities)', () => {
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.meta.gbpAudit).toBe('guidance');
     expect(updated.meta.gbpGuidance).toEqual(guidance);
+    expect(updated.status).toBe('GBP_AUDIT_COMPLETE');
+  });
+
+  describe('manageAdsConversionActionsActivity', () => {
+    const IntegrationConnection = () => mongoose.model('IntegrationConnection');
+
+    beforeEach(() => {
+      process.env.GOOGLE_ADS_API_MOCK = 'true';
+      delete process.env.GOOGLE_ADS_CONVERSION_ACTION_CREATION_ENABLED;
+    });
+
+    async function seedAdsRun(email, opts = {}) {
+      const User = mongoose.model('User');
+      const BusinessContext = mongoose.model('BusinessContext');
+      const SetupRun = mongoose.model('SetupRun');
+
+      const user = await User.create({ email });
+      const bc = await BusinessContext.create({
+        userId: user._id,
+        confirmedAt: new Date(),
+        goals: 'goals' in opts ? opts.goals : { primary: 'both' },
+      });
+      const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
+
+      await IntegrationConnection().create({
+        businessId: bc.businessId,
+        provider: 'google_ads',
+        connectionHealth: 'connected',
+        accessTokenEnc: encryptToken('token'),
+        refreshTokenEnc: encryptToken('refresh'),
+        tokenExpiryAt: new Date(Date.now() + 3600_000),
+        scopes: allScopesForProvider('google_ads'),
+        providerIdentifiers: {
+          customerId: '1234567890',
+          mockConversionActions: opts.mockConversionActions,
+        },
+      });
+
+      return { bc, run };
+    }
+
+    it('marks success when all slots are filled from catalog', async () => {
+      const SetupStepExecution = mongoose.model('SetupStepExecution');
+      const BusinessContext = mongoose.model('BusinessContext');
+      const SetupRun = mongoose.model('SetupRun');
+      const { bc, run } = await seedAdsRun('act-manage-ok@test.com');
+
+      const out = await manageAdsConversionActionsActivity({
+        setupRunId: run._id.toString(),
+        businessId: bc.businessId.toString(),
+      });
+
+      expect(out.outcome).toBe('ok');
+      expect(out.slotsResolved).toBe(2);
+      expect(out.reused).toBe(2);
+      expect(out.created).toBe(0);
+
+      const step = await SetupStepExecution.findOne({
+        setupRunId: run._id,
+        stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      }).lean();
+      expect(step.status).toBe('success');
+
+      const updatedBc = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+      expect(updatedBc.conversionStrategy.requiredSlots).toHaveLength(2);
+      expect(
+        updatedBc.conversionStrategy.requiredSlots.every((slot) => slot.resolution === 'existing')
+      ).toBe(true);
+
+      const updatedRun = await SetupRun.findById(run._id).lean();
+      expect(updatedRun.meta.conversionActionManagement).toBe('ok');
+    });
+
+    it('marks manual review when business goals are missing', async () => {
+      const SetupRun = mongoose.model('SetupRun');
+      const SetupStepExecution = mongoose.model('SetupStepExecution');
+      const { bc, run } = await seedAdsRun('act-manage-no-goals@test.com', { goals: null });
+
+      const out = await manageAdsConversionActionsActivity({
+        setupRunId: run._id.toString(),
+        businessId: bc.businessId.toString(),
+      });
+
+      expect(out.outcome).toBe('manual_review');
+      expect(out.errorCode).toBe('CONVERSION_STRATEGY_MISSING_GOALS');
+
+      const step = await SetupStepExecution.findOne({
+        setupRunId: run._id,
+        stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      }).lean();
+      expect(step.status).toBe('failed');
+
+      const updated = await SetupRun.findById(run._id).lean();
+      expect(updated.status).toBe('SETUP_NEEDS_MANUAL_REVIEW');
+    });
+
+    it('marks manual review when creation is disabled and a required slot is missing', async () => {
+      const SetupRun = mongoose.model('SetupRun');
+      const BusinessContext = mongoose.model('BusinessContext');
+      const { bc, run } = await seedAdsRun('act-manage-flag-off@test.com', {
+        mockConversionActions: [
+          {
+            id: '1002',
+            name: 'Website form submit',
+            category: 'SUBMIT_LEAD_FORM',
+            status: 'ENABLED',
+            type: 'WEBPAGE',
+            includeInConversionsMetric: true,
+          },
+        ],
+      });
+
+      const out = await manageAdsConversionActionsActivity({
+        setupRunId: run._id.toString(),
+        businessId: bc.businessId.toString(),
+      });
+
+      expect(out.outcome).toBe('manual_review');
+
+      const updatedBc = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+      const callSlot = updatedBc.conversionStrategy.requiredSlots.find((slot) => slot.slot === 'call');
+      const formSlot = updatedBc.conversionStrategy.requiredSlots.find((slot) => slot.slot === 'form');
+      expect(callSlot.resolution).toBe('pending');
+      expect(formSlot.resolution).toBe('existing');
+
+      const updated = await SetupRun.findById(run._id).lean();
+      expect(updated.status).toBe('SETUP_NEEDS_MANUAL_REVIEW');
+    });
+
+    it('creates missing actions when creation flag is enabled', async () => {
+      process.env.GOOGLE_ADS_CONVERSION_ACTION_CREATION_ENABLED = 'true';
+      const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+      const BusinessContext = mongoose.model('BusinessContext');
+      const { bc, run } = await seedAdsRun('act-manage-create@test.com', {
+        mockConversionActions: [
+          {
+            id: '1002',
+            name: 'Website form submit',
+            category: 'SUBMIT_LEAD_FORM',
+            status: 'ENABLED',
+            type: 'WEBPAGE',
+            includeInConversionsMetric: true,
+          },
+        ],
+      });
+
+      const out = await manageAdsConversionActionsActivity({
+        setupRunId: run._id.toString(),
+        businessId: bc.businessId.toString(),
+      });
+
+      expect(out.outcome).toBe('ok');
+      expect(out.created).toBe(1);
+      expect(out.reused).toBe(1);
+
+      const updatedBc = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+      const callSlot = updatedBc.conversionStrategy.requiredSlots.find((slot) => slot.slot === 'call');
+      expect(callSlot.resolution).toBe('create');
+      expect(callSlot.externalId).toBeTruthy();
+
+      expect(
+        await IntegrationArtifact.countDocuments({
+          setupRunId: run._id,
+          artifactType: 'ads_conversion_action_created',
+        })
+      ).toBe(1);
+    });
   });
 
   it('fetchAdsConversionCatalogActivity calls catalog service and marks success', async () => {
@@ -599,6 +910,10 @@ describe('setupRun activities (with mocked capabilities)', () => {
     }).lean();
     expect(step.status).toBe('success');
     expect(step.details?.summary?.selectedCount).toBe(1);
+
+    const SetupRun = mongoose.model('SetupRun');
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.status).toBe('CONVERSION_CATALOG_READY');
   });
 
   it('fetchAdsConversionCatalogActivity marks failed and patches SetupRun on service error', async () => {
@@ -681,6 +996,42 @@ describe('setupRun activities (with mocked capabilities)', () => {
 
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.status).toBe('GTM_SNIPPET_PENDING');
+    expect(updated.meta?.supportState?.errorCode).toBe('GTM_SNIPPET_PENDING');
+  });
+
+  it('runGtmConversionSetupActivity patches GTM_SETUP_COMPLETE on success', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const { bc, run } = await seedRun('act-gtm-ok@test.com');
+    await connectGoogleIntegrations(bc.businessId);
+
+    const out = await runGtmConversionSetupActivity({
+      setupRunId: run._id.toString(),
+      businessId: bc.businessId.toString(),
+    });
+    expect(out.outcome).toBe('ok');
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.status).toBe('GTM_SETUP_COMPLETE');
+    expect(updated.meta?.gtm).toBe('setup_complete');
+  });
+
+  it('runStructuralVerificationActivity patches STRUCTURAL_VERIFIED on pass', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const { bc, run } = await seedRun('act-verify-pass@test.com');
+    capabilities.runStructuralVerification.mockResolvedValue({
+      result: 'pass',
+      evidence: { snippetPresent: true, missing: [] },
+      summary: 'Structural verification passed.',
+    });
+
+    const out = await runStructuralVerificationActivity({
+      setupRunId: run._id.toString(),
+      businessId: bc.businessId.toString(),
+    });
+    expect(out.outcome).toBe('pass');
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.status).toBe('STRUCTURAL_VERIFIED');
   });
 
   it('createAdsCampaignActivity sets SUCCEEDED on success', async () => {
@@ -706,10 +1057,28 @@ describe('setupRun activities (with mocked capabilities)', () => {
     expect(updated.meta?.adsCampaignSummary?.campaignCreated).toBe(true);
   });
 
+  it('runGtmConversionSetupActivity skips when GTM is not connected', async () => {
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    const { bc, run } = await seedRun('act-gtm-skip@test.com');
+
+    const out = await runGtmConversionSetupActivity({
+      setupRunId: run._id.toString(),
+      businessId: bc.businessId.toString(),
+    });
+    expect(out.outcome).toBe('skipped');
+
+    const step = await SetupStepExecution.findOne({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.GTM_CONVERSION_SETUP,
+    }).lean();
+    expect(step.status).toBe('skipped');
+  });
+
   it('runGtmConversionSetupActivity marks failed on precondition error', async () => {
     const SetupRun = mongoose.model('SetupRun');
     const SetupStepExecution = mongoose.model('SetupStepExecution');
     const { bc, run } = await seedRun('act-gtm-fail@test.com');
+    await connectGoogleIntegrations(bc.businessId);
     capabilities.runGtmConversionSetup.mockRejectedValue(
       new capabilities.GtmProviderPreconditionError('GTM API not enabled')
     );

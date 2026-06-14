@@ -8,7 +8,9 @@ describe('setupActivityPolicies', () => {
     expect(SETUP_ACTIVITY_POLICIES.precondition.retry.maximumAttempts).toBe(2);
     expect(SETUP_ACTIVITY_POLICIES.read.retry.maximumAttempts).toBe(4);
     expect(SETUP_ACTIVITY_POLICIES.mutate.startToCloseTimeout).toBe('10 minutes');
+    expect(SETUP_ACTIVITY_POLICIES.mutate.scheduleToCloseTimeout).toBe('20 minutes');
     expect(SETUP_ACTIVITY_POLICIES.mutate.retry.maximumAttempts).toBe(3);
+    expect(SETUP_ACTIVITY_POLICIES.read.scheduleToCloseTimeout).toBe('12 minutes');
   });
 
   it('uses shorter retries for precondition checks than provider mutations', () => {

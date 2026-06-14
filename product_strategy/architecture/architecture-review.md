@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-This document details the proposed architecture for Zuggernaut, an AI-powered digital marketing automation platform designed for small businesses (SMBs). The architecture prioritizes scalability, maintainability, security, and robust operational capabilities to support a "0 to 1" marketing setup for SMBs, with a clear path for enterprise-grade expansion. It emphasizes automated workflows for Google Business Profile (GBP) audit, Google Tag Manager (GTM) conversion tracking setup, and Google Ads campaign creation.
+This document details the proposed architecture for Zuggernaut, an AI-powered digital marketing automation platform designed for small businesses (SMBs). The architecture prioritizes scalability, maintainability, security, and robust operational capabilities to support a "0 to 1" marketing setup for SMBs, with a clear path for enterprise-grade expansion. It emphasizes automated workflows for Google Business Profile (GBP) audit, Google Tag Manager (GTM) conversion tracking setup, and Google Ads campaign creation, **with a strategic focus on explicitly defining the most impactful Google Ads API parameters.**
 
 ## 2. Guiding Principles
 
@@ -25,6 +25,7 @@ This document details the proposed architecture for Zuggernaut, an AI-powered di
         *   Requires manual GTM snippet installation by the user.
     *   Google Ads Campaign Creation:
         *   Automated initial campaign setup (structure, keywords, ad copy) based on business input.
+        *   **Campaign creation will strictly enforce a prioritized set of Google Ads API parameters (Core Campaign Definition & Strategy, Ad Group Structure & Ad Creative, Core Targeting & Conversion Goal Linking) to ensure strategic alignment and API compliance.**
         *   Campaign launch is gated by required GTM setup and structural verification checks.
 *   **User Experience:**
     *   Section 1: User Input (business details, goals, permissions, GTM IDs).
@@ -49,7 +50,7 @@ This document details the proposed architecture for Zuggernaut, an AI-powered di
     *   **Orchestration Service:** Manages the overall setup workflow using a state machine.
     *   **GBP Read-Only Audit Service:** Integrates with GBP API to fetch and analyze business profile data.
     *   **GTM Conversion Setup Service:** Integrates with GTM API to create conversion tags and triggers.
-    *   **Google Ads Auto-Campaign Service:** Integrates with Google Ads API to create, configure, and launch campaigns.
+    *   **Google Ads Auto-Campaign Service:** Integrates with Google Ads API to create, configure, and launch campaigns, **with built-in logic for strict parameter validation and definition as per the prioritized list.**
     *   **Business Context Service:** Manages scraping, data enrichment (AI), and user-provided business information.
     *   **Authentication & Authorization Service:** Handles OAuth 2.0 flows for Google APIs, manages access tokens, and enforces tenant isolation.
     *   **Notification Service:** Communicates status updates and results to the frontend.
@@ -90,7 +91,7 @@ This document details the proposed architecture for Zuggernaut, an AI-powered di
     *   `CREATING_ADS_CAMPAIGN`
     *   `SETUP_COMPLETE`
     *   `SETUP_FAILED`
-*   **Implementation:** Each state transition triggers actions within the relevant service and records external resource IDs, retry attempts, and failure reasons for auditability.
+*   **Implementation:** Each state transition triggers actions within the relevant service and records external resource IDs, retry attempts, and failure reasons for auditability. **The `CREATING_ADS_CAMPAIGN` state specifically includes pre-validation for critical Google Ads API parameters.**
 
 ## 6. Scalability & Concurrency
 
@@ -106,7 +107,7 @@ This document details the proposed architecture for Zuggernaut, an AI-powered di
 *   **API Key Management:** Secure storage and rotation of API credentials.
 *   **Tenant Isolation:** Logical separation of customer data and processes using `businessId` and database partitioning/schemas.
 *   **Data Encryption:** Encryption of sensitive user data at rest and in transit (TLS/SSL).
-*   **Input Validation:** Rigorous validation of all user inputs and API payloads.
+*   **Input Validation:** Rigorous validation of all user inputs and API payloads, **including strict schema validation for Google Ads API parameters.**
 *   **Least Privilege:** Services should only have the permissions necessary to perform their functions.
 
 ## 8. Observability & Monitoring
@@ -119,7 +120,7 @@ This document details the proposed architecture for Zuggernaut, an AI-powered di
 
 ## 9. Testing Strategy
 
-*   **Unit Tests:** For individual functions, services, and state transitions.
+*   **Unit Tests:** For individual functions, services, and state transitions, **including specific tests for Google Ads API parameter validation.**
 *   **Integration Tests:** Verifying interactions between microservices and external APIs (using mocks where appropriate for external services).
 *   **End-to-End (E2E) Tests:** Simulating the complete user journey through the frontend and backend.
 *   **Contract Testing:** Ensuring compatibility between service APIs.
@@ -135,7 +136,7 @@ This document details the proposed architecture for Zuggernaut, an AI-powered di
 
 | Risk | Impact | Likelihood | Mitigation Strategy |
 | :--- | :--- | :--- | :--- |
-| Google API changes/deprecation | High | Medium | Monitor API updates, implement versioned API clients, use contract testing, and keep GTM/Ads templates versioned in configuration. |
+| Google API changes/deprecation | High | Medium | Monitor API updates, implement versioned API clients, use contract testing, and keep GTM/Ads templates versioned in configuration. **Prioritize and validate key API parameters to reduce exposure to minor changes.** |
 | Inaccurate scraped business data | Medium | Medium | Use AI enrichment, manual fallback, and an explicit user confirmation step before setup begins. |
 | User struggles with manual GTM snippet install | Medium | High | Provide clear instructions, visual guides, status checks, a setup-pending state, and a support/manual review path. |
 | Google API rate limits exceeded | High | Medium | Implement per-tenant and global rate limiting, circuit breakers, and retries with exponential backoff and jitter. |
@@ -144,6 +145,7 @@ This document details the proposed architecture for Zuggernaut, an AI-powered di
 | Complex cross-service error handling | High | Medium | Use `SetupRun` state transitions, idempotency keys, correlation IDs, structured logs, and compensation jobs. |
 | Scalability bottlenecks | High | Medium | Use async workers, queue backpressure, horizontal service scaling, database indexes/sharding plans, and load testing. |
 | Token or secret leakage | Critical | Low | Encrypt tokens at rest, use a secrets manager, enforce least privilege, rotate secrets, and audit token access. |
+| **Google Ads API `INVALID_ARGUMENT` errors due to under/over-specification of parameters** | High | Medium | **Implement strict parameter validation and enforcement for the most impactful fields (Core Campaign Definition & Strategy, Ad Group Structure & Ad Creative, Core Targeting & Conversion Goal Linking) based on Google Ads API documentation and best practices. Fail fast on missing/invalid critical parameters.** |
 
 ## 12. Questions for Solutions Architect
 

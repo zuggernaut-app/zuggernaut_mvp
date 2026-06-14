@@ -4,6 +4,7 @@ const {
   gtmConversionIdempotencyKey,
   adsCampaignIdempotencyKey,
   adsConversionCatalogIdempotencyKey,
+  adsConversionActionCreationIdempotencyKey,
   gtmProvisioningIdempotencyKey,
   adsProvisioningIdempotencyKey,
   PROVIDER_MUTATION_CONTRACT,
@@ -22,6 +23,9 @@ describe('idempotency contract', () => {
     expect(adsConversionCatalogIdempotencyKey(setupRunId, 'call')).toBe(
       `ads-ca-${setupRunId}-call`
     );
+    expect(adsConversionActionCreationIdempotencyKey(setupRunId, 'call')).toBe(
+      `ads-ca-create-${setupRunId}-call`
+    );
     expect(gtmProvisioningIdempotencyKey(businessId, setupRunId, 'account')).toBe(
       `gtm:account:${businessId}:${setupRunId}`
     );
@@ -39,6 +43,7 @@ describe('idempotency contract', () => {
         SETUP_STEP_NAMES.GTM_CONVERSION_SETUP,
         SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
         SETUP_STEP_NAMES.ADS_CONVERSION_CATALOG,
+        SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
       ])
     );
     expect(PROVIDER_MUTATION_CONTRACT.every((row) => row.provider && row.service)).toBe(true);

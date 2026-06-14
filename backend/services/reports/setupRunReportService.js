@@ -78,7 +78,7 @@ function mapOutcomeKind(status) {
 function outcomeHeadline(kind, lastErrorSummary) {
   switch (kind) {
     case 'succeeded':
-      return 'Setup completed successfully.';
+      return 'Google Ads setup completed successfully.';
     case 'failed':
       return lastErrorSummary ?? 'Setup failed.';
     case 'snippet_pending':
@@ -204,6 +204,140 @@ function normalizeGbpAudit(meta, steps) {
  * @param {object | null | undefined} meta
  * @param {object[]} steps
  */
+/**
+ * @param {unknown} value
+ * @returns {number}
+ */
+function numberOrZero(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * @param {object | null | undefined} meta
+ * @param {object[]} steps
+ * @param {string} setupRunStatus
+ * @param {string | null | undefined} lastErrorSummary
+ */
+function normalizeConversionActions(meta, steps, setupRunStatus, lastErrorSummary) {
+  const manageStep = findStep(steps, SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS);
+  if (!manageStep) {
+    return {
+      status: 'not_run',
+      slotsResolved: 0,
+      created: 0,
+      reused: 0,
+      message: null,
+    };
+  }
+
+  const metaOk = metaValue(meta, 'conversionActionManagement') === 'ok';
+  const stepSuccess = manageStep.status === 'success';
+  const stepDetails = isObject(manageStep.details) ? manageStep.details : null;
+
+  const slotsResolved = numberOrZero(
+    metaValue(meta, 'conversionActionSlotsResolved') ?? stepDetails?.slotsResolved
+  );
+  const created = numberOrZero(
+    metaValue(meta, 'conversionActionsCreated') ?? stepDetails?.created
+  );
+  const reused = numberOrZero(metaValue(meta, 'conversionActionsReused') ?? stepDetails?.reused);
+
+  if (stepSuccess || metaOk) {
+    return {
+      status: 'ready',
+      slotsResolved,
+      created,
+      reused,
+      message: null,
+    };
+  }
+
+  const message =
+    manageStep.lastErrorSummary ??
+    (typeof lastErrorSummary === 'string' ? lastErrorSummary : null) ??
+    'Conversion actions need review before setup can continue.';
+
+  if (setupRunStatus === 'FAILED' && manageStep.status === 'failed') {
+    return {
+      status: 'failed',
+      slotsResolved,
+      created,
+      reused,
+      message,
+    };
+  }
+
+  if (manageStep.status === 'failed') {
+    return {
+      status: 'manual_review',
+      slotsResolved,
+      created,
+      reused,
+      message,
+    };
+  }
+
+  return {
+    status: 'not_run',
+    slotsResolved: 0,
+    created: 0,
+    reused: 0,
+    message: null,
+  };
+}
+
+/**
+ * @param {object} conversionActions
+ */
+function buildConversionActionRecovery(conversionActions) {
+  const message = conversionActions.message ?? '';
+
+  if (conversionActions.status === 'failed') {
+    return {
+      title: 'Conversion action creation failed',
+      steps: [
+        message,
+        'Review the step history below and confirm your Google Ads account permissions.',
+        'After fixing the issue, start a new setup run to retry conversion action management.',
+      ],
+    };
+  }
+
+  if (conversionActions.status !== 'manual_review') {
+    return null;
+  }
+
+  if (/goals are required/i.test(message)) {
+    return {
+      title: 'Confirm your business goals',
+      steps: [
+        'Open business review and confirm your primary goal (calls, forms, or both).',
+        'Save the confirmed business context, then start a new setup run.',
+      ],
+    };
+  }
+
+  if (/creation is disabled/i.test(message)) {
+    return {
+      title: 'Conversion actions need manual setup',
+      steps: [
+        'Your Google Ads account is missing required conversion actions and automatic creation is disabled.',
+        'Create the required conversion actions in Google Ads, or enable creation in your deployment configuration.',
+        'Start a new setup run after the required actions exist in your account.',
+      ],
+    };
+  }
+
+  return {
+    title: 'Conversion actions need review',
+    steps: [
+      message,
+      'Confirm Google Ads is connected and your account has the required conversion actions.',
+      'Start a new setup run after resolving the issue.',
+    ],
+  };
+}
+
 function normalizeAdsCatalog(meta, steps) {
   const catalogStep = findStep(steps, SETUP_STEP_NAMES.ADS_CONVERSION_CATALOG);
   const ready = catalogStep?.status === 'success' || metaValue(meta, 'catalog') === 'ready';
@@ -289,6 +423,7 @@ function normalizeStructuralVerification(meta, steps, setupRunStatus) {
 
   let status = 'not_run';
   if (verifyStep?.status === 'success') status = 'pass';
+  else if (verifyStep?.status === 'skipped') status = 'skipped';
   else if (setupRunStatus === 'SUCCEEDED' && isObject(evidence)) {
     const missing = Array.isArray(evidence.missing) ? evidence.missing : [];
     if (missing.length === 0 && evidence.snippetPresent !== false) status = 'pass';
@@ -370,6 +505,106 @@ async function countArtifacts(setupRunId, businessId) {
 }
 
 /**
+ * Post-setup tracking recommendations (non-blocking; shown after Ads launch).
+ *
+ * @param {object | null | undefined} meta
+ * @param {object[]} steps
+ * @param {object} structuralVerification
+ * @param {object} gtmSetup
+ * @param {string} setupRunStatus
+ * @param {object} adsCampaign
+ */
+function buildRecommendations(meta, steps, structuralVerification, gtmSetup, setupRunStatus, adsCampaign) {
+  if (setupRunStatus !== 'SUCCEEDED' || adsCampaign.status !== 'campaigns_recorded') {
+    return [];
+  }
+
+  /** @type {Array<{ id: string, priority: string, title: string, message: string, steps: string[] }>} */
+  const items = [];
+  const verifyStep = findStep(steps, SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION);
+  const gtmOptional =
+    structuralVerification.status === 'skipped' ||
+    Boolean(structuralVerification.evidence?.gtmOptional) ||
+    verifyStep?.status === 'skipped';
+
+  if (gtmOptional || gtmSetup.status === 'not_run') {
+    items.push({
+      id: 'connect_gtm',
+      priority: 'recommended',
+      title: 'Set up Google Tag Manager tracking',
+      message:
+        'Your Google Ads campaign is live. Connect Google Tag Manager next so Zuggernaut can measure website conversions accurately.',
+      steps: [
+        'Open the setup page and connect Google Tag Manager.',
+        'Select or provision a GTM container and workspace.',
+        'Install the GTM snippet on your website when you are ready.',
+      ],
+    });
+  }
+
+  const publicContainerId =
+    typeof structuralVerification.evidence?.publicContainerId === 'string'
+      ? structuralVerification.evidence.publicContainerId
+      : null;
+
+  if (
+    structuralVerification.status === 'snippet_pending' ||
+    structuralVerification.evidence?.snippetPresent === false
+  ) {
+    items.push({
+      id: 'install_gtm_snippet',
+      priority: 'recommended',
+      title: 'Install the GTM snippet on your website',
+      message:
+        'GTM is connected but the container snippet was not detected on your site. Install it to start recording conversions.',
+      steps: [
+        publicContainerId
+          ? `Add the GTM container snippet for ${publicContainerId} to the <head> of every page.`
+          : 'Add your GTM container snippet to the <head> of every page on your website.',
+        'Publish your GTM container after tags are in place.',
+        'Return to Zuggernaut to verify tracking health when the snippet is live.',
+      ],
+    });
+  }
+
+  if (structuralVerification.status === 'needs_tracking_fix') {
+    const missing = Array.isArray(structuralVerification.evidence?.missing)
+      ? structuralVerification.evidence.missing
+      : [];
+    items.push({
+      id: 'complete_tracking_setup',
+      priority: 'recommended',
+      title: 'Complete conversion tracking setup',
+      message:
+        'Your campaign is running, but some tracking elements still need attention for reliable conversion measurement.',
+      steps: [
+        missing.length > 0
+          ? `Resolve: ${missing.map((m) => m.replace(/_/g, ' ')).join(', ')}.`
+          : 'Review GTM tags and triggers linked to your Google Ads conversion actions.',
+        'Publish the GTM container after changes.',
+        'Use Zuggernaut tracking health checks once updates are live.',
+      ],
+    });
+  }
+
+  if (typeof metaValue(meta, 'gtmNudgeReason') === 'string' && !gtmOptional) {
+    items.push({
+      id: 'connect_gtm_nudge',
+      priority: 'optional',
+      title: 'Improve conversion measurement with GTM',
+      message: 'Google Tag Manager is optional for launch but recommended for accurate on-site conversion tracking.',
+      steps: [
+        'Connect GTM from the setup page when you are ready.',
+        'Let Zuggernaut configure conversion tags automatically.',
+        'Install the snippet on your website to complete tracking.',
+      ],
+    });
+  }
+
+  return items;
+}
+
+/**
  * @param {import('mongoose').Types.ObjectId} setupRunId
  * @returns {Promise<object | null>}
  */
@@ -403,10 +638,24 @@ async function buildSetupRunReport(setupRunId) {
   const meta = setupRun.meta ?? null;
   const gbpAudit = normalizeGbpAudit(meta, steps);
   const adsCatalog = normalizeAdsCatalog(meta, steps);
+  const conversionActions = normalizeConversionActions(
+    meta,
+    steps,
+    setupRun.status,
+    setupRun.lastErrorSummary
+  );
   const gtmSetup = normalizeGtmSetup(meta, steps);
   const provisioning = normalizeProvisioning(meta, steps, setupRun.status);
   const structuralVerification = normalizeStructuralVerification(meta, steps, setupRun.status);
   const adsCampaign = normalizeAdsCampaign(meta, steps, campaignPlan);
+  const recommendations = buildRecommendations(
+    meta,
+    steps,
+    structuralVerification,
+    gtmSetup,
+    setupRun.status,
+    adsCampaign
+  );
 
   if (auditReport?.findings && (gbpAudit.status === 'complete' || gbpAudit.status === 'guidance')) {
     gbpAudit.findings = {
@@ -423,6 +672,10 @@ async function buildSetupRunReport(setupRunId) {
   const compensation = existingCompensation(meta);
   const supportState = isObject(metaValue(meta, 'supportState')) ? metaValue(meta, 'supportState') : null;
   let recovery = buildRecovery(outcomeKind, structuralVerification.evidence);
+  const conversionRecovery = buildConversionActionRecovery(conversionActions);
+  if (conversionRecovery) {
+    recovery = conversionRecovery;
+  }
 
   if (stuckState.stuck && outcomeKind === 'in_progress') {
     recovery = {
@@ -486,11 +739,13 @@ async function buildSetupRunReport(setupRunId) {
     supportState,
     compensation,
     gbpAudit,
+    conversionActions,
     adsCatalog,
     gtmSetup,
     provisioning,
     structuralVerification,
     adsCampaign,
+    recommendations,
     artifactCounts,
     steps,
   };
@@ -500,6 +755,7 @@ module.exports = {
   buildSetupRunReport,
   mapOutcomeKind,
   normalizeGbpAudit,
+  normalizeConversionActions,
   normalizeAdsCatalog,
   normalizeGtmSetup,
   normalizeProvisioning,

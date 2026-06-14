@@ -58,6 +58,10 @@ function renderBusinessStart(userIdSeed = TEST_IDS.user): ReturnType<typeof rend
               path="/onboarding/suggestions"
               element={<div data-testid="suggestions-target">suggestions</div>}
             />
+            <Route
+              path="/onboarding/review"
+              element={<div data-testid="review-target">review</div>}
+            />
           </Routes>
         </OnboardingProvider>
       </AuthProvider>
@@ -175,6 +179,56 @@ describe('BusinessStartPage', () => {
 
     expect(mockedDraft).not.toHaveBeenCalled()
     expect(mockedScrape).toHaveBeenCalledTimes(1)
+  })
+
+  it('enters details manually without scraping', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockedDraft.mockResolvedValueOnce({ businessId: TEST_IDS.business })
+
+    const user = userEvent.setup()
+    renderBusinessStart()
+    await bootstrapBusinessUi()
+
+    await user.type(screen.getByLabelText(/website url/i), 'https://manual.example')
+    await user.click(screen.getByRole('button', { name: /enter details manually/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('review-target')).toBeInTheDocument()
+    })
+
+    expect(mockedScrape).not.toHaveBeenCalled()
+    expect(mockedWait).not.toHaveBeenCalled()
+    expect(mockedDraft).toHaveBeenCalledTimes(1)
+
+    const raw = localStorage.getItem('zuggernaut:scrapePreview')
+    expect(raw).toBeTruthy()
+    expect(JSON.parse(raw as string)).toMatchObject({
+      websiteUrl: 'https://manual.example',
+      manualFallback: true,
+      scrapeStatus: 'MANUAL',
+    })
+  })
+
+  it('offers manual continue after scrape failure', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockedDraft.mockResolvedValueOnce({ businessId: TEST_IDS.business })
+    mockedScrape.mockRejectedValueOnce(new ApiError(503, 'Temporal down', 'temporal_unavailable'))
+
+    const user = userEvent.setup()
+    renderBusinessStart()
+    await bootstrapBusinessUi()
+
+    await user.type(screen.getByLabelText(/website url/i), 'https://fail.example')
+    await user.click(screen.getByRole('button', { name: /scrape suggestions/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/temporal/i)
+    await user.click(screen.getByRole('button', { name: /continue manually with this url/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('review-target')).toBeInTheDocument()
+    })
   })
 
   it('shows ApiError message when scrape fails', async () => {

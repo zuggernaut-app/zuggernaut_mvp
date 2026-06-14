@@ -2,20 +2,20 @@
 
 ## 1. Overview
 
-This blueprint details the technical implementation plan for Zuggernaut V1, an AI-powered digital marketing automation platform for small businesses. It translates the architectural decisions outlined in `architecture-review.md` into actionable implementation steps, focusing on core services and workflows.
+This blueprint details the technical implementation plan for Zuggernaut V1, an AI-powered digital marketing automation platform for small businesses. It translates the architectural decisions outlined in `architecture-review.md` into actionable implementation steps, focusing on core services and workflows, **with an explicit emphasis on robust Google Ads API parameter management for campaign creation.**
 
 ## 2. Core Services & Technologies
 
-| Service                       | Primary Technology        | Key Responsibilities                                                                                                |
-| :---------------------------- | :------------------------ | :------------------------------------------------------------------------------------------------------------------ |
-| **Orchestration Service**     | Node.js (Express.js)      | Manages `SetupRun` state machine, orchestrates calls to other services, handles retries and error compensation.     |
-| **GBP Audit Service**         | Node.js (Express.js)      | Integrates with GBP API (read-only) to fetch and analyze business profile data against audit checklist.              |
-| **GTM Conversion Service**    | Node.js (Express.js)      | Integrates with GTM API (v2) to create Google Ads conversion tags and basic triggers. Requires GTM Container ID.    |
-| **Ads Auto-Campaign Service** | Node.js (Express.js)      | Integrates with Google Ads API to create campaigns. Generates strategies, keywords, and ad copy (via AI Service).  |
-| **Business Context Service**  | Node.js (Express.js)      | Handles website scraping (Axios, Cheerio), AI data enrichment (OpenAI), and stores/retrieves user-provided business info. |
-| **Auth Service**              | Node.js (Express.js)      | Manages OAuth 2.0 for Google APIs, secure storage (encrypted) of tokens, enforces tenant isolation (`businessId`). |
-| **Notification Service**      | Node.js (Express.js)      | Communicates status updates from backend processes to the frontend.                                                 |
-| **AI Service (Wrapper)**      | Node.js (Express.js)      | Abstracts calls to OpenAI API for data enrichment, ad copy generation, and campaign strategy suggestions.          |
+| Service                       | Primary Technology        | Key Responsibilities                                                                                                                                                                                                                                                                                          |
+| :---------------------------- | :------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Orchestration Service**     | Node.js (Express.js)      | Manages `SetupRun` state machine, orchestrates calls to other services, handles retries and error compensation.                                                                                                                                                                                       |
+| **GBP Audit Service**         | Node.js (Express.js)      | Integrates with GBP API (read-only) to fetch and analyze business profile data against audit checklist.                                                                                                                                                                                               |
+| **GTM Conversion Service**    | Node.js (Express.js)      | Integrates with GTM API (v2) to create Google Ads conversion tags and basic triggers. Requires GTM Container ID.                                                                                                                                                                                      |
+| **Ads Auto-Campaign Service** | Node.js (Express.js)      | Integrates with Google Ads API to create campaigns. Generates strategies, keywords, and ad copy (via AI Service). **Implements strict validation and definition of critical Google Ads API parameters from the Core Campaign Definition & Strategy, Ad Group Structure & Ad Creative, and Core Targeting & Conversion Goal Linking buckets.** |
+| **Business Context Service**  | Node.js (Express.js)      | Handles website scraping (Axios, Cheerio), AI data enrichment (OpenAI), and stores/retrieves user-provided business info.                                                                                                                                                                             |
+| **Auth Service**              | Node.js (Express.js)      | Manages OAuth 2.0 for Google APIs, secure storage (encrypted) of tokens, enforces tenant isolation (`businessId`).                                                                                                                                                                                    |
+| **Notification Service**      | Node.js (Express.js)      | Communicates status updates from backend processes to the frontend.                                                                                                                                                                                                                                   |
+| **AI Service (Wrapper)**      | Node.js (Express.js)      | Abstracts calls to OpenAI API for data enrichment, ad copy generation, and campaign strategy suggestions.                                                                                                                                                                                             |
 
 ## 3. Data Model (MongoDB)
 
@@ -94,12 +94,12 @@ This blueprint details the technical implementation plan for Zuggernaut V1, an A
 
 1.  **Frontend:** User provides website URL, confirms/enters business details, provides goals, GTM IDs, and initiates OAuth flow.
 2.  **Auth Service:** Handles OAuth 2.0 callbacks, stores encrypted tokens in `AuthTokens` collection.
-3.  **Business Context Service:** Initiates scraping via `AI Service` upon receiving URL. Stores enriched data in `Businesses` document.
-4.  **Orchestration Service:** Creates a new `SetupRun` document with state `FETCHING_BUSINESS_CONTEXT` or `AWAITING_PERMISSIONS`.
+3.  **Business Context Service:** Initiates scraping via `AI Service` upon receiving URL. Stores enriched data in `Businesses` document. **Validation ensures all critical Google Ads API parameters are captured in `BusinessContext`.**
+4.  **Orchestration Service:** Creates a new `SetupRun` document with state `FETCHING_BUSINESS_CONTEXT` or `AWAITING_PERMISSIONS`. **Strict validation of Google Ads connection and `BusinessContext` completeness occurs before proceeding to campaign creation.**
 5.  **GBP Audit Service:** Called by Orchestrator. Fetches GBP data using Auth tokens, performs audit, stores results in `Businesses.googleProfile`. Updates `SetupRun` state.
 6.  **GTM Conversion Service:** Called by Orchestrator. Uses GTM API (with provided IDs and Ads Conversion IDs/Labels) to create tags/triggers. Updates `SetupRun` state.
 7.  **Verification Step:** Checks required tracking structure (for example GTM snippet presence, expected thank-you URL availability, or known DOM selectors). Stores results in `VerificationResults`.
-8.  **Ads Auto-Campaign Service:** Called by Orchestrator only after required verification gates pass or a manual review path is approved. Uses Google Ads API (with Auth tokens and business context) to create campaigns. Updates `SetupRun` state.
+8.  **Ads Auto-Campaign Service:** Called by Orchestrator only after required verification gates pass or a manual review path is approved. Uses Google Ads API (with Auth tokens and business context) to create campaigns. **This service will implement strict enforcement of the prioritized Google Ads API parameters, halting the workflow if any are missing or invalid.** Updates `SetupRun` state.
 9.  **Notification Service:** Pushes status updates to frontend throughout the process.
 
 ### 4.2. API Integrations
@@ -136,14 +136,15 @@ This blueprint details the technical implementation plan for Zuggernaut V1, an A
 *   **Secrets Management:** Integrate with a secure secrets manager (e.g., AWS Secrets Manager, Google Secret Manager, HashiCorp Vault).
 *   **Token Encryption:** Use AES-256 or equivalent for encrypting Google OAuth refresh tokens at rest.
 *   **API Gateway:** Use an API Gateway (e.g., AWS API Gateway) for request routing, authentication, and rate limiting at the edge.
-*   **Input Sanitization:** Implement thorough input validation and sanitization on all user-provided data and API request bodies.
+*   **Input Sanitization:** Implement thorough input validation and sanitization on all user-provided data and API request bodies, **including strict schema validation for Google Ads API parameters.**
+*   **Least Privilege:** Services should only have the permissions necessary to perform their functions.
 
 ## 7. Testing Plan
 
-*   **Unit Tests:** Jest/Mocha for Node.js services.
-*   **Integration Tests:** Supertest for API endpoint testing, mocking external API calls.
+*   **Unit Tests:** Jest/Mocha for Node.js services, **with dedicated tests for Google Ads API parameter validation logic.**
+*   **Integration Tests:** Verifying interactions between microservices and external APIs (using mocks where appropriate for external services).
 *   **E2E Tests:** Cypress/Playwright to simulate user flows.
-*   **Contract Tests:** Pact.js for inter-service communication validation.
+*   **Contract Testing:** Ensuring compatibility between service APIs.
 *   **Load Testing:** k6/JMeter to simulate high concurrency.
 
 ## 8. Open Questions & Next Steps

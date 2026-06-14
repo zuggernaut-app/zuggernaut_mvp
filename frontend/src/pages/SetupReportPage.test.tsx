@@ -39,8 +39,18 @@ function fullReport(overrides: Partial<SetupRunReportResponse['report']> = {}): 
       compensation: null,
       gbpAudit: {
         status: 'complete',
+        reason: null,
+        guidance: null,
+        blocking: false,
         summary: { presentCount: 3, missingCount: 1, needsAttentionCount: 0 },
         findings: { present: ['Business name'], missing: ['Hours'], needsAttention: [] },
+      },
+      conversionActions: {
+        status: 'ready',
+        slotsResolved: 1,
+        created: 0,
+        reused: 1,
+        message: null,
       },
       adsCatalog: {
         status: 'ready',
@@ -87,6 +97,7 @@ function fullReport(overrides: Partial<SetupRunReportResponse['report']> = {}): 
           budgetAmountMicros: 10_000_000,
         },
       },
+      recommendations: [],
       artifactCounts: {
         gtmTags: 2,
         gtmTriggers: 4,
@@ -163,10 +174,44 @@ describe('SetupReportPage', () => {
     expect(await screen.findByRole('heading', { name: /Setup report/i })).toBeInTheDocument()
     expect(screen.getByText(/Setup completed successfully/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /GBP audit/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Conversion actions/i })).toBeInTheDocument()
+    expect(screen.getByText(/reused existing Google Ads conversion actions/i)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Ads conversion catalog/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /GTM setup/i })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Google Ads campaign/i })).toBeInTheDocument()
     expect(screen.getByText(/customers\/123\/campaigns\/zug-campaign/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /Artifacts created/i })).toBeInTheDocument()
+    expect(screen.getByText(/Ads campaigns/)).toBeInTheDocument()
+  })
+
+  it('shows GBP guidance when no profile location was accessible', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        gbpAudit: {
+          status: 'guidance',
+          reason: 'GBP_NO_LOCATIONS',
+          blocking: false,
+          guidance: {
+            code: 'GBP_NO_LOCATIONS',
+            title: 'No Google Business Profile location found',
+            message: 'Add or claim a business location in Google Business Profile to enable the audit.',
+            blocking: false,
+          },
+          summary: { presentCount: 0, missingCount: 0, needsAttentionCount: 1 },
+          findings: { present: [], missing: [], needsAttention: ['Add or claim a business location'] },
+        },
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/No Google Business Profile location found/i)).toBeInTheDocument()
+    expect(screen.getByText(/continued without blocking automation/i)).toBeInTheDocument()
   })
 
   it('shows recovery guidance for snippet pending', async () => {
@@ -248,6 +293,136 @@ describe('SetupReportPage', () => {
 
     expect(await screen.findByRole('heading', { name: /Partial setup actions/i })).toBeInTheDocument()
     expect(screen.getByText(/ads campaign pause/i)).toBeInTheDocument()
+  })
+
+  it('shows tracking recommendations after successful Ads-only launch', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        structuralVerification: {
+          status: 'skipped',
+          summary: 'GTM is not configured; structural verification skipped.',
+          evidence: { gtmOptional: true },
+        },
+        gtmSetup: { status: 'not_run', summary: null },
+        recommendations: [
+          {
+            id: 'connect_gtm',
+            priority: 'recommended',
+            title: 'Set up Google Tag Manager tracking',
+            message:
+              'Your Google Ads campaign is live. Connect Google Tag Manager next so Zuggernaut can measure website conversions accurately.',
+            steps: [
+              'Open the setup page and connect Google Tag Manager.',
+              'Select or provision a GTM container and workspace.',
+              'Install the GTM snippet on your website when you are ready.',
+            ],
+          },
+        ],
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByRole('heading', { name: /Recommendations/i })).toBeInTheDocument()
+    expect(screen.getByText(/Set up Google Tag Manager tracking/i)).toBeInTheDocument()
+    expect(screen.getByText(/Install the GTM snippet on your website/i)).toBeInTheDocument()
+  })
+
+  it('shows created conversion actions when report includes creation counts', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        conversionActions: {
+          status: 'ready',
+          slotsResolved: 2,
+          created: 1,
+          reused: 1,
+          message: null,
+        },
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/created 1 missing conversion action/i)).toBeInTheDocument()
+    expect(screen.getByText(/Reused/)).toBeInTheDocument()
+    expect(screen.getByText(/Created/)).toBeInTheDocument()
+  })
+
+  it('hides conversion actions section when report status is not_run', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        conversionActions: {
+          status: 'not_run',
+          slotsResolved: 0,
+          created: 0,
+          reused: 0,
+          message: null,
+        },
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    await screen.findByRole('heading', { name: /Setup report/i })
+    expect(screen.queryByRole('heading', { name: /Conversion actions/i })).not.toBeInTheDocument()
+  })
+
+  it('shows manual review conversion action message', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-1',
+          status: 'SETUP_NEEDS_MANUAL_REVIEW',
+          lastErrorSummary: 'Conversion action creation is disabled and required slots are unfilled.',
+          meta: null,
+        },
+        outcome: {
+          kind: 'manual_review',
+          headline: 'Setup paused until Google integrations are connected.',
+          recovery: {
+            title: 'Conversion actions need manual setup',
+            steps: ['Create the required conversion actions in Google Ads.'],
+          },
+        },
+        conversionActions: {
+          status: 'manual_review',
+          slotsResolved: 1,
+          created: 0,
+          reused: 1,
+          message: 'Conversion action creation is disabled and required slots are unfilled.',
+        },
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    const heading = await screen.findByRole('heading', { name: /Conversion actions/i })
+    const section = heading.closest('section')
+    expect(section).not.toBeNull()
+    expect(section).toHaveTextContent(/creation is disabled/i)
+    expect(screen.getByText(/Conversion actions need manual setup/i)).toBeInTheDocument()
   })
 
   it('shows provisioning status and support details', async () => {

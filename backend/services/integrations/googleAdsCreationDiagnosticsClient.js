@@ -11,7 +11,11 @@ const {
   getGoogleAdsRequestTimeoutMs,
   normalizeCustomerId,
 } = require('./googleAdsApiConfig');
-const { mockResourceName } = require('./googleAdsCampaignClient');
+const {
+  mockResourceName,
+  buildSearchCampaignCreatePayload,
+  buildResponsiveSearchAdCreatePayload,
+} = require('./googleAdsCampaignClient');
 
 /**
  * @param {import('axios').AxiosResponse} res
@@ -104,21 +108,10 @@ async function createDiagnosticSearchCampaign(ctx) {
     operations: [
       {
         logicalKey: `diag-campaign-${resourceLabel}`,
-        create: {
+        create: buildSearchCampaignCreatePayload({
           name: resourceLabel,
-          advertisingChannelType: 'SEARCH',
-          status: 'PAUSED',
           campaignBudget: budgetResourceName,
-          containsEuPoliticalAdvertising: 'DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING',
-          manualCpc: {
-            enhancedCpcEnabled: false,
-          },
-          networkSettings: {
-            targetGoogleSearch: true,
-            targetSearchNetwork: true,
-            targetContentNetwork: false,
-          },
-        },
+        }),
       },
     ],
   });
@@ -217,17 +210,16 @@ async function createDiagnosticResponsiveSearchAd(ctx) {
     operations: [
       {
         logicalKey: `diag-ad-${resourceLabel}`,
-        create: {
-          adGroup: adGroupResourceName,
-          status: 'PAUSED',
-          ad: {
-            responsiveSearchAd: {
-              headlines: [{ text: 'Zuggernaut Dev Test' }, { text: 'Diagnostic Search Ad' }],
-              descriptions: [{ text: 'Paused diagnostic ad created by Zuggernaut.' }],
-            },
-            finalUrls: [finalUrl || 'https://example.com'],
-          },
-        },
+        create: buildResponsiveSearchAdCreatePayload({
+          adGroupResourceName,
+          finalUrl: finalUrl || 'https://example.com',
+          headlines: ['Zuggernaut Dev Test', 'Diagnostic Search Ad', 'Paused Setup Check'],
+          descriptions: [
+            'Paused diagnostic ad created by Zuggernaut.',
+            'Real-mode Google Ads write validation.',
+          ],
+          fallbacks: { businessName: 'Zuggernaut' },
+        }),
       },
     ],
   });

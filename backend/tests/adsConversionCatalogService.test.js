@@ -227,6 +227,68 @@ describe('adsConversionCatalogService', () => {
     expect(result.source).toBe('google_ads_api_mock');
   });
 
+  it('updates conversionStrategy with existing resolutions when catalog succeeds', async () => {
+    const BusinessContext = mongoose.model('BusinessContext');
+    const { bc, run } = await seedRun('ads-strategy-ok@test.com', { primary: 'both' });
+
+    await fetchAndPersistConversionCatalog({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      logger,
+    });
+
+    const updated = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+    expect(updated.conversionStrategy).toBeDefined();
+    expect(updated.conversionStrategy.resolvedPrimaryGoal).toBe('both');
+    expect(updated.conversionStrategy.requiredSlots).toHaveLength(2);
+    expect(
+      updated.conversionStrategy.requiredSlots.every((s) => s.resolution === 'existing')
+    ).toBe(true);
+    expect(
+      updated.conversionStrategy.requiredSlots.map((s) => s.externalId).sort()
+    ).toEqual(['1001', '1002']);
+  });
+
+  it('updates conversionStrategy with pending slot before failing on missing call', async () => {
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const { bc, run } = await seedRun('ads-strategy-partial@test.com', { primary: 'both' });
+
+    await IntegrationConnection.updateOne(
+      { businessId: bc.businessId, provider: 'google_ads' },
+      {
+        $set: {
+          'providerIdentifiers.mockConversionActions': [
+            {
+              id: '9002',
+              name: 'Lead form',
+              category: 'SUBMIT_LEAD_FORM',
+              type: 'WEBPAGE',
+              status: 'ENABLED',
+              includeInConversionsMetric: true,
+            },
+          ],
+        },
+      }
+    );
+
+    await expect(
+      fetchAndPersistConversionCatalog({
+        setupRunId: run._id,
+        businessId: bc.businessId,
+        logger,
+      })
+    ).rejects.toThrow(/No call conversion action available/);
+
+    const updated = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+    const formSlot = updated.conversionStrategy.requiredSlots.find((s) => s.slot === 'form');
+    const callSlot = updated.conversionStrategy.requiredSlots.find((s) => s.slot === 'call');
+    expect(formSlot.resolution).toBe('existing');
+    expect(formSlot.externalId).toBe('9002');
+    expect(callSlot.resolution).toBe('pending');
+    expect(callSlot.externalId).toBeNull();
+  });
+
   it('fails when mock catalog lacks required form conversion', async () => {
     const IntegrationConnection = mongoose.model('IntegrationConnection');
     const { bc, run } = await seedRun('ads-missing-form@test.com', { primary: 'forms' });

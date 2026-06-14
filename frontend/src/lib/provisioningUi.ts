@@ -37,12 +37,12 @@ const PROVISIONING_COPY: Record<ProvisioningProvider, ProvisioningCopy> = {
   gtm: {
     title: 'Google Tag Manager provisioning approval',
     missing:
-      'Your Google account is connected, but no usable GTM account, web container, or workspace was found.',
+      'Your Google account is connected and a GTM account exists, but no usable web container or workspace was found.',
     willCreate:
-      'After you approve, Zuggernaut will create a GTM account, web container, and default workspace for this business on the next setup run.',
+      'After you approve, Zuggernaut will create a web container and default workspace in your GTM account on the next setup run.',
     whyApproval:
-      'Creating Google resources requires your explicit consent. We store this approval as an audit record before any GTM account is created.',
-    resources: ['GTM account', 'Web container', 'Default workspace'],
+      'Creating Google resources requires your explicit consent. We store this approval as an audit record before any GTM container is created.',
+    resources: ['Web container', 'Default workspace'],
     gbpNote:
       'Google Business Profile is not modified by this step. GBP remains read-only audit only.',
   },
@@ -69,24 +69,41 @@ export function provisioningProviderLabel(provider: ProvisioningProvider): strin
   return 'Google Ads'
 }
 
-/** OAuth-connected providers eligible to start setup (includes provisioning_required). */
+/** OAuth-connected providers eligible to start setup (provisioning may continue on progress screen). */
 export function canAttemptSetup(
   status: IntegrationConnectionStatusDto | undefined,
 ): boolean {
   if (!status) return false
   if (status.ready) return true
-  return status.reason === 'provisioning_required' || status.reason === 'selection_required'
+  return status.reason === 'provisioning_required'
 }
 
 export function requiredProvidersReadyForSetup(
   connections: Partial<Record<IntegrationProvider, IntegrationConnectionStatusDto>>,
 ): boolean {
-  return canAttemptSetup(connections.gtm) && canAttemptSetup(connections.google_ads)
+  return canAttemptSetup(connections.google_ads)
+}
+
+/** Optional integrations worth connecting before or after setup (non-blocking). */
+export function optionalIntegrationNudge(
+  connections: Partial<Record<IntegrationProvider, IntegrationConnectionStatusDto>>,
+): IntegrationProvider[] {
+  const nudge: IntegrationProvider[] = []
+  const gtm = connections.gtm
+  if (gtm && !gtm.ready && gtm.reason !== 'missing_connection' && gtm.reason !== 'not_connected') {
+    nudge.push('gtm')
+  }
+  const gbp = connections.gbp
+  if (gbp && !gbp.ready && gbp.reason === 'missing_connection') {
+    nudge.push('gbp')
+  }
+  return nudge
 }
 
 export function integrationStatusLabel(status: IntegrationConnectionStatusDto): string {
   if (status.ready) return 'Connected'
   if (status.reason === 'selection_required') return 'Account selection needed'
+  if (status.reason === 'gtm_account_required') return 'GTM account needed'
   if (status.reason === 'provisioning_required') return 'Provisioning approval needed'
   if (status.reason === 'insufficient_scopes') return 'Insufficient scopes'
   if (status.reason === 'token_expired' || status.reason === 'needs_reauth') {

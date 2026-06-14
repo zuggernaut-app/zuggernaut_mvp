@@ -34,7 +34,7 @@ describe('provisioningUi', () => {
 
   it('returns provider-specific copy with GBP note', () => {
     const gtm = provisioningCopy('gtm')
-    expect(gtm.resources).toContain('GTM account')
+    expect(gtm.resources).toEqual(['Web container', 'Default workspace'])
     expect(gtm.gbpNote).toMatch(/GBP/i)
 
     const ads = provisioningCopy('google_ads')
@@ -45,6 +45,9 @@ describe('provisioningUi', () => {
     expect(
       integrationStatusLabel(conn({ provider: 'gtm', reason: 'provisioning_required' })),
     ).toBe('Provisioning approval needed')
+    expect(
+      integrationStatusLabel(conn({ provider: 'gtm', reason: 'gtm_account_required' })),
+    ).toBe('GTM account needed')
   })
 
   it('labels selection_required connections', () => {
@@ -52,7 +55,7 @@ describe('provisioningUi', () => {
       integrationStatusLabel(conn({ provider: 'google_ads', reason: 'selection_required' })),
     ).toBe('Account selection needed')
     expect(canAttemptSetup(conn({ provider: 'google_ads', reason: 'selection_required' }))).toBe(
-      true,
+      false,
     )
   })
 
@@ -64,7 +67,7 @@ describe('provisioningUi', () => {
     expect(canAttemptSetup(conn({ provider: 'gtm', reason: 'needs_reauth' }))).toBe(false)
   })
 
-  it('requires both GTM and Ads to attempt setup', () => {
+  it('requires only Google Ads to attempt setup', () => {
     expect(
       requiredProvidersReadyForSetup({
         gtm: conn({ provider: 'gtm', reason: 'provisioning_required' }),
@@ -74,9 +77,16 @@ describe('provisioningUi', () => {
 
     expect(
       requiredProvidersReadyForSetup({
-        gtm: conn({ provider: 'gtm', reason: 'missing_connection' }),
-        google_ads: conn({ provider: 'google_ads', ready: true, reason: 'ok' }),
+        gtm: conn({ provider: 'gtm', ready: true, reason: 'ok' }),
+        google_ads: conn({ provider: 'google_ads', reason: 'missing_connection' }),
       }),
     ).toBe(false)
+
+    expect(
+      requiredProvidersReadyForSetup({
+        gtm: conn({ provider: 'gtm', reason: 'selection_required' }),
+        google_ads: conn({ provider: 'google_ads', ready: true, reason: 'ok' }),
+      }),
+    ).toBe(true)
   })
 })

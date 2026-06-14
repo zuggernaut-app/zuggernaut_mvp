@@ -7,22 +7,32 @@ const {
   createCampaignBudget,
   createCampaign,
   createAdGroup,
+  createCustomConversionGoal,
   createResponsiveSearchAd,
+  linkCampaignToCustomConversionGoal,
+  resolveConversionActionResourceName,
+  truncateRsaText,
 } = require('../integrations/googleAdsCampaignClient');
 const { GoogleAdsApiError } = require('../integrations/googleAdsConversionCatalogClient');
 const { requireSetupReadyConnection } = require('./setupReadyConnectionService');
 const BusinessContext = mongoose.model('BusinessContext');
 const CampaignPlan = mongoose.model('CampaignPlan');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
-const SetupStepExecution = mongoose.model('SetupStepExecution');
-
 const DEFAULT_DAILY_BUDGET_MICROS = 10_000_000;
 
 class AdsProviderPreconditionError extends Error {
-  constructor(message, code = 'ADS_PROVIDER_PRECONDITION') {
+  /**
+   * @param {string} message
+   * @param {string} [code]
+   * @param {import('../integrations/googleAdsApiConfig').GoogleAdsApiErrorDetails | undefined} [googleAdsDetails]
+   */
+  constructor(message, code = 'ADS_PROVIDER_PRECONDITION', googleAdsDetails = undefined) {
     super(message);
     this.name = 'AdsProviderPreconditionError';
     this.code = code;
+    if (googleAdsDetails !== undefined) {
+      this.googleAdsDetails = googleAdsDetails;
+    }
   }
 }
 
@@ -58,13 +68,13 @@ function buildCampaignIntent(bc, conversionArtifacts) {
     ad: {
       finalUrl: websiteUrl,
       headlines: [
-        `${businessName}`,
-        `${primaryService} in ${area}`,
+        truncateRsaText(businessName, 30),
+        truncateRsaText(`${primaryService} in ${area}`, 30),
         'Get a Free Quote Today',
       ],
       descriptions: [
-        `Trusted ${primaryService} serving ${area}. Contact ${businessName} today.`,
-        `Professional ${primaryService}. Visit our website to learn more.`,
+        truncateRsaText(`Trusted ${primaryService} serving ${area}. Contact ${businessName} today.`, 90),
+        truncateRsaText(`Professional ${primaryService}. Visit our website to learn more.`, 90),
       ],
     },
   };
@@ -113,26 +123,6 @@ async function persistAdsArtifact(ctx) {
 }
 
 /**
- * @param {import('mongoose').Types.ObjectId} setupRunId
- * @param {import('mongoose').Types.ObjectId} businessId
- */
-async function assertStructuralVerificationPassed(setupRunId, businessId) {
-  const step = await SetupStepExecution.findOne({
-    setupRunId,
-    businessId,
-    stepName: SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION,
-    status: 'success',
-  }).lean();
-
-  if (!step) {
-    throw new AdsProviderPreconditionError(
-      'Structural verification must pass before Ads campaign creation.',
-      'ADS_TRACKING_NOT_VERIFIED'
-    );
-  }
-}
-
-/**
  * @param {object} ctx
  * @param {import('mongoose').Types.ObjectId} ctx.setupRunId
  * @param {import('mongoose').Types.ObjectId} ctx.businessId
@@ -140,8 +130,6 @@ async function assertStructuralVerificationPassed(setupRunId, businessId) {
  */
 async function createAdsAutoCampaign(ctx) {
   const { setupRunId, businessId, logger } = ctx;
-
-  await assertStructuralVerificationPassed(setupRunId, businessId);
 
   const bc = await BusinessContext.findOne({ businessId }).lean();
   if (!bc) {
@@ -233,7 +221,21 @@ async function createAdsAutoCampaign(ctx) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Google Ads mutation failed';
       const code = err instanceof GoogleAdsApiError ? err.code : 'GOOGLE_ADS_MUTATE_FAILED';
-      throw new AdsProviderPreconditionError(msg, code);
+      const googleAdsDetails = err instanceof GoogleAdsApiError ? err.details : undefined;
+      logger.error(
+        {
+          setupRunId: setupRunId.toString(),
+          businessId: businessId.toString(),
+          logicalKey,
+          artifactType,
+          code,
+          fieldViolations: googleAdsDetails?.fieldViolations ?? [],
+          googleAdsErrors: googleAdsDetails?.googleAdsErrors ?? [],
+          requestId: googleAdsDetails?.requestId ?? null,
+        },
+        'ads provider mutation failed'
+      );
+      throw new AdsProviderPreconditionError(msg, code, googleAdsDetails);
     }
 
     newArtifacts += 1;
@@ -304,33 +306,52 @@ async function createAdsAutoCampaign(ctx) {
     })
   );
 
-  for (const conv of conversionArtifacts) {
-    const linkKey = `conversion_link_${conv.externalId}`;
-    const existingLink = await findExistingAdsArtifact({ setupRunId, businessId, logicalKey: linkKey });
-    if (existingLink) {
-      reusedArtifacts += 1;
-      continue;
-    }
+  const conversionActionResourceNames = conversionArtifacts.map((conv) =>
+    resolveConversionActionResourceName(customerId, conv.metadata?.resourceName ?? null, conv.externalId)
+  );
 
-    newArtifacts += 1;
-    const linkResourceName = `customers/${customerId}/campaignConversionGoals/zug-link-${setupRunId}-${conv.externalId}`;
-    await persistAdsArtifact({
-      setupRunId,
-      businessId,
-      artifactType: 'ads_conversion_link',
-      logicalKey: linkKey,
-      externalId: linkResourceName,
-      metadata: {
-        planId: planRow._id.toString(),
+  const customGoalResourceName = await ensureResource(
+    'custom_conversion_goal',
+    'ads_custom_conversion_goal',
+    () =>
+      createCustomConversionGoal({
+        businessId,
+        customerId,
+        setupRunId: setupRunId.toString(),
+        name: `${intent.businessName} — Zuggernaut Conversions`,
+        conversionActionResourceNames,
+      }),
+    () => ({
+      planId: planRow._id.toString(),
+      campaignResourceName,
+      conversionActionResourceNames,
+      selectedConversionIds: intent.selectedConversionIds,
+      createdBy: 'ads_auto_campaign_v1',
+      source,
+    })
+  );
+
+  await ensureResource(
+    'conversion_goal_campaign_config',
+    'ads_conversion_goal_campaign_config',
+    () =>
+      linkCampaignToCustomConversionGoal({
+        businessId,
+        customerId,
+        setupRunId: setupRunId.toString(),
         campaignResourceName,
-        conversionExternalId: conv.externalId,
-        conversionResourceName: conv.metadata?.resourceName ?? null,
-        logicalCategory: conv.metadata?.logicalCategory ?? null,
-        createdBy: 'ads_auto_campaign_v1',
-        source,
-      },
-    });
-  }
+        customConversionGoalResourceName: customGoalResourceName,
+      }),
+    () => ({
+      planId: planRow._id.toString(),
+      campaignResourceName,
+      customConversionGoalResourceName: customGoalResourceName,
+      conversionActionResourceNames,
+      selectedConversionIds: intent.selectedConversionIds,
+      createdBy: 'ads_auto_campaign_v1',
+      source,
+    })
+  );
 
   await CampaignPlan.updateOne({ setupRunId }, { $set: { status: 'applied' } });
 
@@ -344,6 +365,8 @@ async function createAdsAutoCampaign(ctx) {
     adExternalId: adResourceName,
     budgetExternalId: budgetResourceName,
     conversionLinkCount: conversionArtifacts.length,
+    conversionGoalLinked: true,
+    customConversionGoalExternalId: customGoalResourceName,
     source,
   };
 

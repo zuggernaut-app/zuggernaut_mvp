@@ -10,6 +10,24 @@ function formatList(val: unknown): string[] {
   return []
 }
 
+function formatContactMethods(contact: unknown): string[] {
+  if (!contact || typeof contact !== 'object') return []
+  const lines: string[] = []
+  const c = contact as Record<string, unknown>
+  if (Array.isArray(c.emails)) {
+    for (const email of c.emails) lines.push(`Email: ${String(email)}`)
+  }
+  if (Array.isArray(c.phones)) {
+    for (const phone of c.phones) lines.push(`Phone: ${String(phone)}`)
+  }
+  if (c.socials && typeof c.socials === 'object') {
+    for (const [network, urls] of Object.entries(c.socials as Record<string, unknown>)) {
+      if (Array.isArray(urls) && urls[0]) lines.push(`${network}: ${String(urls[0])}`)
+    }
+  }
+  return lines
+}
+
 export function WebsiteUrlPage(): ReactElement {
   const navigate = useNavigate()
   const { snapshot } = useOnboardingState()
@@ -27,13 +45,27 @@ export function WebsiteUrlPage(): ReactElement {
     )
   }
 
-  const { websiteUrl, suggested } = scrapePreview
+  const { websiteUrl, suggested, scrapeStatus, scrapeQuality, manualFallback } = scrapePreview
+  const weakScrape =
+    manualFallback === true ||
+    scrapeQuality === 'none' ||
+    scrapeQuality === 'weak' ||
+    scrapeStatus === 'PARTIAL' ||
+    scrapeStatus === 'BLOCKED'
 
   return (
     <PageLayout
       title="Suggested business details"
-      lead="Suggestions from your public website (async scrape + extraction). Confirm on the next step."
+      lead="Review what we found on your public website. You can edit everything on the next step."
     >
+      {weakScrape ? (
+        <section className="alert alert-info" style={{ marginBottom: '1.25rem' }}>
+          Limited data was extracted from this site
+          {scrapeStatus ? ` (status: ${scrapeStatus})` : ''}. Suggestions below are a starting
+          point — please review and complete any missing fields.
+        </section>
+      ) : null}
+
       <section className="alert alert-info" style={{ marginBottom: '1.25rem' }}>
         <strong>URL:</strong> <span style={{ wordBreak: 'break-all' }}>{websiteUrl}</span>
       </section>
@@ -46,16 +78,29 @@ export function WebsiteUrlPage(): ReactElement {
 
       <h2>Services</h2>
       <ul className="suggestionList">
-        {formatList(suggested.services).map((s) => (
-          <li key={s}>{s}</li>
-        ))}
+        {formatList(suggested.services).length ? (
+          formatList(suggested.services).map((s) => <li key={s}>{s}</li>)
+        ) : (
+          <li>—</li>
+        )}
       </ul>
 
       <h2>Service areas</h2>
       <ul className="suggestionList">
-        {formatList(suggested.serviceAreas).map((s) => (
-          <li key={s}>{s}</li>
-        ))}
+        {formatList(suggested.serviceAreas).length ? (
+          formatList(suggested.serviceAreas).map((s) => <li key={s}>{s}</li>)
+        ) : (
+          <li>—</li>
+        )}
+      </ul>
+
+      <h2>Contact</h2>
+      <ul className="suggestionList">
+        {formatContactMethods(suggested.contactMethods).length ? (
+          formatContactMethods(suggested.contactMethods).map((line) => <li key={line}>{line}</li>)
+        ) : (
+          <li>—</li>
+        )}
       </ul>
 
       <h2>Differentiators</h2>
@@ -71,6 +116,13 @@ export function WebsiteUrlPage(): ReactElement {
           onClick={() => navigate('/onboarding/review')}
         >
           Review & edit details
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          onClick={() => navigate('/onboarding/business')}
+        >
+          Try another URL
         </button>
       </div>
     </PageLayout>

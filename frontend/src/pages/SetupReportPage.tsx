@@ -6,6 +6,7 @@ import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useSetupRunReport } from '../hooks/useSetupRunReport'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import { conversionActionHeadline } from '../lib/conversionActionsUi'
 
 function statusTone(status: string): string {
   if (status === 'RUNNING') return 'status-running'
@@ -154,6 +155,19 @@ export function SetupReportPage(): ReactElement {
                   GBP audit was skipped — connect Google Business Profile to include it in future runs.
                 </p>
               ) : null}
+              {report.gbpAudit.status === 'guidance' && report.gbpAudit.guidance ? (
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <p style={{ fontSize: '0.875rem', marginTop: 0, marginBottom: '0.35rem' }}>
+                    <strong>{report.gbpAudit.guidance.title}</strong>
+                  </p>
+                  <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: 0 }}>
+                    {report.gbpAudit.guidance.message}
+                  </p>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', marginBottom: 0 }}>
+                    GBP is optional for setup — this run continued without blocking automation.
+                  </p>
+                </div>
+              ) : null}
               {report.gbpAudit.summary ? (
                 <ul className="stepsList">
                   <li>
@@ -170,6 +184,32 @@ export function SetupReportPage(): ReactElement {
               {report.gbpAudit.findings?.missing && report.gbpAudit.findings.missing.length > 0 ? (
                 <p style={{ fontSize: '0.875rem', marginTop: '0.5rem' }}>
                   Missing fields: {report.gbpAudit.findings.missing.join(', ')}
+                </p>
+              ) : null}
+            </section>
+          ) : null}
+
+          {report.conversionActions.status !== 'not_run' ? (
+            <section style={{ marginTop: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Conversion actions</h2>
+              <p style={{ fontSize: '0.875rem', marginTop: 0 }}>
+                {conversionActionHeadline(report.conversionActions)}
+              </p>
+              {report.conversionActions.status === 'ready' ? (
+                <ul className="stepsList" style={{ marginTop: '0.75rem' }}>
+                  <li>
+                    <strong>Slots resolved</strong> · {report.conversionActions.slotsResolved}
+                  </li>
+                  <li>
+                    <strong>Reused</strong> · {report.conversionActions.reused}
+                  </li>
+                  <li>
+                    <strong>Created</strong> · {report.conversionActions.created}
+                  </li>
+                </ul>
+              ) : report.conversionActions.message ? (
+                <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: '0.5rem' }}>
+                  {report.conversionActions.message}
                 </p>
               ) : null}
             </section>
@@ -240,6 +280,35 @@ export function SetupReportPage(): ReactElement {
             </section>
           ) : null}
 
+          {report.recommendations.length > 0 ? (
+            <section style={{ marginTop: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Recommendations</h2>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: 0 }}>
+                Your Google Ads campaign is running. Complete these optional steps when you are ready
+                to improve conversion tracking.
+              </p>
+              {report.recommendations.map((item) => (
+                <div
+                  key={item.id}
+                  className="alert alert-info"
+                  style={{ marginTop: '0.75rem', marginBottom: 0 }}
+                >
+                  <strong>{item.title}</strong>
+                  <p style={{ fontSize: '0.875rem', marginTop: '0.5rem', marginBottom: '0.5rem' }}>
+                    {item.message}
+                  </p>
+                  <ol style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.875rem' }}>
+                    {item.steps.map((step) => (
+                      <li key={step} style={{ marginBottom: '0.35rem' }}>
+                        {step}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </section>
+          ) : null}
+
           {report.adsCampaign.status === 'campaigns_recorded' && report.adsCampaign.summary ? (
             <section style={{ marginTop: '1.5rem' }}>
               <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Google Ads campaign</h2>
@@ -268,6 +337,32 @@ export function SetupReportPage(): ReactElement {
                   <code style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}>
                     {report.adsCampaign.summary.campaignExternalId}
                   </code>
+                </li>
+              </ul>
+            </section>
+          ) : null}
+
+          {Object.values(report.artifactCounts).some((count) => count > 0) ? (
+            <section style={{ marginTop: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Artifacts created</h2>
+              <ul className="stepsList">
+                <li>
+                  <strong>GTM tags</strong> · {report.artifactCounts.gtmTags}
+                </li>
+                <li>
+                  <strong>GTM triggers</strong> · {report.artifactCounts.gtmTriggers}
+                </li>
+                <li>
+                  <strong>GTM variables</strong> · {report.artifactCounts.gtmVariables}
+                </li>
+                <li>
+                  <strong>Ads conversions</strong> · {report.artifactCounts.adsConversions}
+                </li>
+                <li>
+                  <strong>Ads campaigns</strong> · {report.artifactCounts.adsCampaigns}
+                </li>
+                <li>
+                  <strong>Conversion links</strong> · {report.artifactCounts.adsConversionLinks}
                 </li>
               </ul>
             </section>

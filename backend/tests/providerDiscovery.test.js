@@ -6,6 +6,11 @@ const { discoverGtmProviderIdentifiers } = require('../services/integrations/goo
 const { discoverGoogleAdsProviderIdentifiers } = require('../services/integrations/googleAdsAccountClient');
 const { discoverGbpProviderIdentifiers } = require('../services/integrations/gbpProfileReadClient');
 const { discoverProviderConnection } = require('../services/integrations/providerDiscoveryService');
+const {
+  buildSelectionRequiredResult,
+  defaultSelectionReason,
+  mergeRediscoveryWithSavedSelection,
+} = require('../services/integrations/providerDiscoveryResult');
 const { completeGoogleOAuthCallback } = require('../services/integrations/googleOAuthService');
 const { resetProviderRateLimitsForTests } = require('../lib/providerRateLimit');
 
@@ -62,13 +67,13 @@ describe('provider discovery', () => {
       expect(result.providerIdentifiers.accountId).toBeUndefined();
     });
 
-    it('returns provisioning_required when no GTM hierarchy exists', async () => {
+    it('returns gtm_account_not_found when no GTM accounts exist', async () => {
       axios.get.mockResolvedValue({ status: 200, data: { account: [] } });
 
       const result = await discoverGtmProviderIdentifiers('token');
 
       expect(result.connectionHealth).toBe('provisioning_required');
-      expect(result.reason).toBe('GTM_PROVISIONING_REQUIRED');
+      expect(result.reason).toBe('GTM_ACCOUNT_NOT_FOUND');
     });
   });
 
@@ -213,7 +218,7 @@ describe('provider discovery', () => {
 
       const row = await mongoose.model('IntegrationConnection').findOne({ businessId, provider: 'gtm' }).lean();
       expect(row.connectionHealth).toBe('provisioning_required');
-      expect(row.providerIdentifiers.discoveryReason).toBe('GTM_PROVISIONING_REQUIRED');
+      expect(row.providerIdentifiers.discoveryReason).toBe('GTM_ACCOUNT_NOT_FOUND');
     });
 
     it('does not create IntegrationArtifact or IntegrationProvisioningRequest on OAuth callback', async () => {
@@ -234,6 +239,76 @@ describe('provider discovery', () => {
 
       expect(artifactCount).toBe(0);
       expect(provisioningCount).toBe(0);
+    });
+  });
+
+  describe('mergeRediscoveryWithSavedSelection', () => {
+    it('preserves saved Google Ads customerId when rediscovery still requires selection', () => {
+      const discovery = buildSelectionRequiredResult(
+        'google_ads',
+        {
+          accessibleCustomerIds: ['1234567890', '7809414862'],
+          loginCustomerId: '2940178860',
+        },
+        defaultSelectionReason('google_ads')
+      );
+      const prior = {
+        customerId: '7809414862',
+        selectionRequired: false,
+        selectedAt: '2026-06-10T12:00:00.000Z',
+        selectionSource: 'product_setup',
+      };
+
+      const merged = mergeRediscoveryWithSavedSelection('google_ads', prior, discovery);
+
+      expect(merged.connectionHealth).toBe('connected');
+      expect(merged.providerIdentifiers.customerId).toBe('7809414862');
+      expect(merged.providerIdentifiers.selectionRequired).toBe(false);
+      expect(merged.providerIdentifiers.accessibleCustomerIds).toEqual(['1234567890', '7809414862']);
+    });
+
+    it('does not preserve Google Ads selection when customer is no longer accessible', () => {
+      const discovery = buildSelectionRequiredResult(
+        'google_ads',
+        { accessibleCustomerIds: ['1234567890'] },
+        defaultSelectionReason('google_ads')
+      );
+      const prior = {
+        customerId: '7809414862',
+        selectionRequired: false,
+      };
+
+      const merged = mergeRediscoveryWithSavedSelection('google_ads', prior, discovery);
+
+      expect(merged.connectionHealth).toBe('selection_required');
+      expect(merged.providerIdentifiers.customerId).toBeUndefined();
+    });
+
+    it('preserves saved GTM hierarchy when rediscovery still requires selection', () => {
+      const discovery = buildSelectionRequiredResult(
+        'gtm',
+        {
+          discoveredAccountCount: 1,
+          discoveredContainerCount: 1,
+          discoveredWorkspaceCount: 1,
+        },
+        defaultSelectionReason('gtm')
+      );
+      const prior = {
+        accountId: 'acc-1',
+        containerId: 'ctr-1',
+        workspaceId: 'ws-1',
+        publicContainerId: 'GTM-ABC',
+        selectionRequired: false,
+        selectedAt: '2026-06-10T12:00:00.000Z',
+      };
+
+      const merged = mergeRediscoveryWithSavedSelection('gtm', prior, discovery);
+
+      expect(merged.connectionHealth).toBe('connected');
+      expect(merged.providerIdentifiers.accountId).toBe('acc-1');
+      expect(merged.providerIdentifiers.containerId).toBe('ctr-1');
+      expect(merged.providerIdentifiers.workspaceId).toBe('ws-1');
     });
   });
 

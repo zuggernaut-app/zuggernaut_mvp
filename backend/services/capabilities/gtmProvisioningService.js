@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const { DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER } = require('../../constants/provisioning');
 const { gtmProvisioningIdempotencyKey } = require('../../constants/idempotency');
 const {
-  createGtmAccount,
+  listGtmAccounts,
   createGtmContainer,
   resolveOrCreateWorkspace,
   getGtmAccessToken,
@@ -103,7 +103,8 @@ function assertApprovedGtmProvisioningRequest(request) {
 }
 
 /**
- * Idempotent GTM account/container/workspace provisioning after explicit user approval.
+ * Idempotent GTM container/workspace provisioning after explicit user approval.
+ * GTM accounts must already exist — the Tag Manager API does not support account creation.
  *
  * @param {object} input
  * @param {import('mongoose').Types.ObjectId | string} input.businessId
@@ -143,8 +144,22 @@ async function provisionGtmResources(input) {
       accountId = accountArtifact.externalId;
       logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), accountId }, 'gtm account artifact reused');
     } else {
-      const account = await createGtmAccount(accessToken, accountName);
-      accountId = account.accountId;
+      const accounts = await listGtmAccounts(accessToken);
+      const account =
+        accounts
+          .filter((row) => row.accountId)
+          .sort((a, b) =>
+            String(a.accountId).localeCompare(String(b.accountId), undefined, { numeric: true })
+          )[0] ?? null;
+
+      if (!account?.accountId) {
+        throw new GtmProvisioningError(
+          'No GTM account available. Create a GTM account at https://tagmanager.google.com, refresh integrations, then approve provisioning again.',
+          'GTM_ACCOUNT_NOT_FOUND'
+        );
+      }
+
+      accountId = String(account.accountId);
       await persistProvisioningArtifact({
         businessId,
         setupRunId,
@@ -153,7 +168,7 @@ async function provisionGtmResources(input) {
         externalId: accountId,
         metadata: account,
       });
-      logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), accountId }, 'gtm account provisioned');
+      logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), accountId }, 'gtm account linked');
     }
 
     let containerId;

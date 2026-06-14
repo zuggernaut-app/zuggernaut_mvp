@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('../../constants/setupWorkflow');
 const { buildGtmSetupPlan } = require('./gtmTemplates/v1');
 const { loadSetupReadyConnection } = require('./setupReadyConnectionService');
+const { getConnectionStatus } = require('./integrationConnectionService');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 const ProviderSnapshot = mongoose.model('ProviderSnapshot');
@@ -43,9 +44,12 @@ function computeExpectedStructure(conversionArtifacts, websiteUrl) {
  * @param {string} publicContainerId
  */
 function detectSnippetInHtml(html, publicContainerId) {
-  const hasPublic = html.includes(String(publicContainerId));
+  const id = String(publicContainerId);
+  const hasPublic = html.includes(id);
   const hasGtmLoader = html.includes('googletagmanager.com/gtm.js');
-  return hasPublic || hasGtmLoader;
+  const hasNoscriptIframe =
+    html.includes('googletagmanager.com/ns.html') && html.includes(id);
+  return hasPublic || hasGtmLoader || hasNoscriptIframe;
 }
 
 /**
@@ -112,6 +116,19 @@ function collectStructuralMissing(expected, actual, linkageMissing) {
  */
 async function runStructuralVerification(ctx) {
   const { setupRunId, businessId, logger } = ctx;
+  const gtmStatus = await getConnectionStatus(businessId, 'gtm');
+  if (!gtmStatus.ready) {
+    return {
+      result: 'skipped',
+      evidence: {
+        gtmOptional: true,
+        reason: gtmStatus.reason,
+        nextAction: gtmStatus.nextAction,
+      },
+      summary: 'GTM is not configured; structural verification skipped.',
+    };
+  }
+
   const bc = await BusinessContext.findOne({ businessId }).lean();
   const websiteUrl = bc?.websiteUrl?.trim() ?? null;
 

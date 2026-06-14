@@ -27,9 +27,10 @@ Zuggernaut V1 provides a streamlined, automated solution for small businesses to
 
 ### 2.3. Google Ads Campaign Creation
 
-*   **Objective:** Launch initial, automated Google Ads campaigns tailored to the business's goals and audience.
+*   **Objective:** Launch initial, automated Google Ads campaigns tailored to the business's goals and audience, proactively identifying and, if necessary, creating essential Google Ads conversion actions.
 *   **Functionality:**
     *   Automated API integration to create campaigns within the user's Google Ads account.
+    *   Automated API integration to create and manage Google Ads Conversion Actions (e.g., call conversions, form submissions) based on derived business goals.
     *   Leverage user-provided business details (industry, services, goals, audience segments) to define campaign strategy.
     *   Generate campaign structure, ad groups, keywords, and ad copy using AI and predefined templates.
     *   Set up campaigns with appropriate bidding strategies (e.g., Maximize Conversions, Target CPA) and daily budgets.
@@ -45,9 +46,11 @@ Zuggernaut V1 provides a streamlined, automated solution for small businesses to
     *   User provides necessary API credentials and permissions (OAuth flow) for GBP, GTM, and Google Ads.
     *   User provides Google Ads Conversion ID/Label and GTM Container ID.
     *   User receives instructions and performs manual GTM snippet installation on their website.
+    *   **User confirms/refines Zuggernaut's proposed Google Ads setup based on derived business goals.**
 *   **Section 2: Automated Backend Processes**
     *   GBP Audit is performed and results are generated.
     *   GTM conversion tracking tags and triggers are created.
+    *   **Google Ads Conversion Actions are created/managed based on business goals.**
     *   Structural tracking checks are run before Ads launch.
     *   Google Ads campaigns are created and launched only when required gates pass.
     *   Backend processes are hidden from the user, with status updates provided.

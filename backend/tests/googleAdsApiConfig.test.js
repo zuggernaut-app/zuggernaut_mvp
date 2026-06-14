@@ -93,7 +93,54 @@ describe('googleAdsApiConfig', () => {
       message: 'User not authorized.',
       action: 'listAccessibleCustomers',
       redactedCustomerIds: ['…7890'],
+      fieldViolations: [],
+      googleAdsErrors: [],
+      requestId: null,
     });
+  });
+
+  it('parses GoogleAdsFailure field paths and BadRequest fieldViolations', () => {
+    const parsed = parseGoogleAdsApiError(400, {
+      error: {
+        status: 'INVALID_ARGUMENT',
+        message: 'Request contains an invalid argument.',
+        details: [
+          {
+            '@type': 'type.googleapis.com/google.rpc.BadRequest',
+            fieldViolations: [{ field: 'operations', description: 'Unknown name "create".' }],
+          },
+          {
+            '@type': 'type.googleapis.com/google.ads.googleads.v24.errors.GoogleAdsFailure',
+            requestId: 'req-123',
+            errors: [
+              {
+                message: 'Required field was missing.',
+                errorCode: { fieldError: 'REQUIRED' },
+                location: {
+                  fieldPathElements: [
+                    { fieldName: 'operations' },
+                    { fieldName: 'create', index: 0 },
+                    { fieldName: 'contains_eu_political_advertising' },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(parsed.fieldViolations).toEqual([
+      { field: 'operations', description: 'Unknown name "create".' },
+    ]);
+    expect(parsed.googleAdsErrors).toEqual([
+      {
+        field: 'operations.create[0].contains_eu_political_advertising',
+        message: 'Required field was missing.',
+        errorCode: 'fieldError:REQUIRED',
+      },
+    ]);
+    expect(parsed.requestId).toBe('req-123');
   });
 
   it('creates GoogleAdsApiError with parsed details attached', () => {
@@ -108,5 +155,28 @@ describe('googleAdsApiConfig', () => {
     expect(err.code).toBe('GOOGLE_ADS_LIST_CUSTOMERS_FAILED');
     expect(err.message).toContain('listAccessibleCustomers failed (400)');
     expect(err.details?.googleStatus).toBe('INVALID_ARGUMENT');
+  });
+
+  it('includes specific field violation detail in GoogleAdsApiError message', () => {
+    const err = createGoogleAdsApiErrorFromResponse(
+      400,
+      {
+        error: {
+          status: 'INVALID_ARGUMENT',
+          message: 'Request contains an invalid argument.',
+          details: [
+            {
+              '@type': 'type.googleapis.com/google.rpc.BadRequest',
+              fieldViolations: [{ field: 'operations[0].create.name', description: 'Too long.' }],
+            },
+          ],
+        },
+      },
+      'GOOGLE_ADS_MUTATE_FAILED',
+      { label: 'Google Ads campaign mutate', action: 'campaign:mutate' }
+    );
+
+    expect(err.message).toContain('operations[0].create.name: Too long.');
+    expect(err.details?.fieldViolations).toHaveLength(1);
   });
 });

@@ -81,6 +81,9 @@ export async function waitForScrapeCompletion(
       return {
         websiteUrl: scrapeRun.websiteUrl,
         suggested: scrapeRun.suggested,
+        scrapeStatus: scrapeRun.status,
+        scrapeQuality: scrapeRun.scrapeQuality ?? scrapeRun.suggested.scrapeQuality,
+        manualFallback: scrapeRun.manualFallback ?? scrapeRun.suggested.manualFallback,
       }
     }
     await sleep(delayMs)

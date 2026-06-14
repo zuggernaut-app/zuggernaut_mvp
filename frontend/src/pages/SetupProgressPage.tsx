@@ -15,6 +15,10 @@ import {
   isProvisioningRequiredStatus,
   providerFromProvisioningStatus,
 } from '../lib/provisioningUi'
+import {
+  conversionActionHeadline,
+  parseConversionActionMeta,
+} from '../lib/conversionActionsUi'
 
 interface GbpAuditSummary {
   presentCount: number
@@ -22,23 +26,55 @@ interface GbpAuditSummary {
   needsAttentionCount: number
 }
 
+interface GbpGuidance {
+  code: string
+  title: string
+  message: string
+  blocking: boolean
+}
+
+function parseGbpGuidance(raw: unknown): GbpGuidance | null {
+  if (!raw || typeof raw !== 'object') return null
+  const g = raw as Record<string, unknown>
+  if (
+    typeof g.code !== 'string' ||
+    typeof g.title !== 'string' ||
+    typeof g.message !== 'string' ||
+    typeof g.blocking !== 'boolean'
+  ) {
+    return null
+  }
+  return {
+    code: g.code,
+    title: g.title,
+    message: g.message,
+    blocking: g.blocking,
+  }
+}
+
 function parseGbpAuditMeta(meta: unknown): {
-  status: 'complete' | 'skipped' | null
+  status: 'complete' | 'skipped' | 'guidance' | null
   summary: GbpAuditSummary | null
+  guidance: GbpGuidance | null
 } {
-  if (!meta || typeof meta !== 'object') return { status: null, summary: null }
+  if (!meta || typeof meta !== 'object') {
+    return { status: null, summary: null, guidance: null }
+  }
   const m = meta as Record<string, unknown>
   const status =
-    m.gbpAudit === 'complete' || m.gbpAudit === 'skipped' ? m.gbpAudit : null
+    m.gbpAudit === 'complete' || m.gbpAudit === 'skipped' || m.gbpAudit === 'guidance'
+      ? m.gbpAudit
+      : null
+  const guidance = parseGbpGuidance(m.gbpGuidance)
   const raw = m.gbpAuditSummary
-  if (!raw || typeof raw !== 'object') return { status, summary: null }
+  if (!raw || typeof raw !== 'object') return { status, summary: null, guidance }
   const s = raw as Record<string, unknown>
   if (
     typeof s.presentCount !== 'number' ||
     typeof s.missingCount !== 'number' ||
     typeof s.needsAttentionCount !== 'number'
   ) {
-    return { status, summary: null }
+    return { status, summary: null, guidance }
   }
   return {
     status,
@@ -47,6 +83,7 @@ function parseGbpAuditMeta(meta: unknown): {
       missingCount: s.missingCount,
       needsAttentionCount: s.needsAttentionCount,
     },
+    guidance,
   }
 }
 
@@ -174,6 +211,61 @@ function parseAdsCampaignMeta(meta: unknown): {
   }
 }
 
+type ProvisioningProviderStatus = 'not_required' | 'approval_required' | 'provisioned' | 'failed'
+
+function parseProvisioningMeta(
+  meta: unknown,
+  runStatus: string,
+): {
+  gtm: { status: ProvisioningProviderStatus; requestId: string | null }
+  googleAds: { status: ProvisioningProviderStatus; requestId: string | null }
+} {
+  const m = meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : {}
+  const gtmMeta = m.gtmProvisioning
+  const adsMeta = m.googleAdsProvisioning
+
+  let gtmStatus: ProvisioningProviderStatus = 'not_required'
+  if (runStatus === 'GTM_PROVISIONING_REQUIRED') gtmStatus = 'approval_required'
+  else if (gtmMeta === 'provisioned') gtmStatus = 'provisioned'
+  else if (gtmMeta === 'failed') gtmStatus = 'failed'
+
+  let adsStatus: ProvisioningProviderStatus = 'not_required'
+  if (runStatus === 'ADS_PROVISIONING_REQUIRED') adsStatus = 'approval_required'
+  else if (adsMeta === 'provisioned') adsStatus = 'provisioned'
+  else if (adsMeta === 'failed') adsStatus = 'failed'
+
+  return {
+    gtm: {
+      status: gtmStatus,
+      requestId: typeof m.gtmProvisioningRequestId === 'string' ? m.gtmProvisioningRequestId : null,
+    },
+    googleAds: {
+      status: adsStatus,
+      requestId:
+        typeof m.googleAdsProvisioningRequestId === 'string' ? m.googleAdsProvisioningRequestId : null,
+    },
+  }
+}
+
+function deriveStructuralVerificationStatus(
+  runStatus: string,
+  verifyStep: { status: string; details?: unknown } | undefined,
+): 'pass' | 'snippet_pending' | 'needs_tracking_fix' | 'manual_review' | null {
+  if (verifyStep?.status === 'success' || runStatus === 'STRUCTURAL_VERIFIED') return 'pass'
+  if (runStatus === 'GTM_SNIPPET_PENDING') return 'snippet_pending'
+  if (runStatus === 'SETUP_NEEDS_TRACKING_FIX') return 'needs_tracking_fix'
+  if (runStatus === 'SETUP_NEEDS_MANUAL_REVIEW') return 'manual_review'
+  if (verifyStep?.status === 'failed') {
+    const details =
+      verifyStep.details && typeof verifyStep.details === 'object'
+        ? (verifyStep.details as { snippetPending?: boolean })
+        : null
+    if (details?.snippetPending === true) return 'snippet_pending'
+    return 'needs_tracking_fix'
+  }
+  return null
+}
+
 function parseStructuralVerificationMeta(meta: unknown): StructuralVerificationEvidence | null {
   if (!meta || typeof meta !== 'object') return null
   const m = meta as Record<string, unknown>
@@ -247,6 +339,15 @@ export function SetupProgressPage(): ReactElement {
       : null
   const gbpSummary = gbpAudit.summary ?? gbpStepSummary
 
+  const conversionActions = parseConversionActionMeta(run?.meta ?? null)
+  const manageStep = (data?.steps ?? []).find(
+    (step) => step.stepName === 'manage_ads_conversion_actions',
+  )
+  const conversionReviewMessage =
+    manageStep?.status === 'failed' && manageStep.lastErrorSummary
+      ? manageStep.lastErrorSummary
+      : null
+
   const catalog = parseCatalogMeta(run?.meta ?? null)
   const catalogStep = (data?.steps ?? []).find((step) => step.stepName === 'ads_conversion_catalog')
   const catalogStepSummary =
@@ -269,6 +370,17 @@ export function SetupProgressPage(): ReactElement {
       : null
   const gtmSummary = gtm.summary ?? gtmStepSummary
   const structuralEvidence = parseStructuralVerificationMeta(run?.meta ?? null)
+  const structuralSummary =
+    run?.meta &&
+    typeof run.meta === 'object' &&
+    typeof (run.meta as Record<string, unknown>).structuralVerificationSummary === 'string'
+      ? String((run.meta as Record<string, unknown>).structuralVerificationSummary)
+      : null
+  const verifyStep = (data?.steps ?? []).find((step) => step.stepName === 'structural_verification')
+  const structuralStatus = run
+    ? deriveStructuralVerificationStatus(run.status, verifyStep)
+    : null
+  const provisioning = parseProvisioningMeta(run?.meta ?? null, run?.status ?? '')
   const publicContainerId = structuralEvidence?.publicContainerId ?? null
 
   const adsCampaign = parseAdsCampaignMeta(run?.meta ?? null)
@@ -366,8 +478,17 @@ export function SetupProgressPage(): ReactElement {
           ) : null}
           {run.status === 'SETUP_NEEDS_MANUAL_REVIEW' ? (
             <div className="alert alert-info" style={{ marginTop: '1rem' }}>
-              Connect Google Tag Manager and Google Ads (and optionally GBP for audit), then retry setup. This
-              status means automation stopped until integrations are healthy.
+              {conversionReviewMessage ? (
+                <>
+                  <strong>Conversion actions need review</strong>
+                  <p style={{ marginTop: '0.5rem', marginBottom: 0 }}>{conversionReviewMessage}</p>
+                </>
+              ) : (
+                <>
+                  Connect Google Tag Manager and Google Ads (and optionally GBP for audit), then retry setup.
+                  This status means automation stopped until integrations are healthy.
+                </>
+              )}
             </div>
           ) : null}
           {gbpAudit.status === 'skipped' ? (
@@ -375,6 +496,16 @@ export function SetupProgressPage(): ReactElement {
               GBP audit skipped — connect Google Business Profile on the setup page to include a
               read-only profile check in future runs.
             </div>
+          ) : null}
+          {gbpAudit.status === 'guidance' && gbpAudit.guidance ? (
+            <section className="alert alert-info" style={{ marginTop: '1rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>{gbpAudit.guidance.title}</h2>
+              <p style={{ marginTop: 0, marginBottom: '0.5rem' }}>{gbpAudit.guidance.message}</p>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--color-muted)' }}>
+                Google Business Profile is optional for setup. Connect or claim a profile to enable
+                the read-only audit on a future run.
+              </p>
+            </section>
           ) : null}
           {gbpAudit.status === 'complete' && gbpSummary ? (
             <section style={{ marginTop: '1.5rem' }}>
@@ -395,6 +526,25 @@ export function SetupProgressPage(): ReactElement {
                 <li>
                   <strong>Needs attention</strong> · {gbpSummary.needsAttentionCount} item
                   {gbpSummary.needsAttentionCount === 1 ? '' : 's'}
+                </li>
+              </ul>
+            </section>
+          ) : null}
+          {conversionActions.summary ? (
+            <section style={{ marginTop: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Conversion actions</h2>
+              <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginBottom: '0.5rem' }}>
+                {conversionActionHeadline(conversionActions.summary)}
+              </p>
+              <ul className="stepsList">
+                <li>
+                  <strong>Slots resolved</strong> · {conversionActions.summary.slotsResolved}
+                </li>
+                <li>
+                  <strong>Reused</strong> · {conversionActions.summary.reused}
+                </li>
+                <li>
+                  <strong>Created</strong> · {conversionActions.summary.created}
                 </li>
               </ul>
             </section>
@@ -478,16 +628,50 @@ export function SetupProgressPage(): ReactElement {
               </ul>
             </section>
           ) : null}
-          {structuralEvidence?.missing && structuralEvidence.missing.length > 0 ? (
+          {provisioning.gtm.status !== 'not_required' ||
+          provisioning.googleAds.status !== 'not_required' ? (
             <section style={{ marginTop: '1.5rem' }}>
-              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Verification details</h2>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Provisioning status</h2>
               <ul className="stepsList">
-                {structuralEvidence.missing.map((item) => (
-                  <li key={item}>
-                    <strong>{item.replace(/_/g, ' ')}</strong>
+                {provisioning.gtm.status !== 'not_required' ? (
+                  <li>
+                    <strong>Google Tag Manager</strong> · {provisioning.gtm.status.replace(/_/g, ' ')}
                   </li>
-                ))}
+                ) : null}
+                {provisioning.googleAds.status !== 'not_required' ? (
+                  <li>
+                    <strong>Google Ads</strong> · {provisioning.googleAds.status.replace(/_/g, ' ')}
+                  </li>
+                ) : null}
               </ul>
+            </section>
+          ) : null}
+          {structuralStatus ? (
+            <section style={{ marginTop: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Structural verification</h2>
+              <p style={{ fontSize: '0.875rem', marginTop: 0 }}>
+                Status: <strong>{structuralStatus.replace(/_/g, ' ')}</strong>
+              </p>
+              {structuralSummary ? (
+                <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: '0.35rem' }}>
+                  {structuralSummary}
+                </p>
+              ) : null}
+              {structuralEvidence?.snippetPresent === false && publicContainerId ? (
+                <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: '0.35rem' }}>
+                  Install container <code>{publicContainerId}</code> on your website before campaigns can
+                  launch.
+                </p>
+              ) : null}
+              {structuralEvidence?.missing && structuralEvidence.missing.length > 0 ? (
+                <ul className="stepsList" style={{ marginTop: '0.5rem' }}>
+                  {structuralEvidence.missing.map((item) => (
+                    <li key={item}>
+                      <strong>{item.replace(/_/g, ' ')}</strong>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </section>
           ) : null}
           {showConnections ? (

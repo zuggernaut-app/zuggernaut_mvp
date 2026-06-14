@@ -2,7 +2,10 @@ import { useEffect, useState, type FormEvent } from 'react'
 import type { ReactElement } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
+import { getBusinessContext } from '../api/businessContexts'
 import { startSetupRun } from '../api/setupRuns'
+import { GoogleAdsCustomerSelector } from '../components/integrations/GoogleAdsCustomerSelector'
+import { GtmResourceSelector } from '../components/integrations/GtmResourceSelector'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
@@ -10,8 +13,9 @@ import {
   INTEGRATION_PROVIDERS,
   useIntegrationConnections,
 } from '../hooks/useIntegrationConnections'
-import { requiredProvidersReadyForSetup } from '../lib/provisioningUi'
+import { optionalIntegrationNudge, requiredProvidersReadyForSetup } from '../lib/provisioningUi'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import type { IntegrationProvider } from '../api/integrations'
 
 interface Temporal503Body {
   setupRunId?: string
@@ -28,6 +32,23 @@ function extractSetupRunId(body: unknown): string | undefined {
     return (body as Temporal503Body).setupRunId
   }
   return undefined
+}
+
+function needsOAuthConnect(reason: string | undefined): boolean {
+  return (
+    reason === 'missing_connection' ||
+    reason === 'not_connected' ||
+    reason === 'needs_reauth' ||
+    reason === 'insufficient_scopes' ||
+    reason === 'token_expired' ||
+    reason === 'missing_tokens'
+  )
+}
+
+function showSelectionUi(provider: IntegrationProvider, reason: string | undefined): boolean {
+  return (
+    (provider === 'gtm' || provider === 'google_ads') && reason === 'selection_required'
+  )
 }
 
 export function StartSetupPage(): ReactElement {
@@ -50,7 +71,30 @@ export function StartSetupPage(): ReactElement {
   } = useIntegrationConnections(businessId)
 
   useEffect(() => {
-    if (!businessId) navigate('/onboarding/business', { replace: true })
+    if (!businessId) {
+      navigate('/onboarding/business', { replace: true })
+      return
+    }
+
+    let cancelled = false
+    void (async () => {
+      try {
+        const { businessContext } = await getBusinessContext(businessId)
+        if (cancelled) return
+        if (!businessContext.confirmedAt) {
+          navigate('/onboarding/business', { replace: true })
+        }
+      } catch (err) {
+        if (cancelled) return
+        if (err instanceof ApiError && err.status === 404) {
+          navigate('/onboarding/business', { replace: true })
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
   }, [businessId, navigate])
 
   useEffect(() => {
@@ -60,7 +104,11 @@ export function StartSetupPage(): ReactElement {
     if (!integration) return
 
     if (integration === 'connected' && provider) {
-      setIntegrationNotice(`${provider} connected successfully.`)
+      setIntegrationNotice(
+        provider === 'google_ads' || provider === 'gtm'
+          ? `${provider} connected. Select the target account below before starting setup.`
+          : `${provider} connected successfully.`,
+      )
       void refetchConnections()
     } else if (integration === 'error') {
       setIntegrationNotice(
@@ -113,18 +161,17 @@ export function StartSetupPage(): ReactElement {
     )
   }
 
-  const gtmReady = connections.gtm?.ready === true
   const adsReady = connections.google_ads?.ready === true
   const canStartSetup = requiredProvidersReadyForSetup(connections)
-  const needsProvisioningApproval =
-    !canStartSetup &&
-    ((connections.gtm?.reason === 'provisioning_required' && !gtmReady) ||
-      (connections.google_ads?.reason === 'provisioning_required' && !adsReady))
+  const optionalNudges = optionalIntegrationNudge(connections)
+  const adsNeedsProvisioning =
+    !adsReady && connections.google_ads?.reason === 'provisioning_required'
+  const adsNeedsSelection = connections.google_ads?.reason === 'selection_required'
 
   return (
     <PageLayout
       title="Start setup run"
-      lead="Connect required Google integrations, then begin the Temporal workflow for this business."
+      lead="Connect Google Ads (required), optionally connect GTM and GBP, then begin the Temporal workflow for this business."
     >
       <form className="form" onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error ?? connectionsError} />
@@ -141,14 +188,15 @@ export function StartSetupPage(): ReactElement {
             {INTEGRATION_PROVIDERS.map((provider) => {
               const status = connections[provider]
               const ready = status?.ready === true
+              const reason = status?.reason
               return (
-                <li key={provider}>
+                <li key={provider} style={{ marginBottom: '1rem' }}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
                     <strong>{providerLabels[provider]}</strong>
                     <span className={`statusPill ${ready ? 'status-succeeded' : 'status-review'}`}>
                       {status ? statusLabel(status) : 'Loading…'}
                     </span>
-                    {!ready ? (
+                    {!ready && needsOAuthConnect(reason) ? (
                       <button
                         type="button"
                         className="btn btn-secondary"
@@ -158,15 +206,46 @@ export function StartSetupPage(): ReactElement {
                       </button>
                     ) : null}
                   </div>
+                  {ready && status?.providerIdentifiers ? (
+                    <p style={{ margin: '0.5rem 0 0', fontSize: '0.85rem', color: 'var(--color-muted)' }}>
+                      {provider === 'gtm' && status.providerIdentifiers.publicContainerId
+                        ? `Container: ${String(status.providerIdentifiers.publicContainerId)}`
+                        : null}
+                      {provider === 'google_ads' && status.providerIdentifiers.customerId
+                        ? `Customer: ${String(status.providerIdentifiers.customerId)}`
+                        : null}
+                      {provider === 'gbp' && status.providerIdentifiers.locationName
+                        ? `Location: ${String(status.providerIdentifiers.locationName)}`
+                        : null}
+                    </p>
+                  ) : null}
+                  {showSelectionUi(provider, reason) ? (
+                    provider === 'gtm' ? (
+                      <GtmResourceSelector businessId={businessId} onSaved={() => void refetchConnections()} />
+                    ) : (
+                      <GoogleAdsCustomerSelector
+                        businessId={businessId}
+                        onSaved={() => void refetchConnections()}
+                      />
+                    )
+                  ) : null}
                 </li>
               )
             })}
           </ul>
           {!canStartSetup ? (
             <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: '0.75rem' }}>
-              {needsProvisioningApproval
-                ? 'GTM and Google Ads must be OAuth-connected before setup can start. If provisioning approval is needed, start setup and approve on the progress screen.'
-                : 'GTM and Google Ads must be connected before setup can start. GBP is optional for audit.'}
+              {adsNeedsSelection
+                ? 'Select your Google Ads customer before setup can start.'
+                : adsNeedsProvisioning
+                  ? 'Connect Google Ads via OAuth. If provisioning approval is needed, start setup and approve on the progress screen.'
+                  : 'Google Ads must be connected before setup can start. GTM and GBP are optional.'}
+            </p>
+          ) : optionalNudges.length > 0 ? (
+            <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: '0.75rem' }}>
+              {optionalNudges.includes('gtm')
+                ? 'Google Ads is ready. Connecting GTM is recommended for conversion tags and snippet verification, but setup can proceed without it.'
+                : 'Google Ads is ready. Connect Google Business Profile for an optional GBP audit.'}
             </p>
           ) : null}
         </section>

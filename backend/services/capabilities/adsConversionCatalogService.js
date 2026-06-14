@@ -179,6 +179,39 @@ async function fetchAndPersistConversionCatalog(ctx) {
     logicalCategory: classifyConversionAction(action),
   }));
 
+  try {
+    const {
+      resolveStrategyWithCatalog,
+      persistConversionStrategy,
+    } = require('./adsConversionActionManagementService');
+    const resolution = resolveStrategyWithCatalog(bc, catalog);
+    await persistConversionStrategy(businessId, resolution.strategy, logger);
+    logger.info(
+      {
+        setupRunId: setupRunId.toString(),
+        businessId: businessId.toString(),
+        stepName: SETUP_STEP_NAMES.ADS_CONVERSION_CATALOG,
+        provider: 'google_ads',
+        allSlotsFilled: resolution.allSlotsFilled,
+        matchedCount: resolution.matchedCount,
+        unmatchedCount: resolution.unmatchedCount,
+        unmatchedSlots: resolution.unmatchedSlots,
+      },
+      'conversion strategy resolved against catalog'
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'conversion strategy resolution failed';
+    logger.warn(
+      {
+        setupRunId: setupRunId.toString(),
+        businessId: businessId.toString(),
+        stepName: SETUP_STEP_NAMES.ADS_CONVERSION_CATALOG,
+        error: msg,
+      },
+      'conversion strategy resolution failed'
+    );
+  }
+
   const primaryGoal = resolvePrimaryGoal(bc.goals);
   const selected = selectConversionActions(catalog, primaryGoal);
   const summary = buildCatalogSummary(catalog, selected, primaryGoal, readModel.source);
@@ -259,5 +292,6 @@ module.exports = {
   classifyConversionAction,
   resolvePrimaryGoal,
   selectConversionActions,
+  sortForSelection,
   buildCatalogSummary,
 };

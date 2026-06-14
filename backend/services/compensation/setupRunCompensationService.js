@@ -1,5 +1,11 @@
 'use strict';
 
+/**
+ * V1 compensation: pause partial Ads campaigns; record GTM manual-review guidance.
+ * Automated GTM container rollback is intentionally deferred — Tag Manager delete/revert
+ * APIs are destructive and account-specific; operators resolve via GTM UI before retry.
+ */
+
 const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('../../constants/setupWorkflow');
 const { pauseAdsCampaign } = require('../integrations/googleAdsCampaignClient');
@@ -127,7 +133,7 @@ async function runSetupRunCompensation(ctx) {
       type: 'gtm_provisioning_failure_guidance',
       outcome: 'recorded',
       message:
-        'GTM provisioning failed after approval. Review the error summary, confirm Google account permissions, and approve provisioning again before starting a new setup run.',
+        'GTM provisioning failed after approval. If no GTM account exists, create one at https://tagmanager.google.com first. Otherwise review permissions and approve provisioning again before starting a new setup run.',
     });
     logger.info(
       {

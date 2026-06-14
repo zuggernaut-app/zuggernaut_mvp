@@ -129,7 +129,30 @@ describe('setupRunReportService', () => {
   });
 
   it('buildSetupRunReport aggregates normalized sections for a successful run', async () => {
-    const { run } = await seedReportFixtures();
+    const { run, bc } = await seedReportFixtures();
+
+    const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    await SetupRun.updateOne(
+      { _id: run._id },
+      {
+        $set: {
+          'meta.conversionActionManagement': 'ok',
+          'meta.conversionActionSlotsResolved': 1,
+          'meta.conversionActionsCreated': 0,
+          'meta.conversionActionsReused': 1,
+        },
+      }
+    );
+    await SetupStepExecution.create({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      status: 'success',
+      provider: 'google_ads',
+      attemptCount: 1,
+      details: { slotsResolved: 1, created: 0, reused: 1 },
+    });
 
     const report = await buildSetupRunReport(run._id);
     expect(report).toBeTruthy();
@@ -138,6 +161,13 @@ describe('setupRunReportService', () => {
     expect(report.business?.businessName).toBe('Acme Co');
     expect(report.gbpAudit.status).toBe('complete');
     expect(report.gbpAudit.findings?.present).toContain('Business name');
+    expect(report.conversionActions).toEqual({
+      status: 'ready',
+      slotsResolved: 1,
+      created: 0,
+      reused: 1,
+      message: null,
+    });
     expect(report.adsCatalog.status).toBe('ready');
     expect(report.gtmSetup.status).toBe('setup_complete');
     expect(report.structuralVerification.status).toBe('pass');
@@ -145,6 +175,56 @@ describe('setupRunReportService', () => {
     expect(report.adsCampaign.plan?.campaignName).toContain('Acme Co');
     expect(report.artifactCounts.adsCampaigns).toBe(1);
     expect(report.steps.length).toBeGreaterThanOrEqual(2);
+    expect(report.recommendations).toEqual([]);
+  });
+
+  it('buildSetupRunReport surfaces tracking recommendations after successful Ads-only launch', async () => {
+    const { run, bc } = await seedReportFixtures({
+      email: 'report-reco@test.com',
+      meta: {
+        catalog: 'ready',
+        catalogSummary: {
+          primaryGoal: 'both',
+          totalInCatalog: 10,
+          selectedCount: 2,
+          selectedCategories: ['call', 'form'],
+        },
+        conversionActionManagement: 'ok',
+        structuralVerification: { gtmOptional: true, reason: 'missing_connection' },
+        structuralVerificationSummary: 'GTM is not configured; structural verification skipped.',
+        ads: 'campaigns_recorded',
+        adsCampaignSummary: {
+          campaignCreated: true,
+          adGroupCreated: true,
+          adCreated: true,
+          reusedArtifacts: 0,
+          campaignExternalId: 'customers/123/campaigns/zug-campaign',
+          conversionLinkCount: 2,
+        },
+      },
+      withAuditReport: false,
+    });
+
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    await SetupStepExecution.create({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      stepName: SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION,
+      status: 'skipped',
+      provider: 'gtm',
+      attemptCount: 1,
+      details: {
+        optional: true,
+        evidence: { gtmOptional: true, reason: 'missing_connection' },
+        summary: 'GTM is not configured; structural verification skipped.',
+      },
+    });
+
+    const report = await buildSetupRunReport(run._id);
+    expect(report.structuralVerification.status).toBe('skipped');
+    expect(report.recommendations.length).toBeGreaterThanOrEqual(1);
+    expect(report.recommendations[0].id).toBe('connect_gtm');
+    expect(report.recommendations[0].title).toMatch(/Google Tag Manager/i);
   });
 
   it('buildSetupRunReport handles GBP skipped and snippet pending states', async () => {
@@ -283,6 +363,107 @@ describe('setupRunReportService', () => {
     expect(report.provisioning.gtm.status).toBe('approval_required');
     expect(report.provisioning.gtm.requestId).toBe('req-gtm-1');
     expect(report.supportState?.failedStep).toBe('provision_gtm_resources');
+  });
+
+  it('buildSetupRunReport surfaces conversion action creation summary', async () => {
+    const { run, bc } = await seedReportFixtures({
+      email: 'report-ca-create@test.com',
+      meta: {
+        conversionActionManagement: 'ok',
+        conversionActionSlotsResolved: 2,
+        conversionActionsCreated: 1,
+        conversionActionsReused: 1,
+        catalog: 'ready',
+        ads: 'campaigns_recorded',
+      },
+      withAuditReport: false,
+    });
+
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    await SetupStepExecution.deleteMany({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+    });
+    await SetupStepExecution.create({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      status: 'success',
+      provider: 'google_ads',
+      attemptCount: 1,
+      details: { slotsResolved: 2, created: 1, reused: 1 },
+    });
+
+    const report = await buildSetupRunReport(run._id);
+    expect(report.conversionActions.status).toBe('ready');
+    expect(report.conversionActions.created).toBe(1);
+    expect(report.conversionActions.reused).toBe(1);
+    expect(report.conversionActions.slotsResolved).toBe(2);
+  });
+
+  it('buildSetupRunReport surfaces conversion action manual review', async () => {
+    const { run, bc } = await seedReportFixtures({
+      email: 'report-ca-review@test.com',
+      status: 'SETUP_NEEDS_MANUAL_REVIEW',
+      lastErrorSummary: 'Conversion action creation is disabled and required slots are unfilled.',
+      meta: {},
+      withAuditReport: false,
+    });
+
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    await SetupStepExecution.create({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      status: 'failed',
+      provider: 'google_ads',
+      attemptCount: 1,
+      lastErrorSummary: 'Conversion action creation is disabled and required slots are unfilled.',
+      details: { manualReview: true },
+    });
+
+    const report = await buildSetupRunReport(run._id);
+    expect(report.conversionActions.status).toBe('manual_review');
+    expect(report.conversionActions.message).toMatch(/disabled/i);
+    expect(report.outcome.recovery?.title).toMatch(/manual setup/i);
+  });
+
+  it('buildSetupRunReport surfaces conversion action creation failure', async () => {
+    const { run, bc } = await seedReportFixtures({
+      email: 'report-ca-fail@test.com',
+      status: 'FAILED',
+      lastErrorSummary: 'Google Ads API mutate failed',
+      meta: {},
+      withAuditReport: false,
+    });
+
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    await SetupStepExecution.create({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      status: 'failed',
+      provider: 'google_ads',
+      attemptCount: 1,
+      lastErrorSummary: 'Google Ads API mutate failed',
+      details: { code: 'GOOGLE_ADS_MUTATE_FAILED', created: 0, reused: 1 },
+    });
+
+    const report = await buildSetupRunReport(run._id);
+    expect(report.conversionActions.status).toBe('failed');
+    expect(report.conversionActions.message).toMatch(/mutate failed/i);
+    expect(report.outcome.recovery?.title).toMatch(/creation failed/i);
+  });
+
+  it('buildSetupRunReport leaves conversion actions not_run when step absent', async () => {
+    const { run } = await seedReportFixtures({
+      email: 'report-ca-absent@test.com',
+      meta: { catalog: 'ready' },
+      withAuditReport: false,
+    });
+
+    const report = await buildSetupRunReport(run._id);
+    expect(report.conversionActions.status).toBe('not_run');
   });
 
   it('includes stuckState for long-running setup runs', async () => {

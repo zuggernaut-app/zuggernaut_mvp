@@ -13,18 +13,36 @@ vi.mock('../hooks/useIntegrationConnections', () => ({
   INTEGRATION_PROVIDERS: ['gbp', 'gtm', 'google_ads'],
 }))
 
+vi.mock('../api/businessContexts', () => ({
+  getBusinessContext: vi.fn().mockResolvedValue({
+    businessContext: { businessId: '507f1f77bcf86cd799439011', confirmedAt: new Date().toISOString() },
+  }),
+}))
+
+vi.mock('../components/integrations/GtmResourceSelector', () => ({
+  GtmResourceSelector: () => <div>GTM selector panel</div>,
+}))
+
+vi.mock('../components/integrations/GoogleAdsCustomerSelector', () => ({
+  GoogleAdsCustomerSelector: () => <div>Ads selector panel</div>,
+}))
+
 const mockUseIntegrationConnections = vi.mocked(useIntegrationConnections)
 
 function mockConnections(overrides: Partial<ReturnType<typeof useIntegrationConnections>> = {}) {
   mockUseIntegrationConnections.mockReturnValue({
-    connections: {},
+    connections: {
+      gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
+      gtm: { provider: 'gtm', ready: false, reason: 'missing_connection' } as never,
+      google_ads: { provider: 'google_ads', ready: false, reason: 'missing_connection' } as never,
+    },
     loading: false,
     error: null,
     refetch: vi.fn(),
     connectProvider: vi.fn(),
     providerLabels: {
       gbp: 'Google Business Profile (optional)',
-      gtm: 'Google Tag Manager (required)',
+      gtm: 'Google Tag Manager (optional, recommended)',
       google_ads: 'Google Ads (required)',
     },
     statusLabel: integrationStatusLabel,
@@ -53,11 +71,11 @@ describe('StartSetupPage integrations', () => {
     expect(screen.getAllByRole('button', { name: /connect google/i }).length).toBeGreaterThan(0)
   })
 
-  it('enables start setup when gtm and google ads are ready', async () => {
+  it('enables start setup when google ads is ready (GTM optional)', async () => {
     mockConnections({
       connections: {
         gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
-        gtm: { provider: 'gtm', ready: true, reason: 'ok' } as never,
+        gtm: { provider: 'gtm', ready: false, reason: 'missing_connection' } as never,
         google_ads: { provider: 'google_ads', ready: true, reason: 'ok' } as never,
       },
     })
@@ -75,7 +93,7 @@ describe('StartSetupPage integrations', () => {
     })
   })
 
-  it('enables start setup when required providers need provisioning approval', async () => {
+  it('enables start setup when google ads needs provisioning approval', async () => {
     mockConnections({
       connections: {
         gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
@@ -118,11 +136,73 @@ describe('StartSetupPage integrations', () => {
     expect(await screen.findByRole('button', { name: /start setup/i })).toBeDisabled()
   })
 
-  it('still blocks start setup when reauth is required', async () => {
+  it('allows start setup when only GTM selection is pending', async () => {
+    mockConnections({
+      connections: {
+        gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
+        gtm: { provider: 'gtm', ready: false, reason: 'selection_required' } as never,
+        google_ads: { provider: 'google_ads', ready: true, reason: 'ok' } as never,
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <OnboardingProvider>
+          <StartSetupPage />
+        </OnboardingProvider>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('button', { name: /start setup/i })).toBeEnabled()
+    expect(screen.getByText(/GTM is recommended/i)).toBeInTheDocument()
+    expect(screen.getByText('GTM selector panel')).toBeInTheDocument()
+  })
+
+  it('shows Ads selector when Google Ads selection is required', async () => {
+    mockConnections({
+      connections: {
+        gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
+        gtm: { provider: 'gtm', ready: true, reason: 'ok' } as never,
+        google_ads: { provider: 'google_ads', ready: false, reason: 'selection_required' } as never,
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <OnboardingProvider>
+          <StartSetupPage />
+        </OnboardingProvider>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Ads selector panel')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /start setup/i })).toBeDisabled()
+  })
+
+  it('allows start setup when only optional GTM needs reauth', async () => {
     mockConnections({
       connections: {
         gtm: { provider: 'gtm', ready: false, reason: 'needs_reauth' } as never,
         google_ads: { provider: 'google_ads', ready: true, reason: 'ok' } as never,
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <OnboardingProvider>
+          <StartSetupPage />
+        </OnboardingProvider>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('button', { name: /start setup/i })).toBeEnabled()
+  })
+
+  it('blocks start setup when google ads needs reauth', async () => {
+    mockConnections({
+      connections: {
+        gtm: { provider: 'gtm', ready: true, reason: 'ok' } as never,
+        google_ads: { provider: 'google_ads', ready: false, reason: 'needs_reauth' } as never,
       },
     })
 

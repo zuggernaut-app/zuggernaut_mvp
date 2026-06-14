@@ -106,13 +106,34 @@ describe('BusinessReviewPage', () => {
     })
   })
 
+  it('requires business name before save', async () => {
+    seedSession({
+      userId: TEST_IDS.user,
+      businessId: TEST_IDS.business,
+      scrapePreview: {
+        websiteUrl: 'https://x.com',
+        suggested: { businessName: 'Seed' },
+      },
+    })
+
+    const user = userEvent.setup()
+    renderReview()
+
+    await screen.findByRole('heading', { name: /confirm business context/i })
+    await user.clear(screen.getByLabelText(/^business name$/i))
+    await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/business name is required/i)
+    expect(mockedUpdate).not.toHaveBeenCalled()
+  })
+
   it('shows error when optional JSON field is invalid', async () => {
     seedSession({
       userId: TEST_IDS.user,
       businessId: TEST_IDS.business,
       scrapePreview: {
         websiteUrl: 'https://x.com',
-        suggested: {},
+        suggested: { businessName: 'X Co' },
       },
     })
 
@@ -123,7 +144,7 @@ describe('BusinessReviewPage', () => {
 
     await user.click(screen.getByText(/optional json fields/i))
 
-    fireEvent.change(screen.getByLabelText(/contactMethods \(JSON\)/i), {
+    fireEvent.change(screen.getByLabelText(/contactMethods/i), {
       target: { value: '{broken' },
     })
 
@@ -137,7 +158,7 @@ describe('BusinessReviewPage', () => {
     seedSession({
       userId: TEST_IDS.user,
       businessId: TEST_IDS.business,
-      scrapePreview: { websiteUrl: 'https://x.com', suggested: {} },
+      scrapePreview: { websiteUrl: 'https://x.com', suggested: { businessName: 'X Co' } },
     })
 
     mockedUpdate.mockRejectedValueOnce(new ApiError(400, 'Bad payload', 'validation_error'))

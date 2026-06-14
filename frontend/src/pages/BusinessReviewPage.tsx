@@ -22,6 +22,30 @@ function parseOptionalObject(raw: string): unknown | undefined {
   return JSON.parse(t) as unknown
 }
 
+function contactFromSuggested(contact: unknown): { email: string; phone: string } {
+  if (!contact || typeof contact !== 'object') return { email: '', phone: '' }
+  const c = contact as Record<string, unknown>
+  const email = Array.isArray(c.emails) && c.emails[0] ? String(c.emails[0]) : ''
+  const phone = Array.isArray(c.phones) && c.phones[0] ? String(c.phones[0]) : ''
+  return { email, phone }
+}
+
+function buildContactMethods(
+  email: string,
+  phone: string,
+  rawJson: string,
+): unknown | undefined {
+  if (rawJson.trim()) {
+    return parseOptionalObject(rawJson)
+  }
+  const contact: Record<string, string[]> = {}
+  const trimmedEmail = email.trim()
+  const trimmedPhone = phone.trim()
+  if (trimmedEmail) contact.emails = [trimmedEmail]
+  if (trimmedPhone) contact.phones = [trimmedPhone]
+  return Object.keys(contact).length ? contact : undefined
+}
+
 export function BusinessReviewPage(): ReactElement {
   const navigate = useNavigate()
   const { snapshot, clearScrapePreviewState } = useOnboardingState()
@@ -32,6 +56,7 @@ export function BusinessReviewPage(): ReactElement {
   const initial = useMemo(() => {
     const s = scrapePreview?.suggested
     const site = scrapePreview?.websiteUrl ?? ''
+    const contact = contactFromSuggested(s?.contactMethods)
     return {
       websiteUrl: site,
       businessName: String(s?.businessName ?? ''),
@@ -44,9 +69,11 @@ export function BusinessReviewPage(): ReactElement {
         : '',
       differentiators: String(s?.differentiators ?? ''),
       orderValueHint: String(s?.orderValueHint ?? ''),
-      contactMethodsRaw: '',
+      contactEmail: contact.email,
+      contactPhone: contact.phone,
+      contactMethodsRaw: s?.contactMethods ? JSON.stringify(s.contactMethods, null, 2) : '',
       audienceSignalsRaw: '',
-      goalsRaw: '',
+      goalsRaw: s?.goals ? JSON.stringify(s.goals, null, 2) : '',
     }
   }, [scrapePreview])
 
@@ -65,11 +92,17 @@ export function BusinessReviewPage(): ReactElement {
     e.preventDefault()
     if (!businessId) return
     setError(null)
+
+    if (!form.businessName.trim()) {
+      setError('Business name is required to confirm your context.')
+      return
+    }
+
     setBusy(true)
     try {
       const body: BusinessContextUpdateBody = {
         websiteUrl: form.websiteUrl.trim() || undefined,
-        businessName: form.businessName.trim() || undefined,
+        businessName: form.businessName.trim(),
         industry: form.industry.trim() || undefined,
         services: splitLines(form.services),
         serviceAreas: splitLines(form.serviceAreas),
@@ -78,10 +111,13 @@ export function BusinessReviewPage(): ReactElement {
       }
 
       try {
-        const v = parseOptionalObject(form.contactMethodsRaw)
-        if (v !== undefined) body.contactMethods = v
+        body.contactMethods = buildContactMethods(
+          form.contactEmail,
+          form.contactPhone,
+          form.contactMethodsRaw,
+        )
       } catch {
-        throw new Error('Contact methods must be valid JSON or empty')
+        throw new Error('Contact methods must be valid JSON or use the email/phone fields')
       }
       try {
         const v = parseOptionalObject(form.audienceSignalsRaw)
@@ -119,11 +155,20 @@ export function BusinessReviewPage(): ReactElement {
     )
   }
 
+  const manualHint = scrapePreview.manualFallback || scrapePreview.scrapeQuality === 'none'
+
   return (
     <PageLayout
       title="Confirm business context"
-      lead="Adjust any fields below. Saving confirms your context so setup can begin."
+      lead="Adjust any fields below. Saving confirms your context so Google setup can begin."
     >
+      {manualHint ? (
+        <section className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          Scrape was skipped or returned limited data. Fill in the details your customers should
+          see in campaigns and audits.
+        </section>
+      ) : null}
+
       <form className="form" style={{ maxWidth: '32rem' }} onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error} />
         <div className="field">
@@ -167,6 +212,24 @@ export function BusinessReviewPage(): ReactElement {
           />
         </div>
         <div className="field">
+          <label htmlFor="contactEmail">Contact email</label>
+          <input
+            id="contactEmail"
+            type="email"
+            value={form.contactEmail}
+            onChange={(e) => setForm((f) => ({ ...f, contactEmail: e.target.value }))}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="contactPhone">Contact phone</label>
+          <input
+            id="contactPhone"
+            type="tel"
+            value={form.contactPhone}
+            onChange={(e) => setForm((f) => ({ ...f, contactPhone: e.target.value }))}
+          />
+        </div>
+        <div className="field">
           <label htmlFor="differentiators">Differentiators</label>
           <textarea
             id="differentiators"
@@ -189,7 +252,7 @@ export function BusinessReviewPage(): ReactElement {
             Optional JSON fields
           </summary>
           <div className="field" style={{ marginTop: '0.75rem' }}>
-            <label htmlFor="contactMethodsRaw">contactMethods (JSON)</label>
+            <label htmlFor="contactMethodsRaw">contactMethods (JSON override)</label>
             <textarea
               id="contactMethodsRaw"
               value={form.contactMethodsRaw}
@@ -220,13 +283,23 @@ export function BusinessReviewPage(): ReactElement {
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? <InlineLoading label="Saving…" /> : 'Confirm & continue'}
           </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => navigate('/onboarding/suggestions')}
-          >
-            Back
-          </button>
+          {scrapePreview.scrapeStatus !== 'MANUAL' ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => navigate('/onboarding/suggestions')}
+            >
+              Back
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => navigate('/onboarding/business')}
+            >
+              Back
+            </button>
+          )}
         </div>
       </form>
     </PageLayout>

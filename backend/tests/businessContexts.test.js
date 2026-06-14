@@ -38,6 +38,37 @@ describe('PUT /api/v1/business-contexts', () => {
     return { agent, bid };
   }
 
+  it('GET returns business context for owner', async () => {
+    const { agent, bid } = await draftAndConfirm('get_owner@test.com');
+
+    const res = await agent.get(`/api/v1/business-contexts/${bid}`).expect(200);
+
+    expect(res.body.businessContext.businessId).toBe(bid);
+    expect(res.body.businessContext.businessName).toBe('Acme');
+    expect(res.body.businessContext.confirmedAt).toBeTruthy();
+  });
+
+  it('GET 404 for another users business', async () => {
+    const { bid } = await draftAndConfirm('get_owner2@test.com');
+    const { agent: otherAgent } = await registerAgent(app, 'get_other@test.com');
+
+    await otherAgent.get(`/api/v1/business-contexts/${bid}`).expect(404);
+  });
+
+  it('rejects confirmation without businessName', async () => {
+    const { agent } = await registerAgent(app, 'no_name@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+    const bid = draft.body.businessId;
+
+    const res = await agent.put(`/api/v1/business-contexts/${bid}`).send({
+      industry: 'Tech',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('validation_error');
+    expect(res.body.message).toMatch(/businessName/i);
+  });
+
   it('returns 400 for invalid businessId', async () => {
     const { agent } = await registerAgent(app, 'bad_bid@test.com');
     const res = await agent.put('/api/v1/business-contexts/not-an-object-id').send({

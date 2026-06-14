@@ -1,10 +1,12 @@
 'use strict';
 
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+
+const backendRoot = path.join(__dirname, '..', '..', '..', 'backend');
+require('dotenv').config({ path: path.join(backendRoot, '.env') });
 
 const { verifyRealModeEnvironment } = require('../lib/verifyRealModeEnvironment');
-const { resolveTemporalTaskQueue } = require('../constants/temporalDefaults');
+const { resolveTemporalTaskQueue } = require('../../../backend/constants/temporalDefaults');
 
 const result = verifyRealModeEnvironment();
 
@@ -20,7 +22,7 @@ if (!result.ok) {
   }
   // eslint-disable-next-line no-console
   console.error(
-    '\nReal-mode preflight failed. See backend/.env.example mode matrix and backend/tests/REAL_MODE_E2E_CHECKLIST.md'
+    '\nReal-mode preflight failed. See backend/.env.example mode matrix and dev-tools/docs/REAL_MODE_E2E_CHECKLIST.md'
   );
   process.exit(1);
 }
@@ -30,6 +32,6 @@ console.warn(
   JSON.stringify({
     msg: 'Real-mode environment preflight passed',
     taskQueue: resolveTemporalTaskQueue(),
-    hint: 'Start Temporal worker, then run backend/tests/REAL_MODE_E2E_CHECKLIST.md',
+    hint: 'Start Temporal worker, then run dev-tools/docs/REAL_MODE_E2E_CHECKLIST.md',
   })
 );

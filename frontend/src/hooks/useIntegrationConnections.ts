@@ -12,7 +12,7 @@ const PROVIDERS: IntegrationProvider[] = ['gbp', 'gtm', 'google_ads']
 
 const PROVIDER_LABELS: Record<IntegrationProvider, string> = {
   gbp: 'Google Business Profile (optional)',
-  gtm: 'Google Tag Manager (required)',
+  gtm: 'Google Tag Manager (optional, recommended)',
   google_ads: 'Google Ads (required)',
 }
 
@@ -45,7 +45,7 @@ export function useIntegrationConnections(
     setLoading(true)
     setError(null)
     try {
-      const res = await fetchIntegrationStatus(businessId)
+      const res = await fetchIntegrationStatus(businessId, { rediscover: true })
       setConnections(res.connections)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load integration status.')

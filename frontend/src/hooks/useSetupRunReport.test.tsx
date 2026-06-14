@@ -35,7 +35,21 @@ function makeReport(status: string): SetupRunReportResponse {
       },
       supportState: null,
       compensation: null,
-      gbpAudit: { status: 'not_run', summary: null, findings: null },
+      gbpAudit: {
+        status: 'not_run',
+        reason: null,
+        guidance: null,
+        blocking: false,
+        summary: null,
+        findings: null,
+      },
+      conversionActions: {
+        status: 'not_run',
+        slotsResolved: 0,
+        created: 0,
+        reused: 0,
+        message: null,
+      },
       adsCatalog: { status: 'not_run', summary: null },
       gtmSetup: { status: 'not_run', summary: null },
       provisioning: {
@@ -44,6 +58,7 @@ function makeReport(status: string): SetupRunReportResponse {
       },
       structuralVerification: { status: 'not_run', summary: null, evidence: null },
       adsCampaign: { status: 'not_run', summary: null, plan: null },
+      recommendations: [],
       artifactCounts: {
         gtmTags: 0,
         gtmTriggers: 0,

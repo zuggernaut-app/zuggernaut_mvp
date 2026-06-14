@@ -91,6 +91,8 @@ describe('adsAutoCampaignService', () => {
     expect(intent.version).toBe(1);
     expect(intent.campaignName).toContain('Acme Plumbing');
     expect(intent.ad.finalUrl).toBe('https://acme.example');
+    expect(intent.ad.headlines.every((text) => text.length <= 30)).toBe(true);
+    expect(intent.ad.descriptions.every((text) => text.length <= 90)).toBe(true);
     expect(intent.selectedConversionIds).toEqual(['1001']);
     expect(intent.budget.amountMicros).toBeGreaterThan(0);
   });
@@ -144,11 +146,17 @@ describe('adsAutoCampaignService', () => {
     }).lean();
     expect(ad?.metadata?.finalUrl).toBe('https://acme.example');
 
-    const links = await IntegrationArtifact.find({
+    const customGoal = await IntegrationArtifact.findOne({
       setupRunId: run._id,
-      artifactType: 'ads_conversion_link',
+      artifactType: 'ads_custom_conversion_goal',
     }).lean();
-    expect(links).toHaveLength(1);
+    expect(customGoal?.metadata?.conversionActionResourceNames).toHaveLength(1);
+
+    const goalConfig = await IntegrationArtifact.findOne({
+      setupRunId: run._id,
+      artifactType: 'ads_conversion_goal_campaign_config',
+    }).lean();
+    expect(goalConfig?.metadata?.customConversionGoalResourceName).toBe(customGoal?.externalId);
   });
 
   it('is idempotent on second run — reuses artifacts without new creates', async () => {
@@ -166,14 +174,17 @@ describe('adsAutoCampaignService', () => {
     expect(secondCount).toBe(firstCount);
   });
 
-  it('rejects when structural verification has not passed', async () => {
+  it('creates campaign when structural verification was skipped', async () => {
     const { bc, run } = await seedAdsCampaignRun('ads-no-verify@test.com', {
       withStructuralVerification: false,
     });
 
-    await expect(
-      createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger })
-    ).rejects.toMatchObject({ code: 'ADS_TRACKING_NOT_VERIFIED' });
+    const result = await createAdsAutoCampaign({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      logger,
+    });
+    expect(result.summary.campaignCreated).toBe(true);
   });
 
   it('rejects when website URL is missing', async () => {
@@ -233,11 +244,19 @@ describe('adsAutoCampaignService', () => {
     });
 
     expect(result.summary.conversionLinkCount).toBe(2);
-    const links = await IntegrationArtifact.find({
+    expect(result.summary.conversionGoalLinked).toBe(true);
+
+    const customGoal = await IntegrationArtifact.findOne({
       setupRunId: run._id,
-      artifactType: 'ads_conversion_link',
+      artifactType: 'ads_custom_conversion_goal',
     }).lean();
-    expect(links).toHaveLength(2);
+    expect(customGoal?.metadata?.conversionActionResourceNames).toHaveLength(2);
+
+    const goalConfig = await IntegrationArtifact.findOne({
+      setupRunId: run._id,
+      artifactType: 'ads_conversion_goal_campaign_config',
+    }).lean();
+    expect(goalConfig?.metadata?.customConversionGoalResourceName).toBe(customGoal?.externalId);
   });
 
   it('resumes from existing budget and campaign artifacts on partial retry', async () => {

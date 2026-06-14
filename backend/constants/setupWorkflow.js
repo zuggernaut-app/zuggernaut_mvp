@@ -18,6 +18,7 @@ const SETUP_STEP_NAMES = Object.freeze({
   PROVISION_GTM_RESOURCES: 'provision_gtm_resources',
   PROVISION_GOOGLE_ADS_CUSTOMER: 'provision_google_ads_customer',
   GBP_AUDIT: 'gbp_audit',
+  MANAGE_ADS_CONVERSION_ACTIONS: 'manage_ads_conversion_actions',
   ADS_CONVERSION_CATALOG: 'ads_conversion_catalog',
   GTM_CONVERSION_SETUP: 'gtm_conversion_setup',
   STRUCTURAL_VERIFICATION: 'structural_verification',
@@ -52,6 +53,10 @@ const SETUP_RUN_PATCH_STATUS = Object.freeze({
   GTM_PROVISIONED: 'GTM_PROVISIONED',
   ADS_PROVISIONING_REQUIRED: 'ADS_PROVISIONING_REQUIRED',
   ADS_PROVISIONED: 'ADS_PROVISIONED',
+  GBP_AUDIT_COMPLETE: 'GBP_AUDIT_COMPLETE',
+  CONVERSION_CATALOG_READY: 'CONVERSION_CATALOG_READY',
+  GTM_SETUP_COMPLETE: 'GTM_SETUP_COMPLETE',
+  STRUCTURAL_VERIFIED: 'STRUCTURAL_VERIFIED',
 });
 
 /** Activity names proxied by setupRunWorkflow — must match worker registration in activities/index.js. */
@@ -67,6 +72,7 @@ const SETUP_RUN_WORKFLOW_ACTIVITIES = Object.freeze([
   'provisionGtmResourcesActivity',
   'provisionGoogleAdsCustomerActivity',
   'runGbpAuditActivity',
+  'manageAdsConversionActionsActivity',
   'fetchAdsConversionCatalogActivity',
   'runGtmConversionSetupActivity',
   'runStructuralVerificationActivity',

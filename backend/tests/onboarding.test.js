@@ -144,6 +144,55 @@ describe('POST /api/v1/onboarding', () => {
     expect(poll.body.scrapeRun.suggested).toBeNull();
   });
 
+  it('GET scrape run returns terminal suggested payload', async () => {
+    const { agent } = await registerAgent(app, 'terminal@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+    const bid = draft.body.businessId;
+
+    const start = await agent
+      .post(`/api/v1/onboarding/business/${bid}/scrape`)
+      .send({ websiteUrl: 'https://terminal.example.com' })
+      .expect(202);
+
+    const suggested = {
+      businessName: 'Terminal Co',
+      scrapeQuality: 'weak',
+      manualFallback: false,
+      services: ['A'],
+    };
+
+    await mongoose.model('ScrapeRun').findByIdAndUpdate(start.body.scrapeRunId, {
+      status: 'PARTIAL',
+      resultSuggested: suggested,
+    });
+
+    const poll = await agent
+      .get(`/api/v1/onboarding/business/${bid}/scrape-runs/${start.body.scrapeRunId}`)
+      .expect(200);
+
+    expect(poll.body.scrapeRun.status).toBe('PARTIAL');
+    expect(poll.body.scrapeRun.suggested).toMatchObject(suggested);
+    expect(poll.body.scrapeRun.scrapeQuality).toBe('weak');
+    expect(poll.body.scrapeRun.manualFallback).toBe(false);
+  });
+
+  it('404 when polling another users scrape run', async () => {
+    const { agent: agent1 } = await registerAgent(app, 'poll_a@test.com');
+    const { agent: agent2 } = await registerAgent(app, 'poll_b@test.com');
+
+    const draft = await agent1.post('/api/v1/onboarding/business').expect(201);
+    const bid = draft.body.businessId;
+
+    const start = await agent1
+      .post(`/api/v1/onboarding/business/${bid}/scrape`)
+      .send({ websiteUrl: 'https://poll.example.com' })
+      .expect(202);
+
+    await agent2
+      .get(`/api/v1/onboarding/business/${bid}/scrape-runs/${start.body.scrapeRunId}`)
+      .expect(404);
+  });
+
   it('creates distinct ScrapeRuns for repeated scrapes', async () => {
     const { agent } = await registerAgent(app, 'two@test.com');
     const draft = await agent.post('/api/v1/onboarding/business').expect(201);

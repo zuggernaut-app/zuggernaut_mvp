@@ -43,9 +43,14 @@ export function HomePage(): ReactElement {
               Continue onboarding
             </Link>
             {snapshot.setupRunId ? (
-              <Link className="btn btn-secondary" to={`/setup/progress/${snapshot.setupRunId}`}>
-                Open last setup progress
-              </Link>
+              <>
+                <Link className="btn btn-secondary" to={`/setup/progress/${snapshot.setupRunId}`}>
+                  Open last setup progress
+                </Link>
+                <Link className="btn btn-secondary" to={`/setup/report/${snapshot.setupRunId}`}>
+                  Open last setup report
+                </Link>
+              </>
             ) : null}
             <button
               type="button"

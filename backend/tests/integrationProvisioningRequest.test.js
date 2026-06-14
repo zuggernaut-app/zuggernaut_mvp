@@ -29,7 +29,7 @@ describe('IntegrationProvisioningRequest', () => {
     });
 
     expect(req.status).toBe('pending_approval');
-    expect(req.requestedResources).toEqual(['gtm_account', 'gtm_container', 'gtm_workspace']);
+    expect(req.requestedResources).toEqual(['gtm_container', 'gtm_workspace']);
     expect(req.approvedByUserId).toBeNull();
     expect(req.approvedAt).toBeNull();
     expect(req.createdProviderIdentifiers).toBeUndefined();

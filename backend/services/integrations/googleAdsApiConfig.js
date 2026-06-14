@@ -157,13 +157,108 @@ function buildGoogleAdsHeaders(accessToken, opts = {}) {
 }
 
 /**
+ * @typedef {object} GoogleAdsFieldViolation
+ * @property {string} field
+ * @property {string} description
+ */
+
+/**
+ * @typedef {object} GoogleAdsFailureError
+ * @property {string | null} field
+ * @property {string | null} message
+ * @property {string | null} errorCode
+ */
+
+/**
  * @typedef {object} GoogleAdsApiErrorDetails
  * @property {number} statusCode
  * @property {string | null} googleStatus
  * @property {string} message
  * @property {string | null} action
  * @property {string[]} redactedCustomerIds
+ * @property {GoogleAdsFieldViolation[]} fieldViolations
+ * @property {GoogleAdsFailureError[]} googleAdsErrors
+ * @property {string | null} requestId
  */
+
+/**
+ * @param {unknown} location
+ * @returns {string | null}
+ */
+function formatGoogleAdsFieldPath(location) {
+  const elements = Array.isArray(location?.fieldPathElements) ? location.fieldPathElements : [];
+  if (elements.length === 0) {
+    return null;
+  }
+
+  return elements
+    .map((el) => {
+      const field = typeof el.fieldName === 'string' ? el.fieldName : 'field';
+      return el.index != null ? `${field}[${el.index}]` : field;
+    })
+    .join('.');
+}
+
+/**
+ * @param {unknown} errorCode
+ * @returns {string | null}
+ */
+function formatGoogleAdsErrorCode(errorCode) {
+  if (!errorCode || typeof errorCode !== 'object') {
+    return null;
+  }
+
+  for (const [key, value] of Object.entries(errorCode)) {
+    if (value != null && value !== '') {
+      return `${key}:${value}`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * @param {unknown} body
+ * @returns {{ fieldViolations: GoogleAdsFieldViolation[], googleAdsErrors: GoogleAdsFailureError[], requestId: string | null }}
+ */
+function extractGoogleAdsErrorDetails(body) {
+  const details = Array.isArray(body?.error?.details) ? body.error.details : [];
+  const fieldViolations = [];
+  const googleAdsErrors = [];
+  let requestId = null;
+
+  for (const row of details) {
+    const type = String(row?.['@type'] ?? '');
+
+    if (type.includes('BadRequest') && Array.isArray(row.fieldViolations)) {
+      for (const violation of row.fieldViolations) {
+        const field = typeof violation?.field === 'string' ? violation.field.trim() : '';
+        const description =
+          typeof violation?.description === 'string' ? violation.description.trim() : '';
+        if (field || description) {
+          fieldViolations.push({ field: field || 'unknown', description: description || 'invalid' });
+        }
+      }
+      continue;
+    }
+
+    if (!type.includes('GoogleAdsFailure')) {
+      continue;
+    }
+
+    requestId = typeof row.requestId === 'string' ? row.requestId : requestId;
+    const errors = Array.isArray(row.errors) ? row.errors : [];
+    for (const entry of errors) {
+      googleAdsErrors.push({
+        field: formatGoogleAdsFieldPath(entry?.location),
+        message: typeof entry?.message === 'string' ? entry.message : null,
+        errorCode: formatGoogleAdsErrorCode(entry?.errorCode),
+      });
+    }
+  }
+
+  return { fieldViolations, googleAdsErrors, requestId };
+}
 
 /**
  * Safely extract structured details from a Google Ads REST error body.
@@ -192,13 +287,39 @@ function parseGoogleAdsApiError(statusCode, body, context = {}) {
       ? body.error.message
       : googleStatus;
 
+  const { fieldViolations, googleAdsErrors, requestId } = extractGoogleAdsErrorDetails(body);
+
   return {
     statusCode,
     googleStatus,
     message: rawMessage ?? `Google Ads API request failed (${statusCode})`,
     action: context.action ?? null,
     redactedCustomerIds: (context.customerIds ?? []).map(redactCustomerId).filter(Boolean),
+    fieldViolations,
+    googleAdsErrors,
+    requestId,
   };
+}
+
+/**
+ * @param {GoogleAdsApiErrorDetails} parsed
+ * @returns {string | null}
+ */
+function summarizeGoogleAdsApiErrorDetails(parsed) {
+  const firstViolation = parsed.fieldViolations[0];
+  if (firstViolation) {
+    return `${firstViolation.field}: ${firstViolation.description}`;
+  }
+
+  const firstAdsError = parsed.googleAdsErrors[0];
+  if (firstAdsError) {
+    const parts = [firstAdsError.field, firstAdsError.errorCode, firstAdsError.message].filter(Boolean);
+    if (parts.length > 0) {
+      return parts.join(' — ');
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -212,7 +333,9 @@ function formatGoogleAdsApiErrorMessage(parsed, label) {
       ? `${parsed.googleStatus}: ${parsed.message}`
       : parsed.message;
   const actionSuffix = parsed.action ? ` [${parsed.action}]` : '';
-  return `${label} failed (${parsed.statusCode})${actionSuffix}: ${detail}`;
+  const specificDetail = summarizeGoogleAdsApiErrorDetails(parsed);
+  const specificSuffix = specificDetail ? ` (${specificDetail})` : '';
+  return `${label} failed (${parsed.statusCode})${actionSuffix}: ${detail}${specificSuffix}`;
 }
 
 /**
@@ -227,6 +350,14 @@ function createGoogleAdsApiErrorFromResponse(status, body, code, context = {}, E
   const parsed = parseGoogleAdsApiError(status, body, context);
   const message = formatGoogleAdsApiErrorMessage(parsed, context.label ?? 'Google Ads API request');
   return new ErrorClass(message, code, parsed);
+}
+
+/**
+ * Gates Google Ads conversion action creation (write path). Disabled by default.
+ * @returns {boolean}
+ */
+function isConversionActionCreationEnabled() {
+  return process.env.GOOGLE_ADS_CONVERSION_ACTION_CREATION_ENABLED === 'true';
 }
 
 module.exports = {
@@ -245,5 +376,8 @@ module.exports = {
   buildGoogleAdsHeaders,
   parseGoogleAdsApiError,
   formatGoogleAdsApiErrorMessage,
+  extractGoogleAdsErrorDetails,
+  summarizeGoogleAdsApiErrorDetails,
   createGoogleAdsApiErrorFromResponse,
+  isConversionActionCreationEnabled,
 };

@@ -82,6 +82,29 @@ describe('integrationConnectionService', () => {
     expect(s.identifiersMissing).toEqual(['accountId', 'containerId', 'workspaceId']);
   });
 
+  it('returns gtm_account_required when discovery found no GTM accounts', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const user = await User.create({ email: 'ics-gtm-account@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'gtm',
+      connectionHealth: 'provisioning_required',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('gtm'),
+      providerIdentifiers: { discoveryReason: 'GTM_ACCOUNT_NOT_FOUND' },
+    });
+
+    const s = await getConnectionStatus(bc.businessId, 'gtm');
+    expect(s.ready).toBe(false);
+    expect(s.reason).toBe(CONNECTION_REASON.GTM_ACCOUNT_REQUIRED);
+    expect(s.nextAction).toBe('create_gtm_account_manually');
+  });
+
   it('returns provisioning_required when Google Ads missing customerId', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
@@ -239,7 +262,7 @@ describe('integrationConnectionService', () => {
     expect(s.reason).toBe(CONNECTION_REASON.OK);
   });
 
-  it('getRequiredSetupConnections lists missing gtm and google_ads', async () => {
+  it('getRequiredSetupConnections lists missing google_ads only', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
     const user = await User.create({ email: 'ics3@test.com' });
@@ -247,10 +270,10 @@ describe('integrationConnectionService', () => {
 
     const { missing, allReady } = await getRequiredSetupConnections(bc.businessId);
     expect(allReady).toBe(false);
-    expect(missing).toEqual(expect.arrayContaining(['gtm', 'google_ads']));
+    expect(missing).toEqual(['google_ads']);
   });
 
-  it('getRequiredSetupConnections reports allReady when GTM and Ads are setup-ready', async () => {
+  it('getRequiredSetupConnections reports allReady when Google Ads is setup-ready', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
     const IntegrationConnection = mongoose.model('IntegrationConnection');

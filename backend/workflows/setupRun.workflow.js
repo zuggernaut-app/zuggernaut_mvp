@@ -32,6 +32,7 @@ const {
   createAdsCampaignActivity,
   provisionGtmResourcesActivity,
   provisionGoogleAdsCustomerActivity,
+  manageAdsConversionActionsActivity,
 } = mutateActivities;
 
 /**
@@ -146,16 +147,10 @@ async function setupRunWorkflow(input) {
     };
   }
 
-  const gtmGate = await ensureProviderReady(load, 'gtm');
-  if (gtmGate) {
-    return {
-      workflow: 'setupRunWorkflow',
-      terminal: gtmGate.terminal,
-      setupRunId: load.setupRunId,
-      pre: gtmGate.pre,
-      approval: gtmGate.approval ?? null,
-    };
-  }
+  const gtmPre = await checkGtmPreconditionsActivity({
+    setupRunId: load.setupRunId,
+    businessId: load.businessId,
+  });
 
   const adsGate = await ensureProviderReady(load, 'google_ads');
   if (adsGate) {
@@ -181,32 +176,36 @@ async function setupRunWorkflow(input) {
     };
   }
 
+  const manage = await manageAdsConversionActionsActivity({
+    setupRunId: load.setupRunId,
+    businessId: load.businessId,
+  });
+  if (manage.outcome !== 'ok') {
+    return {
+      workflow: 'setupRunWorkflow',
+      terminal:
+        manage.outcome === 'manual_review' ? T.MANUAL_REVIEW : T.FAILED,
+      setupRunId: load.setupRunId,
+      manage,
+    };
+  }
+
   await fetchAdsConversionCatalogActivity({
     setupRunId: load.setupRunId,
     businessId: load.businessId,
   });
 
-  await runGtmConversionSetupActivity({
-    setupRunId: load.setupRunId,
-    businessId: load.businessId,
-  });
+  if (gtmPre.ready) {
+    await runGtmConversionSetupActivity({
+      setupRunId: load.setupRunId,
+      businessId: load.businessId,
+    });
+  }
 
   const verify = await runStructuralVerificationActivity({
     setupRunId: load.setupRunId,
     businessId: load.businessId,
   });
-  if (
-    verify.outcome === T.NEEDS_TRACKING_FIX ||
-    verify.outcome === T.MANUAL_REVIEW ||
-    verify.outcome === T.SNIPPET_PENDING
-  ) {
-    return {
-      workflow: 'setupRunWorkflow',
-      terminal: verify.outcome,
-      setupRunId: load.setupRunId,
-      verify,
-    };
-  }
 
   const ads = await createAdsCampaignActivity({
     setupRunId: load.setupRunId,
@@ -218,6 +217,7 @@ async function setupRunWorkflow(input) {
     terminal: T.SUCCEEDED,
     setupRunId: load.setupRunId,
     gbp,
+    manage,
     verify,
     ads,
   };

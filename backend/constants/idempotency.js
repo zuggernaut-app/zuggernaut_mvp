@@ -32,6 +32,14 @@ function adsConversionCatalogIdempotencyKey(setupRunId, logicalCategory) {
 }
 
 /**
+ * @param {import('mongoose').Types.ObjectId | string} setupRunId
+ * @param {string} slot — 'call' | 'form'
+ */
+function adsConversionActionCreationIdempotencyKey(setupRunId, slot) {
+  return `ads-ca-create-${setupRunId}-${slot}`;
+}
+
+/**
  * @param {import('mongoose').Types.ObjectId | string} businessId
  * @param {import('mongoose').Types.ObjectId | string} setupRunId
  * @param {'account' | 'container' | 'workspace'} resource
@@ -84,6 +92,8 @@ const PROVIDER_MUTATION_CONTRACT = Object.freeze([
       'ads_campaign',
       'ads_ad_group',
       'ads_ad',
+      'ads_custom_conversion_goal',
+      'ads_conversion_goal_campaign_config',
       'ads_conversion_link',
     ],
     idempotencyKey: (ctx) => adsCampaignIdempotencyKey(ctx.setupRunId, ctx.logicalKey),
@@ -96,12 +106,20 @@ const PROVIDER_MUTATION_CONTRACT = Object.freeze([
     idempotencyKey: (ctx) => adsConversionCatalogIdempotencyKey(ctx.setupRunId, ctx.logicalCategory),
     readOnlyExternal: true,
   },
+  {
+    stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+    provider: 'google_ads',
+    service: 'adsConversionActionManagementService',
+    artifactTypes: ['ads_conversion_action_created'],
+    idempotencyKey: (ctx) => adsConversionActionCreationIdempotencyKey(ctx.setupRunId, ctx.slot),
+  },
 ]);
 
 module.exports = {
   gtmConversionIdempotencyKey,
   adsCampaignIdempotencyKey,
   adsConversionCatalogIdempotencyKey,
+  adsConversionActionCreationIdempotencyKey,
   gtmProvisioningIdempotencyKey,
   adsProvisioningIdempotencyKey,
   PROVIDER_MUTATION_CONTRACT,

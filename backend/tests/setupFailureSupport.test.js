@@ -1,7 +1,10 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { recordSetupFailureSupport } = require('../activities/lib/setupFailureSupport');
+const {
+  recordSetupFailureSupport,
+  recordSetupRecoveryState,
+} = require('../activities/lib/setupFailureSupport');
 const { SETUP_STEP_NAMES } = require('../constants/setupWorkflow');
 const { createLogger } = require('../lib/observability/logger');
 
@@ -72,5 +75,24 @@ describe('setupFailureSupport', () => {
 
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.meta?.supportState?.failedStep).toBe(SETUP_STEP_NAMES.PROVISION_GTM_RESOURCES);
+  });
+
+  it('records recovery supportState without compensation for snippet pending', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const { bc, run } = await seedRun();
+
+    await recordSetupRecoveryState({
+      setupRunId: run._id,
+      failedStep: SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION,
+      errorCode: 'GTM_SNIPPET_PENDING',
+      summary: 'Install GTM snippet',
+      logger,
+    });
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.meta?.supportState?.failedStep).toBe(SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION);
+    expect(updated.meta?.supportState?.errorCode).toBe('GTM_SNIPPET_PENDING');
+    expect(updated.meta?.supportState?.summary).toBe('Install GTM snippet');
+    expect(updated.meta?.supportState?.compensation).toBeUndefined();
   });
 });

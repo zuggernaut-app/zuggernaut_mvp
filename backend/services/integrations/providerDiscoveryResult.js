@@ -108,10 +108,88 @@ function defaultSelectionReason(provider) {
   return null;
 }
 
+const SELECTION_METADATA_KEYS = Object.freeze([
+  'selectedAt',
+  'selectionSource',
+  'selectionHistory',
+]);
+
+const SELECTION_EXTRA_KEYS_BY_PROVIDER = Object.freeze({
+  google_ads: Object.freeze([
+    'selectedCustomerDescriptiveName',
+    'selectedCustomerKind',
+    'selectedCustomerStatus',
+    'loginCustomerId',
+    'managerCustomerId',
+  ]),
+  gtm: Object.freeze(['publicContainerId']),
+});
+
+/**
+ * @param {string} provider
+ * @param {object | null | undefined} priorIdentifiers
+ */
+function hasExplicitProductSelection(provider, priorIdentifiers) {
+  if (!priorIdentifiers || typeof priorIdentifiers !== 'object') return false;
+  if (priorIdentifiers.selectionRequired === true) return false;
+  return hasRequiredIdentifiers(provider, priorIdentifiers);
+}
+
+/**
+ * @param {string} provider
+ * @param {object} priorIdentifiers
+ */
+function pickSavedSelectionFields(provider, priorIdentifiers) {
+  const keys = [
+    ...(REQUIRED_PROVIDER_IDENTIFIER_KEYS[provider] ?? []),
+    ...(SELECTION_EXTRA_KEYS_BY_PROVIDER[provider] ?? []),
+    ...SELECTION_METADATA_KEYS,
+  ];
+  const out = {};
+  for (const key of keys) {
+    if (priorIdentifiers[key] != null) {
+      out[key] = priorIdentifiers[key];
+    }
+  }
+  return out;
+}
+
+/**
+ * Re-discovery returns selection_required without saved ids; merge prior product selection
+ * when it is still valid so refresh does not wipe explicit user choices.
+ *
+ * @param {string} provider
+ * @param {object | null | undefined} priorIdentifiers
+ * @param {{ providerIdentifiers: object, connectionHealth: string, reason?: string | null }} discovery
+ */
+function mergeRediscoveryWithSavedSelection(provider, priorIdentifiers, discovery) {
+  if (!hasExplicitProductSelection(provider, priorIdentifiers)) {
+    return discovery;
+  }
+
+  if (provider === 'google_ads') {
+    const customerId = String(priorIdentifiers.customerId ?? '').trim();
+    const accessible = (discovery.providerIdentifiers?.accessibleCustomerIds ?? []).map(String);
+    if (!customerId || !accessible.includes(customerId)) {
+      return discovery;
+    }
+  }
+
+  const mergedIdentifiers = {
+    ...discovery.providerIdentifiers,
+    ...pickSavedSelectionFields(provider, priorIdentifiers),
+    selectionRequired: false,
+  };
+
+  return buildDiscoveryResult(provider, mergedIdentifiers);
+}
+
 module.exports = {
   hasRequiredIdentifiers,
   getMissingIdentifierKeys,
   buildDiscoveryResult,
   buildSelectionRequiredResult,
   defaultSelectionReason,
+  hasExplicitProductSelection,
+  mergeRediscoveryWithSavedSelection,
 };

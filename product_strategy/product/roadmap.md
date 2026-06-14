@@ -8,7 +8,8 @@
 
 *   **GBP Audit (Read-Only):** Automated analysis of existing Google Business Profile listings.
 *   **GTM Conversion Tracking Setup:** Automated creation of Google Ads conversion tags and basic triggers within the user's GTM container.
-*   **Google Ads Campaign Creation:** Automated initial campaign creation based on user-provided business context, goals, and audience segments, gated by required tracking setup and verification checks.
+*   **Business Goal-Led Conversion Strategy:** Zuggernaut derives the required conversion actions from scraped website context and user-provided business goals, needs, USPs, and success criteria. Instead of expecting users to preconfigure Google Ads conversion actions, Zuggernaut recommends and creates the required conversion infrastructure where possible, such as call and form conversion actions, before campaign launch.
+*   **Google Ads Campaign Creation:** Automated initial campaign creation based on scraped website context and user-provided business goals, needs, USPs, success criteria, and audience segments. Campaign setup includes deriving the right conversion strategy and creating required Google Ads conversion actions where possible, gated by required tracking setup and verification checks.
 *   **User Onboarding:** Streamlined process with a focus on user input and necessary permissions, including manual GTM snippet installation instructions.
 
 **Key Differentiators:**
@@ -24,6 +25,8 @@
 *   Secure OAuth 2.0 implementation.
 *   Formal `SetupRun` state machine for reliable setup orchestration, retries, and status visibility.
 *   Structural tracking verification before Ads launch.
+*   Goal-to-Google-Ads mapping that converts business intent into campaign structure, conversion actions, bidding strategy, targeting, and tracking requirements.
+*   Google Ads conversion action creation and idempotent reuse of existing suitable conversion actions.
 
 **Success Metrics:**
 

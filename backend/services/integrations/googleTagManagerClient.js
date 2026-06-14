@@ -378,15 +378,10 @@ async function createGtmAccount(accessToken, name) {
     );
   }
 
-  const data = await gtmPost(accessToken, 'accounts', {
-    name,
-    shareData: false,
-  });
-  const normalized = normalizeGtmAccount(data);
-  if (!normalized) {
-    throw new GtmApiError('GTM account create returned no accountId', 'GTM_CREATE_INVALID_RESPONSE');
-  }
-  return normalized;
+  throw new GtmApiError(
+    'GTM accounts cannot be created via API. Create an account manually in Google Tag Manager first.',
+    'GTM_ACCOUNT_CREATE_NOT_SUPPORTED'
+  );
 }
 
 /**
@@ -571,7 +566,7 @@ async function discoverGtmProviderIdentifiers(accessToken) {
 
     if (sortedAccounts.length === 0) {
       return buildDiscoveryResult('gtm', {
-        discoveryReason: 'GTM_PROVISIONING_REQUIRED',
+        discoveryReason: 'GTM_ACCOUNT_NOT_FOUND',
       });
     }
 

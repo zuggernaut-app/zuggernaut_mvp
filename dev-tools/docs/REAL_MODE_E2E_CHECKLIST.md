@@ -70,9 +70,9 @@ Execute this checklist **after** mock-mode sign-off ([`MANUAL_E2E_CHECKLIST.md`]
 
 - [ ] Register / log in (real session cookie)
 - [ ] Complete onboarding; confirm `BusinessContext`
-- [ ] Connect GTM + Google Ads via **real** OAuth (not mock callback)
+- [ ] Connect **Google Ads** via **real** OAuth (required); GTM and GBP optional but recommended
 - [ ] Start setup run → workflow progresses (`RUNNING` → terminal)
-- [ ] Terminal state: `____________` (e.g. `SUCCEEDED`, `GTM_SNIPPET_PENDING`)
+- [ ] Terminal state: `____________` (e.g. `SUCCEEDED` with Ads-only path, or `GTM_SNIPPET_PENDING` if GTM connected)
 - [ ] Setup report sections verified (GBP, catalog, GTM, verification, Ads as applicable)
 - [ ] Provider evidence: real fields observed (redacted): `____________`
 

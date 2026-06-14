@@ -77,7 +77,8 @@ describe('foundation — models, enums, tenant isolation', () => {
     expect(enums.ARTIFACT_TYPES).toContain('ads_manager_link');
     expect(enums.ARTIFACT_TYPES).toContain('ads_campaign');
     expect(enums.ARTIFACT_TYPES).toContain('ads_campaign_budget');
-    expect(enums.ARTIFACT_TYPES).toContain('ads_conversion_link');
+    expect(enums.ARTIFACT_TYPES).toContain('ads_custom_conversion_goal');
+    expect(enums.ARTIFACT_TYPES).toContain('ads_conversion_goal_campaign_config');
     expect(enums.PROVISIONING_REASON_CODES).toContain('GBP_NO_ACCOUNTS');
     expect(enums.PROVISIONING_REASON_CODES).toContain('GBP_NO_LOCATIONS');
   });

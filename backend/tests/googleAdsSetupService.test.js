@@ -61,6 +61,43 @@ describe('googleAdsSetupService', () => {
     expect(status.reason).toBe('provisioning_required');
   });
 
+  it('discoverAndPersistGoogleAdsCustomers preserves saved customer selection', async () => {
+    axios.get.mockResolvedValue({
+      status: 200,
+      data: { resourceNames: ['customers/7809414862', 'customers/2940178860'] },
+    });
+
+    const { bc } = await seedAdsConnection({
+      connectionFields: {
+        connectionHealth: 'connected',
+        providerIdentifiers: {
+          customerId: '7809414862',
+          accessibleCustomerIds: ['7809414862'],
+          selectionRequired: false,
+          selectedAt: '2026-06-10T12:00:00.000Z',
+          selectionSource: 'product_setup',
+        },
+      },
+    });
+
+    const result = await discoverAndPersistGoogleAdsCustomers({ businessId: bc.businessId });
+
+    expect(result.outcome).toBe('ok');
+    expect(result.customerId).toBe('7809414862');
+
+    const conn = await mongoose.model('IntegrationConnection').findOne({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+    }).lean();
+    expect(conn.connectionHealth).toBe('connected');
+    expect(conn.providerIdentifiers.customerId).toBe('7809414862');
+    expect(conn.providerIdentifiers.selectionRequired).toBe(false);
+    expect(conn.providerIdentifiers.accessibleCustomerIds).toEqual(
+      expect.arrayContaining(['7809414862', '2940178860'])
+    );
+    expect(conn.providerIdentifiers.accessibleCustomerIds).toHaveLength(2);
+  });
+
   it('discoverAndPersistGoogleAdsCustomers stores accessible customer IDs', async () => {
     axios.get.mockResolvedValue({
       status: 200,

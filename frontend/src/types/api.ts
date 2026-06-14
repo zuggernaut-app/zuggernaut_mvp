@@ -17,14 +17,20 @@ export interface CreateUserResponse {
   user: UserDto
 }
 
-/** Scraped suggestion payload (placeholder scraper keys) */
+export type ScrapeQuality = 'strong' | 'weak' | 'none'
+
+/** Scraped suggestion payload — suggestions only until user confirms via PUT. */
 export interface ScrapeSuggested {
   businessName?: string
   industry?: string
   services?: string[]
   serviceAreas?: string[]
+  contactMethods?: unknown
+  goals?: unknown
   differentiators?: string
   orderValueHint?: string
+  scrapeQuality?: ScrapeQuality
+  manualFallback?: boolean
   [key: string]: unknown
 }
 
@@ -45,8 +51,19 @@ export interface ScrapeRunDto {
   status: string
   lastErrorSummary: string | null
   suggested: ScrapeSuggested | null
+  scrapeQuality?: ScrapeQuality | null
+  manualFallback?: boolean | null
   createdAt?: string
   updatedAt?: string
+}
+
+/** Local scrape preview persisted until user confirms business context. */
+export interface ScrapePreviewState {
+  websiteUrl: string
+  suggested: ScrapeSuggested
+  scrapeStatus?: string
+  scrapeQuality?: ScrapeQuality
+  manualFallback?: boolean
 }
 
 export interface ScrapeRunPollResponse {
@@ -66,8 +83,12 @@ export interface BusinessContextDto {
   goals: unknown
   differentiators: string | null
   orderValueHint: string | null
-  confirmedAt: string
+  confirmedAt: string | null
   updatedAt?: string
+}
+
+export interface GetBusinessContextResponse {
+  businessContext: BusinessContextDto
 }
 
 export interface PutBusinessContextResponse {
@@ -151,8 +172,18 @@ export interface SetupRunReportRecovery {
   steps: string[]
 }
 
+export interface SetupRunReportGbpGuidance {
+  code: string
+  title: string
+  message: string
+  blocking: boolean
+}
+
 export interface SetupRunReportGbpAudit {
-  status: 'complete' | 'skipped' | 'not_run'
+  status: 'complete' | 'skipped' | 'guidance' | 'not_run'
+  reason: string | null
+  guidance: SetupRunReportGbpGuidance | null
+  blocking: boolean
   summary: {
     presentCount: number
     missingCount: number
@@ -173,6 +204,14 @@ export interface SetupRunReportAdsCatalog {
     selectedCount: number
     selectedCategories: string[]
   } | null
+}
+
+export interface SetupRunReportConversionActions {
+  status: 'ready' | 'manual_review' | 'failed' | 'not_run'
+  slotsResolved: number
+  created: number
+  reused: number
+  message: string | null
 }
 
 export interface SetupRunReportGtmSetup {
@@ -197,9 +236,18 @@ export interface SetupRunReportProvisioning {
   googleAds: SetupRunReportProvisioningProvider
 }
 
+export interface SetupRunReportRecommendation {
+  id: string
+  priority: 'recommended' | 'optional'
+  title: string
+  message: string
+  steps: string[]
+}
+
 export interface SetupRunReportStructuralVerification {
   status:
     | 'pass'
+    | 'skipped'
     | 'snippet_pending'
     | 'needs_tracking_fix'
     | 'manual_review'
@@ -264,11 +312,13 @@ export interface SetupRunReport {
   supportState: SetupRunSupportState | null
   compensation: SetupRunCompensation | null
   gbpAudit: SetupRunReportGbpAudit
+  conversionActions: SetupRunReportConversionActions
   adsCatalog: SetupRunReportAdsCatalog
   gtmSetup: SetupRunReportGtmSetup
   provisioning: SetupRunReportProvisioning
   structuralVerification: SetupRunReportStructuralVerification
   adsCampaign: SetupRunReportAdsCampaign
+  recommendations: SetupRunReportRecommendation[]
   artifactCounts: SetupRunReportArtifactCounts
   steps: SetupStepDto[]
 }
@@ -291,9 +341,4 @@ export interface TemporalUnavailableResponse extends ApiErrorBody {
   setupRunId: string
   workflowId: null
   status: string
-}
-
-export interface ScrapePreviewState {
-  websiteUrl: string
-  suggested: ScrapeSuggested
 }

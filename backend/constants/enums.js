@@ -84,7 +84,10 @@ const ARTIFACT_TYPES = Object.freeze([
   'ads_ad',
   'ads_keyword',
   'ads_conversion_action',
+  'ads_conversion_action_created',
   'ads_campaign_budget',
+  'ads_custom_conversion_goal',
+  'ads_conversion_goal_campaign_config',
   'ads_conversion_link',
   'ads_campaign_criterion',
   'ads_asset_sitelink',
@@ -135,6 +138,7 @@ const PROVISIONING_ACTIVE_STATUSES = Object.freeze([
  */
 const PROVISIONING_REASON_CODES = Object.freeze([
   'GTM_PROVISIONING_REQUIRED',
+  'GTM_ACCOUNT_NOT_FOUND',
   'ADS_PROVISIONING_REQUIRED',
   'GBP_NO_ACCOUNTS',
   'GBP_NO_LOCATIONS',
@@ -161,6 +165,15 @@ const CREATION_DIAGNOSTIC_RUN_MODES = Object.freeze([
   'create_and_publish',
 ]);
 
+/** Outcomes of the conversion action management step. */
+const CONVERSION_MANAGEMENT_OUTCOME = Object.freeze([
+  'ok',
+  'created',
+  'missing_goal_data',
+  'creation_failed',
+  'manual_review',
+]);
+
 /** Cleanup lifecycle for resources created during dev creation diagnostics. */
 const DIAGNOSTIC_ARTIFACT_CLEANUP_STATUS = Object.freeze([
   'pending',
@@ -184,5 +197,6 @@ module.exports = {
   SELECTION_REASON_CODES,
   PROVISIONING_RESOURCE_TYPES,
   CREATION_DIAGNOSTIC_RUN_MODES,
+  CONVERSION_MANAGEMENT_OUTCOME,
   DIAGNOSTIC_ARTIFACT_CLEANUP_STATUS,
 };

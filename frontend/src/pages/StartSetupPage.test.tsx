@@ -12,6 +12,15 @@ vi.mock('../api/setupRuns', () => ({
   startSetupRun: vi.fn(),
 }))
 
+vi.mock('../api/businessContexts', () => ({
+  getBusinessContext: vi.fn().mockResolvedValue({
+    businessContext: {
+      businessId: '507f1f77bcf86cd799439011',
+      confirmedAt: new Date().toISOString(),
+    },
+  }),
+}))
+
 vi.mock('../hooks/useIntegrationConnections', () => ({
   useIntegrationConnections: vi.fn(() => ({
     connections: {
@@ -25,7 +34,7 @@ vi.mock('../hooks/useIntegrationConnections', () => ({
     connectProvider: vi.fn(),
     providerLabels: {
       gbp: 'Google Business Profile (optional)',
-      gtm: 'Google Tag Manager (required)',
+      gtm: 'Google Tag Manager (optional, recommended)',
       google_ads: 'Google Ads (required)',
     },
     statusLabel: (s: { ready: boolean }) => (s.ready ? 'Connected' : 'Not connected'),
