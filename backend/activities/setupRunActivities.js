@@ -44,6 +44,11 @@ const {
   GoogleAdsSetupError,
 } = require('../services/capabilities');
 const conversionActionManagement = require('../services/capabilities/adsConversionActionManagementService');
+const {
+  validateBusinessContextAdsReadiness,
+  formatAdsReadinessSummary,
+} = require('../services/capabilities/businessContextAdsReadinessService');
+const { formatAdsCampaignPreconditionDetails } = require('../services/capabilities/adsCampaignIntentService');
 
 async function blockSetupForMissingProviders({
   setupRunId,
@@ -219,6 +224,31 @@ async function loadSetupContextActivity(input) {
       logger
     );
     return { outcome: 'failed', reason: msg, setupRunId: rawId, businessId: businessId.toString() };
+  }
+
+  const adsReadiness = validateBusinessContextAdsReadiness(bc);
+  if (!adsReadiness.ok) {
+    const msg = formatAdsReadinessSummary(adsReadiness);
+    await markStepFailed({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.LOAD_CONTEXT,
+      summary: msg,
+      logger,
+      details: { issues: adsReadiness.issues },
+    });
+    await patchSetupRun(
+      setupRunId,
+      { status: S.FAILED, lastErrorSummary: msg },
+      logger
+    );
+    return {
+      outcome: 'failed',
+      reason: msg,
+      setupRunId: rawId,
+      businessId: businessId.toString(),
+      issues: adsReadiness.issues,
+    };
   }
 
   const connections = await getAllConnectionStatuses(businessId);
@@ -486,6 +516,44 @@ async function discoverGoogleAdsCustomersActivity(input) {
         errorCode: 'ADS_CUSTOMER_SELECTION_REQUIRED',
         message: msg,
         accessibleCustomerIds: discovery.accessibleCustomerIds ?? [],
+        setupRunId: rawRun,
+        businessId: rawBiz,
+      };
+    }
+
+    if (discovery.outcome === 'customer_not_found') {
+      const msg =
+        'No accessible Google Ads customer was found for this Google account. Create a Google Ads account (or connect a different Google account), then start a new setup run.';
+      await markStepSkipped({
+        setupRunId,
+        businessId,
+        stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+        provider: 'google_ads',
+        details: {
+          customerNotFound: true,
+          accessibleCustomerCount: 0,
+        },
+        logger,
+      });
+      await patchSetupRun(
+        setupRunId,
+        { status: S.SETUP_NEEDS_MANUAL_REVIEW, lastErrorSummary: msg },
+        logger
+      );
+      await mergeSetupRunMeta(
+        setupRunId,
+        {
+          googleAdsDiscovery: 'customer_not_found',
+          googleAdsDiscoveryReason: 'ADS_CUSTOMER_NOT_FOUND',
+        },
+        logger
+      );
+      return {
+        outcome: 'manual_review',
+        provider: 'google_ads',
+        errorCode: 'ADS_CUSTOMER_NOT_FOUND',
+        message: msg,
+        accessibleCustomerIds: [],
         setupRunId: rawRun,
         businessId: rawBiz,
       };
@@ -1259,8 +1327,16 @@ async function createAdsCampaignActivity(input) {
       idempotent: result.idempotent,
     };
   } catch (err) {
-    const msg = safeErrorMessage(err, 'Ads campaign creation failed');
-    const code = err instanceof AdsProviderPreconditionError ? err.code : 'AdsCampaignError';
+    const precondition =
+      err instanceof AdsProviderPreconditionError
+        ? formatAdsCampaignPreconditionDetails(err)
+        : {
+            message: safeErrorMessage(err, 'Ads campaign creation failed'),
+            code: 'AdsCampaignError',
+            validationBucket: null,
+          };
+    const msg = precondition.message;
+    const code = precondition.code;
     const googleAdsDetails =
       err instanceof AdsProviderPreconditionError ? err.googleAdsDetails : undefined;
     logger.error(
@@ -1270,6 +1346,7 @@ async function createAdsCampaignActivity(input) {
         stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
         provider: 'google_ads',
         code,
+        validationBucket: precondition.validationBucket,
         fieldViolations: googleAdsDetails?.fieldViolations ?? [],
         googleAdsErrors: googleAdsDetails?.googleAdsErrors ?? [],
         requestId: googleAdsDetails?.requestId ?? null,
@@ -1284,6 +1361,7 @@ async function createAdsCampaignActivity(input) {
       summary: msg,
       details: {
         code,
+        validationBucket: precondition.validationBucket,
         fieldViolations: googleAdsDetails?.fieldViolations ?? [],
         googleAdsErrors: googleAdsDetails?.googleAdsErrors ?? [],
         requestId: googleAdsDetails?.requestId ?? null,

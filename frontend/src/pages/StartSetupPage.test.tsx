@@ -18,6 +18,7 @@ vi.mock('../api/businessContexts', () => ({
       businessId: '507f1f77bcf86cd799439011',
       confirmedAt: new Date().toISOString(),
     },
+    adsReadiness: { ok: true },
   }),
 }))
 

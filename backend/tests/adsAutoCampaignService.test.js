@@ -76,8 +76,8 @@ describe('adsAutoCampaignService', () => {
     return { bc, run, customerId: opts.customerId ?? '1234567890' };
   }
 
-  it('buildCampaignIntent derives names and ad copy from BusinessContext', () => {
-    const intent = buildCampaignIntent(
+  it('buildCampaignIntent derives names and ad copy from BusinessContext', async () => {
+    const intent = await buildCampaignIntent(
       {
         businessName: 'Acme Plumbing',
         websiteUrl: 'https://acme.example',
@@ -89,12 +89,21 @@ describe('adsAutoCampaignService', () => {
     );
 
     expect(intent.version).toBe(1);
-    expect(intent.campaignName).toContain('Acme Plumbing');
+    expect(intent.campaign.name).toContain('Acme Plumbing');
+    expect(intent.campaign.bidding).toBe('manual_cpc');
     expect(intent.ad.finalUrl).toBe('https://acme.example');
     expect(intent.ad.headlines.every((text) => text.length <= 30)).toBe(true);
     expect(intent.ad.descriptions.every((text) => text.length <= 90)).toBe(true);
     expect(intent.selectedConversionIds).toEqual(['1001']);
-    expect(intent.budget.amountMicros).toBeGreaterThan(0);
+    expect(intent.campaign.budget.amountMicros).toBeGreaterThan(0);
+    expect(intent.keywords.length).toBeGreaterThan(0);
+    expect(intent.geoTargetLabels).toEqual(['Springfield']);
+    expect(intent.geoTargets).toEqual([
+      expect.objectContaining({
+        resourceName: 'geoTargetConstants/mock-geo-springfield',
+        label: 'Springfield',
+      }),
+    ]);
   });
 
   it('creates campaign artifacts in mock mode and persists CampaignPlan', async () => {
@@ -111,6 +120,7 @@ describe('adsAutoCampaignService', () => {
     expect(result.idempotent).toBe(false);
     expect(result.source).toBe('google_ads_api_mock');
     expect(result.summary.campaignCreated).toBe(true);
+    expect(result.summary.geoTargetsCreated).toBe(1);
     expect(result.summary.adGroupCreated).toBe(true);
     expect(result.summary.adCreated).toBe(true);
     expect(result.summary.conversionLinkCount).toBe(1);
@@ -120,7 +130,14 @@ describe('adsAutoCampaignService', () => {
 
     const plan = await CampaignPlan.findOne({ setupRunId: run._id }).lean();
     expect(plan?.status).toBe('applied');
-    expect(plan?.intent?.campaignName).toContain('Acme Plumbing');
+    expect(plan?.intent?.campaign?.name).toContain('Acme Plumbing');
+    expect(plan?.intent?.campaign?.bidding).toBe('manual_cpc');
+    expect(plan?.intent?.geoTargets).toEqual([
+      expect.objectContaining({
+        resourceName: 'geoTargetConstants/mock-geo-springfield',
+        label: 'Springfield',
+      }),
+    ]);
 
     const budget = await IntegrationArtifact.findOne({
       setupRunId: run._id,
@@ -134,11 +151,34 @@ describe('adsAutoCampaignService', () => {
     }).lean();
     expect(campaign?.metadata?.budgetResourceName).toBeTruthy();
 
+    const geo = await IntegrationArtifact.findOne({
+      setupRunId: run._id,
+      artifactType: 'ads_campaign_criterion',
+    }).lean();
+    expect(geo?.idempotencyKey).toBe(adsIdempotencyKey(run._id, 'geo_0'));
+    expect(geo?.metadata?.geoTargetConstant).toBe('geoTargetConstants/mock-geo-springfield');
+    expect(result.summary.geoExternalIds).toHaveLength(1);
+
     const adGroup = await IntegrationArtifact.findOne({
       setupRunId: run._id,
       artifactType: 'ads_ad_group',
     }).lean();
-    expect(adGroup?.metadata?.keywords?.length).toBeGreaterThan(0);
+    expect(adGroup?.metadata?.keywordPlan).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: expect.any(String), matchType: 'PHRASE' }),
+      ])
+    );
+
+    const keywords = await IntegrationArtifact.find({
+      setupRunId: run._id,
+      artifactType: 'ads_keyword',
+    }).lean();
+    expect(keywords).toHaveLength(3);
+    expect(keywords.every((row) => row.metadata?.keywordText && row.metadata?.matchType === 'PHRASE')).toBe(
+      true
+    );
+    expect(result.summary.keywordsCreated).toBe(3);
+    expect(result.summary.keywordExternalIds).toHaveLength(3);
 
     const ad = await IntegrationArtifact.findOne({
       setupRunId: run._id,
@@ -171,7 +211,11 @@ describe('adsAutoCampaignService', () => {
 
     expect(second.idempotent).toBe(true);
     expect(second.summary.reusedArtifacts).toBeGreaterThan(0);
+    expect(second.summary.keywordsCreated).toBe(3);
     expect(secondCount).toBe(firstCount);
+    expect(
+      await IntegrationArtifact.countDocuments({ setupRunId: run._id, artifactType: 'ads_keyword' })
+    ).toBe(3);
   });
 
   it('creates campaign when structural verification was skipped', async () => {
@@ -192,7 +236,7 @@ describe('adsAutoCampaignService', () => {
 
     await expect(
       createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger })
-    ).rejects.toMatchObject({ code: 'ADS_MISSING_WEBSITE_URL' });
+    ).rejects.toMatchObject({ code: 'ADS_READINESS_MISSING_WEBSITE_URL' });
   });
 
   it('rejects when conversion artifacts are missing', async () => {

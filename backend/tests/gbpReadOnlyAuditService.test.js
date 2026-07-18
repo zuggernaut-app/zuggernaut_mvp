@@ -1,5 +1,13 @@
 'use strict';
 
+jest.mock('../services/integrations/gbpProfileReadClient', () => {
+  const actual = jest.requireActual('../services/integrations/gbpProfileReadClient');
+  return {
+    ...actual,
+    fetchGbpProfileReadModel: jest.fn((...args) => actual.fetchGbpProfileReadModel(...args)),
+  };
+});
+
 const mongoose = require('mongoose');
 const {
   runGbpReadOnlyAudit,
@@ -8,7 +16,9 @@ const {
   buildGbpMissingGuidance,
 } = require('../services/capabilities/gbpReadOnlyAuditService');
 const {
+  GbpApiError,
   normalizeGbpLocation,
+  fetchGbpProfileReadModel,
   fetchGbpProfileReadModelMock,
 } = require('../services/integrations/gbpProfileReadClient');
 const { createLogger } = require('../lib/observability/logger');
@@ -240,6 +250,41 @@ describe('gbpReadOnlyAuditService', () => {
 
     process.env.GBP_API_MOCK = prevMock;
     process.env.GBP_API_ENABLED = prevEnabled;
+  });
+
+  it('returns guidance for GBP_ACCOUNTS_FETCH_FAILED without throwing', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const SetupRun = mongoose.model('SetupRun');
+    const AuditReport = mongoose.model('AuditReport');
+    const ProviderSnapshot = mongoose.model('ProviderSnapshot');
+
+    const user = await User.create({ email: 'gbp-fetch-429@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
+
+    fetchGbpProfileReadModel.mockRejectedValueOnce(
+      new GbpApiError('GBP accounts list failed (429)', 'GBP_ACCOUNTS_FETCH_FAILED')
+    );
+
+    const result = await runGbpReadOnlyAudit({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      logger,
+    });
+
+    expect(result.skipped).toBe(true);
+    expect(result.reason).toBe('GBP_ACCOUNTS_FETCH_FAILED');
+    expect(result.guidance).toEqual(buildGbpMissingGuidance('GBP_ACCOUNTS_FETCH_FAILED'));
+    expect(result.blocking).toBe(false);
+    expect(result.source).toBe('gbp_missing');
+
+    const snapshot = await ProviderSnapshot.findOne({ setupRunId: run._id }).lean();
+    expect(snapshot?.payload?.source).toBe('gbp_missing');
+    expect(snapshot?.payload?.reason).toBe('GBP_ACCOUNTS_FETCH_FAILED');
+
+    const audit = await AuditReport.findOne({ setupRunId: run._id }).lean();
+    expect(audit?.findings?.needsAttention).toHaveLength(1);
   });
 });
 

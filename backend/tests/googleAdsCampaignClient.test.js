@@ -6,15 +6,44 @@ const {
   buildConversionGoalCampaignConfigUpdateOperation,
   buildFindCampaignByNameQuery,
   buildFindAdGroupByNameQuery,
+  buildFindKeywordByTextQuery,
+  buildFindCampaignGeoTargetQuery,
+  buildFindCustomConversionGoalByNameQuery,
+  buildAdGroupKeywordCreatePayload,
+  buildCampaignGeoTargetCreatePayload,
   buildResponsiveSearchAdCreatePayload,
   buildSearchCampaignCreatePayload,
   createAdGroup,
+  createAdGroupKeyword,
+  createCampaignGeoTarget,
   createCampaign,
   createCustomConversionGoal,
   createResponsiveSearchAd,
   escapeGaqlLiteral,
   linkCampaignToCustomConversionGoal,
 } = require('../services/integrations/googleAdsCampaignClient');
+const { buildMinimalCampaignIntent } = require('../services/capabilities/adsCampaignIntentService');
+
+function clientIntent(overrides = {}) {
+  return buildMinimalCampaignIntent({
+    businessName: 'MioSalon',
+    campaign: {
+      name: 'MioSalon — Zuggernaut Search',
+      ...(overrides.campaign ?? {}),
+    },
+    adGroup: {
+      name: 'MioSalon — Core',
+      ...(overrides.adGroup ?? {}),
+    },
+    ad: {
+      finalUrl: 'https://example.com',
+      headlines: ['MioSalon', 'Salon software in your area', 'Book a demo today'],
+      descriptions: ['Trusted salon software.', 'Visit our website to learn more.'],
+      ...(overrides.ad ?? {}),
+    },
+    ...overrides,
+  });
+}
 
 jest.mock('axios');
 jest.mock('../services/integrations/googleTokenService', () => ({
@@ -71,12 +100,7 @@ describe('googleAdsCampaignClient', () => {
       customerId: '1234567890',
       setupRunId: 'run-abc',
       budgetResourceName: 'customers/1234567890/campaignBudgets/99',
-      intent: {
-        campaignName: 'MioSalon — Zuggernaut Search',
-        adGroupName: 'Core',
-        budget: { name: 'Budget', amountMicros: 10_000_000 },
-        ad: { finalUrl: 'https://example.com', headlines: [], descriptions: [] },
-      },
+      intent: clientIntent(),
     });
 
     expect(result).toEqual({
@@ -108,12 +132,7 @@ describe('googleAdsCampaignClient', () => {
       customerId: '1234567890',
       setupRunId: 'run-new',
       budgetResourceName: 'customers/1234567890/campaignBudgets/99',
-      intent: {
-        campaignName: 'MioSalon — Zuggernaut Search',
-        adGroupName: 'Core',
-        budget: { name: 'Budget', amountMicros: 10_000_000 },
-        ad: { finalUrl: 'https://example.com', headlines: [], descriptions: [] },
-      },
+      intent: clientIntent(),
     });
 
     expect(result).toEqual({
@@ -160,12 +179,7 @@ describe('googleAdsCampaignClient', () => {
       customerId: '1234567890',
       setupRunId: 'run-retry',
       budgetResourceName: 'customers/1234567890/campaignBudgets/99',
-      intent: {
-        campaignName: 'MioSalon — Zuggernaut Search',
-        adGroupName: 'Core',
-        budget: { name: 'Budget', amountMicros: 10_000_000 },
-        ad: { finalUrl: 'https://example.com', headlines: [], descriptions: [] },
-      },
+      intent: clientIntent(),
     });
 
     expect(result).toEqual({
@@ -190,6 +204,177 @@ describe('googleAdsCampaignClient', () => {
     ).toContain("campaign.resource_name = 'customers/1234567890/campaigns/456'");
   });
 
+  it('buildAdGroupKeywordCreatePayload builds paused PHRASE keyword criterion', () => {
+    const payload = buildAdGroupKeywordCreatePayload({
+      adGroupResourceName: 'customers/1234567890/adGroups/99',
+      keywordText: 'plumbing Springfield',
+      matchType: 'PHRASE',
+    });
+
+    expect(payload).toEqual({
+      adGroup: 'customers/1234567890/adGroups/99',
+      status: 'PAUSED',
+      keyword: {
+        text: 'plumbing Springfield',
+        matchType: 'PHRASE',
+      },
+    });
+  });
+
+  it('buildFindKeywordByTextQuery scopes search to ad group and keyword text', () => {
+    const query = buildFindKeywordByTextQuery(
+      'customers/1234567890/adGroups/99',
+      "plumber's service",
+      'PHRASE'
+    );
+
+    expect(query).toContain("ad_group.resource_name = 'customers/1234567890/adGroups/99'");
+    expect(query).toContain("ad_group_criterion.keyword.text = 'plumber\\'s service'");
+    expect(query).toContain("ad_group_criterion.keyword.match_type = 'PHRASE'");
+  });
+
+  it('buildCampaignGeoTargetCreatePayload builds location campaign criterion', () => {
+    const payload = buildCampaignGeoTargetCreatePayload({
+      campaignResourceName: 'customers/1234567890/campaigns/456',
+      geoTargetConstant: 'geoTargetConstants/1014044',
+    });
+
+    expect(payload).toEqual({
+      campaign: 'customers/1234567890/campaigns/456',
+      location: {
+        geoTargetConstant: 'geoTargetConstants/1014044',
+      },
+    });
+  });
+
+  it('buildFindCampaignGeoTargetQuery scopes search to campaign and geo constant', () => {
+    const query = buildFindCampaignGeoTargetQuery(
+      'customers/1234567890/campaigns/456',
+      'geoTargetConstants/1014044'
+    );
+
+    expect(query).toContain("campaign.resource_name = 'customers/1234567890/campaigns/456'");
+    expect(query).toContain("campaign_criterion.type = 'LOCATION'");
+    expect(query).toContain(
+      "campaign_criterion.location.geo_target_constant = 'geoTargetConstants/1014044'"
+    );
+  });
+
+  it('createCampaignGeoTarget searches before mutate when no existing criterion', async () => {
+    axios.post
+      .mockResolvedValueOnce({ status: 200, data: { results: [] } })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { results: [{ resourceName: 'customers/123/campaignCriteria/456' }] },
+      });
+
+    const result = await createCampaignGeoTarget({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '1234567890',
+      setupRunId: 'run-geo',
+      campaignResourceName: 'customers/1234567890/campaigns/456',
+      geoTargetConstant: 'geoTargetConstants/1014044',
+      geoIndex: 0,
+    });
+
+    expect(result).toEqual({
+      resourceName: 'customers/123/campaignCriteria/456',
+      source: 'google_ads_api',
+    });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(axios.post.mock.calls[0][0]).toContain('/googleAds:search');
+    expect(axios.post.mock.calls[1][0]).toContain('/campaignCriteria:mutate');
+
+    const [, mutateBody] = axios.post.mock.calls[1];
+    expect(mutateBody.operations[0].create).toEqual({
+      campaign: 'customers/1234567890/campaigns/456',
+      location: { geoTargetConstant: 'geoTargetConstants/1014044' },
+    });
+  });
+
+  it('createCampaignGeoTarget reuses existing criterion when search finds a match', async () => {
+    axios.post.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        results: [{ campaignCriterion: { resourceName: 'customers/123/campaignCriteria/999' } }],
+      },
+    });
+
+    const result = await createCampaignGeoTarget({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '1234567890',
+      setupRunId: 'run-geo-reuse',
+      campaignResourceName: 'customers/1234567890/campaigns/456',
+      geoTargetConstant: 'geoTargetConstants/1014044',
+      geoIndex: 0,
+    });
+
+    expect(result).toEqual({
+      resourceName: 'customers/123/campaignCriteria/999',
+      source: 'google_ads_api_reused',
+    });
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
+  it('createAdGroupKeyword searches by text before mutate when no existing keyword', async () => {
+    axios.post
+      .mockResolvedValueOnce({ status: 200, data: { results: [] } })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { results: [{ resourceName: 'customers/123/adGroupCriteria/456' }] },
+      });
+
+    const result = await createAdGroupKeyword({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '1234567890',
+      setupRunId: 'run-abc',
+      adGroupResourceName: 'customers/1234567890/adGroups/99',
+      keywordText: 'plumbing Springfield',
+      matchType: 'PHRASE',
+      keywordIndex: 0,
+    });
+
+    expect(result).toEqual({
+      resourceName: 'customers/123/adGroupCriteria/456',
+      source: 'google_ads_api',
+    });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(axios.post.mock.calls[0][0]).toContain('/googleAds:search');
+    expect(axios.post.mock.calls[1][0]).toContain('/adGroupCriteria:mutate');
+
+    const [, mutateBody] = axios.post.mock.calls[1];
+    expect(mutateBody.operations[0].create).toEqual({
+      adGroup: 'customers/1234567890/adGroups/99',
+      status: 'PAUSED',
+      keyword: { text: 'plumbing Springfield', matchType: 'PHRASE' },
+    });
+  });
+
+  it('createAdGroupKeyword reuses existing keyword when search finds a match', async () => {
+    axios.post.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        results: [{ adGroupCriterion: { resourceName: 'customers/123/adGroupCriteria/999' } }],
+      },
+    });
+
+    const result = await createAdGroupKeyword({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '1234567890',
+      setupRunId: 'run-new',
+      adGroupResourceName: 'customers/1234567890/adGroups/99',
+      keywordText: 'plumbing Springfield',
+      matchType: 'PHRASE',
+      keywordIndex: 1,
+    });
+
+    expect(result).toEqual({
+      resourceName: 'customers/123/adGroupCriteria/999',
+      source: 'google_ads_api_reused',
+    });
+    expect(axios.post).toHaveBeenCalledTimes(1);
+  });
+
   it('createAdGroup searches by name before mutate when no existing ad group', async () => {
     axios.post
       .mockResolvedValueOnce({ status: 200, data: { results: [] } })
@@ -203,12 +388,7 @@ describe('googleAdsCampaignClient', () => {
       customerId: '1234567890',
       setupRunId: 'run-abc',
       campaignResourceName: 'customers/1234567890/campaigns/789',
-      intent: {
-        adGroupName: 'MioSalon — Core',
-        campaignName: 'MioSalon — Zuggernaut Search',
-        budget: { name: 'Budget', amountMicros: 10_000_000 },
-        ad: { finalUrl: 'https://example.com', headlines: [], descriptions: [] },
-      },
+      intent: clientIntent(),
     });
 
     expect(result).toEqual({
@@ -224,7 +404,7 @@ describe('googleAdsCampaignClient', () => {
     expect(create.name).toBe('MioSalon — Core');
     expect(create.campaign).toBe('customers/1234567890/campaigns/789');
     expect(create.type).toBe('SEARCH_STANDARD');
-    expect(create.status).toBe('ENABLED');
+    expect(create.status).toBe('PAUSED');
   });
 
   it('createAdGroup reuses existing ad group when search finds a match', async () => {
@@ -240,12 +420,7 @@ describe('googleAdsCampaignClient', () => {
       customerId: '1234567890',
       setupRunId: 'run-new',
       campaignResourceName: 'customers/1234567890/campaigns/789',
-      intent: {
-        adGroupName: 'MioSalon — Core',
-        campaignName: 'MioSalon — Zuggernaut Search',
-        budget: { name: 'Budget', amountMicros: 10_000_000 },
-        ad: { finalUrl: 'https://example.com', headlines: [], descriptions: [] },
-      },
+      intent: clientIntent(),
     });
 
     expect(result).toEqual({
@@ -292,12 +467,7 @@ describe('googleAdsCampaignClient', () => {
       customerId: '1234567890',
       setupRunId: 'run-retry',
       campaignResourceName: 'customers/1234567890/campaigns/789',
-      intent: {
-        adGroupName: 'MioSalon — Core',
-        campaignName: 'MioSalon — Zuggernaut Search',
-        budget: { name: 'Budget', amountMicros: 10_000_000 },
-        ad: { finalUrl: 'https://example.com', headlines: [], descriptions: [] },
-      },
+      intent: clientIntent(),
     });
 
     expect(result).toEqual({
@@ -305,6 +475,18 @@ describe('googleAdsCampaignClient', () => {
       source: 'google_ads_api_reused',
     });
     expect(axios.post).toHaveBeenCalledTimes(3);
+  });
+
+  it('buildResponsiveSearchAdCreatePayload strict mode rejects insufficient RSA copy', () => {
+    expect(() =>
+      buildResponsiveSearchAdCreatePayload({
+        adGroupResourceName: 'customers/123/adGroups/9',
+        finalUrl: 'https://example.com',
+        headlines: ['Only one'],
+        descriptions: ['Only one description here'],
+        strict: true,
+      })
+    ).toThrow(/at least 3 headlines/);
   });
 
   it('buildResponsiveSearchAdCreatePayload enforces RSA minimums and character limits', () => {
@@ -343,15 +525,15 @@ describe('googleAdsCampaignClient', () => {
       customerId: '1234567890',
       setupRunId: 'run-abc',
       adGroupResourceName: 'customers/1234567890/adGroups/99',
-      intent: {
+      intent: buildMinimalCampaignIntent({
         businessName: 'MioSalon',
-        campaignName: 'MioSalon — Zuggernaut Search',
+        campaign: { name: 'MioSalon — Zuggernaut Search' },
         ad: {
           finalUrl: 'https://www.miosalon.com',
           headlines: ['MioSalon', 'Salon software in your area', 'Book a demo today'],
           descriptions: ['Trusted salon software.', 'Visit our website to learn more.'],
         },
-      },
+      }),
     });
 
     const [, body] = axios.post.mock.calls[0];
@@ -404,12 +586,17 @@ describe('googleAdsCampaignClient', () => {
   });
 
   it('createCustomConversionGoal posts customConversionGoals:mutate create payload', async () => {
-    axios.post.mockResolvedValue({
-      status: 200,
-      data: { results: [{ resourceName: 'customers/1234567890/customConversionGoals/99' }] },
-    });
+    axios.post
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { results: [] },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { results: [{ resourceName: 'customers/1234567890/customConversionGoals/99' }] },
+      });
 
-    await createCustomConversionGoal({
+    const result = await createCustomConversionGoal({
       businessId: '507f1f77bcf86cd799439011',
       customerId: '1234567890',
       setupRunId: 'run-abc',
@@ -417,14 +604,119 @@ describe('googleAdsCampaignClient', () => {
       conversionActionResourceNames: ['customers/1234567890/conversionActions/1001'],
     });
 
-    const [url, body] = axios.post.mock.calls[0];
-    expect(url).toContain('/customConversionGoals:mutate');
+    expect(result).toEqual({
+      resourceName: 'customers/1234567890/customConversionGoals/99',
+      source: 'google_ads_api',
+    });
+    expect(axios.post).toHaveBeenCalledTimes(2);
+
+    const [searchUrl] = axios.post.mock.calls[0];
+    expect(searchUrl).toContain('/googleAds:search');
+
+    const [mutateUrl, body] = axios.post.mock.calls[1];
+    expect(mutateUrl).toContain('/customConversionGoals:mutate');
     expect(body.operations[0].create).toEqual({
       name: 'MioSalon — Zuggernaut Conversions',
       conversionActions: ['customers/1234567890/conversionActions/1001'],
       status: 'ENABLED',
     });
     expect(body.operations[0].update).toBeUndefined();
+  });
+
+  it('createCustomConversionGoal reuses existing goal from lookup without mutate', async () => {
+    axios.post.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        results: [
+          {
+            customConversionGoal: {
+              resourceName: 'customers/1234567890/customConversionGoals/42',
+              name: 'MioSalon — Zuggernaut Conversions',
+            },
+          },
+        ],
+      },
+    });
+
+    const result = await createCustomConversionGoal({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '1234567890',
+      setupRunId: 'run-abc',
+      name: 'MioSalon — Zuggernaut Conversions',
+      conversionActionResourceNames: ['customers/1234567890/conversionActions/1001'],
+    });
+
+    expect(result).toEqual({
+      resourceName: 'customers/1234567890/customConversionGoals/42',
+      source: 'google_ads_api_reused',
+    });
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    expect(axios.post.mock.calls[0][0]).toContain('/googleAds:search');
+  });
+
+  it('createCustomConversionGoal recovers duplicate-name mutate via lookup', async () => {
+    axios.post
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { results: [] },
+      })
+      .mockResolvedValueOnce({
+        status: 400,
+        data: {
+          error: {
+            code: 400,
+            message: 'Request contains an invalid argument.',
+            status: 'INVALID_ARGUMENT',
+            details: [
+              {
+                '@type': 'type.googleapis.com/google.ads.googleads.v24.errors.GoogleAdsFailure',
+                errors: [
+                  {
+                    errorCode: { customConversionGoalError: 'CUSTOM_GOAL_DUPLICATE_NAME' },
+                    message: 'Custom goal with the same name already exists.',
+                    location: {
+                      fieldPathElements: [{ fieldName: 'operations', index: 0 }, { fieldName: 'create' }, { fieldName: 'name' }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: {
+          results: [
+            {
+              customConversionGoal: {
+                resourceName: 'customers/1234567890/customConversionGoals/42',
+              },
+            },
+          ],
+        },
+      });
+
+    const result = await createCustomConversionGoal({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '1234567890',
+      setupRunId: 'run-abc',
+      name: 'MioSalon — Zuggernaut Conversions',
+      conversionActionResourceNames: ['customers/1234567890/conversionActions/1001'],
+    });
+
+    expect(result).toEqual({
+      resourceName: 'customers/1234567890/customConversionGoals/42',
+      source: 'google_ads_api_reused',
+    });
+    expect(axios.post).toHaveBeenCalledTimes(3);
+    expect(axios.post.mock.calls[1][0]).toContain('/customConversionGoals:mutate');
+    expect(axios.post.mock.calls[2][0]).toContain('/googleAds:search');
+  });
+
+  it('buildFindCustomConversionGoalByNameQuery escapes goal name literals', () => {
+    const query = buildFindCustomConversionGoalByNameQuery("Acme's Goal");
+    expect(query).toContain("custom_conversion_goal.name = 'Acme\\'s Goal'");
   });
 
   it('linkCampaignToCustomConversionGoal posts conversionGoalCampaignConfigs:mutate update payload', async () => {

@@ -6,7 +6,7 @@ Execute this checklist **after** mock-mode sign-off ([`MANUAL_E2E_CHECKLIST.md`]
 
 **Environment:** [`backend/.env.example`](../.env.example) real-mode column. **Do not** set `TEMPORAL_E2E_MOCK` in real runs.
 
-**Evidence:** capture each run using [`V1_REMEDIATION_EXECUTION.md`](../../V1_REMEDIATION_EXECUTION.md#evidence-capture-template). Store artifacts under `backend/tests/evidence/phase4-real/`.
+**Phase 4 status:** see [`REAL_MODE_E2E_CHECKLIST.md`](./REAL_MODE_E2E_CHECKLIST.md). **Phase 10 campaign creation:** see [`PHASE10_REAL_MODE_E2E_CHECKLIST.md`](./PHASE10_REAL_MODE_E2E_CHECKLIST.md).
 
 ---
 

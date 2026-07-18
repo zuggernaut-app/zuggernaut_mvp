@@ -68,15 +68,16 @@ describe('BusinessReviewPage', () => {
         websiteUrl: 'https://seed.example',
         businessName: 'SeedCo',
         industry: 'Tech',
-        services: [],
-        serviceAreas: [],
+        services: ['Consulting'],
+        serviceAreas: ['Metro area'],
         contactMethods: null,
         audienceSignals: null,
-        goals: null,
+        goals: { primary: 'both' },
         differentiators: null,
         orderValueHint: null,
         confirmedAt: new Date().toISOString(),
       },
+      adsReadiness: { ok: true },
     })
 
     const user = userEvent.setup()
@@ -86,6 +87,9 @@ describe('BusinessReviewPage', () => {
 
     await user.clear(screen.getByLabelText(/^business name$/i))
     await user.type(screen.getByLabelText(/^business name$/i), 'Acme LLC')
+    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'both')
+    await user.type(screen.getByLabelText(/^services/i), 'Consulting')
+    await user.type(screen.getByLabelText(/^service areas/i), 'Metro area')
 
     await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
 
@@ -98,6 +102,7 @@ describe('BusinessReviewPage', () => {
       expect.objectContaining({
         businessName: 'Acme LLC',
         industry: 'Tech',
+        goals: { primary: 'both' },
       }),
     )
 
@@ -147,11 +152,66 @@ describe('BusinessReviewPage', () => {
     fireEvent.change(screen.getByLabelText(/contactMethods/i), {
       target: { value: '{broken' },
     })
+    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'both')
 
     await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/contact methods/i)
     expect(mockedUpdate).not.toHaveBeenCalled()
+  })
+
+  it('uses dropdown primary goal over unsupported scraped goals JSON', async () => {
+    seedSession({
+      userId: TEST_IDS.user,
+      businessId: TEST_IDS.business,
+      scrapePreview: {
+        websiteUrl: 'https://x.com',
+        suggested: {
+          businessName: 'X Co',
+          industry: 'Plumbing',
+          services: ['Plumbing'],
+          serviceAreas: ['Springfield'],
+          goals: { primary: 'generate_leads' },
+        },
+      },
+    })
+
+    mockedUpdate.mockResolvedValueOnce({
+      businessContext: {
+        businessId: TEST_IDS.business,
+        userId: TEST_IDS.user,
+        websiteUrl: 'https://x.com',
+        businessName: 'X Co',
+        industry: 'Plumbing',
+        services: ['Plumbing'],
+        serviceAreas: ['Springfield'],
+        contactMethods: null,
+        audienceSignals: null,
+        goals: { primary: 'calls' },
+        differentiators: null,
+        orderValueHint: null,
+        confirmedAt: new Date().toISOString(),
+      },
+      adsReadiness: { ok: true },
+    })
+
+    const user = userEvent.setup()
+    renderReview()
+
+    await screen.findByRole('heading', { name: /confirm business context/i })
+    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'calls')
+    await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('setup-target')).toBeInTheDocument()
+    })
+
+    expect(mockedUpdate).toHaveBeenCalledWith(
+      TEST_IDS.business,
+      expect.objectContaining({
+        goals: expect.objectContaining({ primary: 'calls' }),
+      }),
+    )
   })
 
   it('shows ApiError message when PUT fails', async () => {
@@ -167,6 +227,7 @@ describe('BusinessReviewPage', () => {
     renderReview()
 
     await screen.findByRole('heading', { name: /confirm business context/i })
+    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'both')
     await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Bad payload')

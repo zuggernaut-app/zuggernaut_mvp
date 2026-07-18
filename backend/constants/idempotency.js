@@ -90,7 +90,9 @@ const PROVIDER_MUTATION_CONTRACT = Object.freeze([
     artifactTypes: [
       'ads_campaign_budget',
       'ads_campaign',
+      'ads_campaign_criterion',
       'ads_ad_group',
+      'ads_keyword',
       'ads_ad',
       'ads_custom_conversion_goal',
       'ads_conversion_goal_campaign_config',

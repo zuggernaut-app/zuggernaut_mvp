@@ -104,6 +104,7 @@ export function integrationStatusLabel(status: IntegrationConnectionStatusDto): 
   if (status.ready) return 'Connected'
   if (status.reason === 'selection_required') return 'Account selection needed'
   if (status.reason === 'gtm_account_required') return 'GTM account needed'
+  if (status.reason === 'ads_customer_not_found') return 'Google Ads account needed'
   if (status.reason === 'provisioning_required') return 'Provisioning approval needed'
   if (status.reason === 'insufficient_scopes') return 'Insufficient scopes'
   if (status.reason === 'token_expired' || status.reason === 'needs_reauth') {

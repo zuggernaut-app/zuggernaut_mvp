@@ -3,7 +3,8 @@ import type { ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { updateBusinessContext } from '../api/businessContexts'
-import type { BusinessContextUpdateBody } from '../types/api'
+import type { AdsReadinessIssue, BusinessContextUpdateBody } from '../types/api'
+import { adsReadinessIssueMessages } from '../lib/businessContextAdsReadinessUi'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
@@ -46,6 +47,12 @@ function buildContactMethods(
   return Object.keys(contact).length ? contact : undefined
 }
 
+function readPrimaryGoal(goals: unknown): string {
+  if (!goals || typeof goals !== 'object' || Array.isArray(goals)) return ''
+  const primary = (goals as Record<string, unknown>).primary
+  return typeof primary === 'string' ? primary : ''
+}
+
 export function BusinessReviewPage(): ReactElement {
   const navigate = useNavigate()
   const { snapshot, clearScrapePreviewState } = useOnboardingState()
@@ -74,12 +81,14 @@ export function BusinessReviewPage(): ReactElement {
       contactMethodsRaw: s?.contactMethods ? JSON.stringify(s.contactMethods, null, 2) : '',
       audienceSignalsRaw: '',
       goalsRaw: s?.goals ? JSON.stringify(s.goals, null, 2) : '',
+      primaryGoal: readPrimaryGoal(s?.goals),
     }
   }, [scrapePreview])
 
   const [form, setForm] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [readinessIssues, setReadinessIssues] = useState<AdsReadinessIssue[]>([])
 
   useEffect(() => setForm(initial), [initial])
 
@@ -92,9 +101,14 @@ export function BusinessReviewPage(): ReactElement {
     e.preventDefault()
     if (!businessId) return
     setError(null)
+    setReadinessIssues([])
 
     if (!form.businessName.trim()) {
       setError('Business name is required to confirm your context.')
+      return
+    }
+    if (!form.primaryGoal) {
+      setError('Choose a primary business goal (calls, forms, or both).')
       return
     }
 
@@ -108,6 +122,7 @@ export function BusinessReviewPage(): ReactElement {
         serviceAreas: splitLines(form.serviceAreas),
         differentiators: form.differentiators.trim() || undefined,
         orderValueHint: form.orderValueHint.trim() || undefined,
+        goals: { primary: form.primaryGoal },
       }
 
       try {
@@ -127,12 +142,24 @@ export function BusinessReviewPage(): ReactElement {
       }
       try {
         const v = parseOptionalObject(form.goalsRaw)
-        if (v !== undefined) body.goals = v
+        if (v !== undefined) {
+          const merged =
+            typeof v === 'object' && v !== null && !Array.isArray(v)
+              ? { ...(v as Record<string, unknown>) }
+              : {}
+          // Dropdown selection wins over scraped/legacy goals JSON (e.g. generate_leads).
+          body.goals = { ...merged, primary: form.primaryGoal }
+        }
       } catch {
         throw new Error('Goals must be valid JSON or empty')
       }
 
-      await updateBusinessContext(businessId, body)
+      const saved = await updateBusinessContext(businessId, body)
+      if (!saved.adsReadiness.ok) {
+        setReadinessIssues(saved.adsReadiness.issues)
+        setError('Complete the required fields below before setup can start.')
+        return
+      }
       leavingAfterSaveRef.current = true
       navigate('/setup', { replace: true })
       window.setTimeout(() => {
@@ -171,6 +198,16 @@ export function BusinessReviewPage(): ReactElement {
 
       <form className="form" style={{ maxWidth: '32rem' }} onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error} />
+        {readinessIssues.length > 0 ? (
+          <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+            <p style={{ margin: '0 0 0.5rem' }}>Before setup can start:</p>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+              {adsReadinessIssueMessages({ ok: false, issues: readinessIssues }).map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div className="field">
           <label htmlFor="websiteUrl">Website URL</label>
           <input
@@ -244,6 +281,19 @@ export function BusinessReviewPage(): ReactElement {
             value={form.orderValueHint}
             onChange={(e) => setForm((f) => ({ ...f, orderValueHint: e.target.value }))}
           />
+        </div>
+        <div className="field">
+          <label htmlFor="primaryGoal">Primary business goal</label>
+          <select
+            id="primaryGoal"
+            value={form.primaryGoal}
+            onChange={(e) => setForm((f) => ({ ...f, primaryGoal: e.target.value }))}
+          >
+            <option value="">Select a goal…</option>
+            <option value="calls">Phone calls</option>
+            <option value="forms">Form submissions</option>
+            <option value="both">Calls and forms</option>
+          </select>
         </div>
         <details style={{ marginTop: '0.5rem' }}>
           <summary

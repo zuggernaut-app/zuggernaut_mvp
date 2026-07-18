@@ -107,13 +107,14 @@ describe('provider discovery', () => {
       expect(result.providerIdentifiers.accessibleCustomerIds).toEqual(['1234567890', '9876543210']);
     });
 
-    it('returns provisioning_required when no accessible customers', async () => {
+    it('returns ADS_CUSTOMER_NOT_FOUND when no accessible customers', async () => {
       axios.get.mockResolvedValue({ status: 200, data: { resourceNames: [] } });
 
       const result = await discoverGoogleAdsProviderIdentifiers('token');
 
       expect(result.connectionHealth).toBe('provisioning_required');
-      expect(result.reason).toBe('ADS_PROVISIONING_REQUIRED');
+      expect(result.reason).toBe('ADS_CUSTOMER_NOT_FOUND');
+      expect(result.providerIdentifiers.discoveryReason).toBe('ADS_CUSTOMER_NOT_FOUND');
     });
 
     it('surfaces structured Google API errors on discovery failure', async () => {

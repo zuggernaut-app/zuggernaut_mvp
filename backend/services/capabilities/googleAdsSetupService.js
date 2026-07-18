@@ -10,7 +10,7 @@ const {
   ensureSetupProvisioningRequest,
   checkSetupProvisioningApproval,
 } = require('./integrationProvisioningService');
-const { listAccessibleCustomers } = require('../integrations/googleAdsAccountClient');
+const { listAccessibleCustomers, getEffectiveAdsDiscoveryReason } = require('../integrations/googleAdsAccountClient');
 const { getFreshGoogleAccessToken } = require('../integrations/googleTokenService');
 const {
   getGoogleAdsLoginCustomerId,
@@ -121,15 +121,23 @@ async function discoverAndPersistGoogleAdsCustomers(input) {
           }
         : {
             accessibleCustomerIds: [],
-            discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+            discoveryReason: 'ADS_CUSTOMER_NOT_FOUND',
           }),
       ...(loginCustomerId ? { loginCustomerId, managerCustomerId: loginCustomerId } : {}),
       discoveryRecordedAt: recordedAt,
       discoverySource: setupRunId ? 'setup_workflow' : 'diagnostics',
     };
 
+    const emptyCustomerReason =
+      customerIds.length === 0
+        ? getEffectiveAdsDiscoveryReason(providerIdentifiers)
+        : null;
     const connectionHealth =
-      customerIds.length > 0 ? 'selection_required' : 'provisioning_required';
+      customerIds.length > 0
+        ? 'selection_required'
+        : emptyCustomerReason === 'ADS_PROVISIONING_REQUIRED'
+          ? 'provisioning_required'
+          : 'connected';
 
     await IntegrationConnection.findOneAndUpdate(
       { businessId, provider: 'google_ads' },
@@ -155,6 +163,15 @@ async function discoverAndPersistGoogleAdsCustomers(input) {
     );
 
     if (customerIds.length === 0) {
+      if (emptyCustomerReason === 'ADS_CUSTOMER_NOT_FOUND') {
+        return {
+          outcome: 'customer_not_found',
+          accessibleCustomerIds: [],
+          customerId: null,
+          providerIdentifiers,
+        };
+      }
+
       return {
         outcome: 'provisioning_required',
         accessibleCustomerIds: [],

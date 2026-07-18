@@ -6,19 +6,29 @@ const { adsCampaignIdempotencyKey } = require('../../constants/idempotency');
 const {
   createCampaignBudget,
   createCampaign,
+  createCampaignGeoTarget,
   createAdGroup,
+  createAdGroupKeyword,
   createCustomConversionGoal,
   createResponsiveSearchAd,
   linkCampaignToCustomConversionGoal,
   resolveConversionActionResourceName,
-  truncateRsaText,
 } = require('../integrations/googleAdsCampaignClient');
 const { GoogleAdsApiError } = require('../integrations/googleAdsConversionCatalogClient');
 const { requireSetupReadyConnection } = require('./setupReadyConnectionService');
+const {
+  validateBusinessContextAdsReadiness,
+  formatAdsReadinessSummary,
+} = require('./businessContextAdsReadinessService');
+const {
+  buildCampaignIntentFromNormalized,
+  validateCampaignIntent,
+  formatCampaignIntentSummary,
+} = require('./adsCampaignIntentService');
+const { resolvePrimaryGeoTargetConstant, GeoTargetResolutionError } = require('../integrations/googleAdsGeoTargetClient');
 const BusinessContext = mongoose.model('BusinessContext');
 const CampaignPlan = mongoose.model('CampaignPlan');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
-const DEFAULT_DAILY_BUDGET_MICROS = 10_000_000;
 
 class AdsProviderPreconditionError extends Error {
   /**
@@ -37,47 +47,81 @@ class AdsProviderPreconditionError extends Error {
 }
 
 /**
- * @param {object} bc — lean BusinessContext
- * @param {object[]} conversionArtifacts
+ * @param {object} intent
  */
-function buildCampaignIntent(bc, conversionArtifacts) {
-  const businessName = bc.businessName?.trim() || 'Business';
-  const websiteUrl = bc.websiteUrl?.trim() || '';
-  const primaryService = Array.isArray(bc.services) && bc.services[0] ? bc.services[0] : bc.industry ?? 'services';
-  const area = Array.isArray(bc.serviceAreas) && bc.serviceAreas[0] ? bc.serviceAreas[0] : 'local area';
+function assertValidCampaignIntent(intent) {
+  const validation = validateCampaignIntent(intent);
+  if (!validation.ok) {
+    throw new AdsProviderPreconditionError(
+      formatCampaignIntentSummary(validation),
+      validation.issues[0]?.code ?? 'ADS_INTENT_INVALID'
+    );
+  }
+  return intent;
+}
 
-  return {
-    version: 1,
-    businessName,
-    websiteUrl,
-    goals: bc.goals ?? null,
-    serviceAreas: bc.serviceAreas ?? [],
-    selectedConversionIds: conversionArtifacts.map((a) => a.externalId),
-    campaignName: `${businessName} — Zuggernaut Search`,
-    adGroupName: `${businessName} — Core`,
-    bidding: 'maximize_conversions',
-    budget: {
-      name: `${businessName} — Daily Budget`,
-      amountMicros: DEFAULT_DAILY_BUDGET_MICROS,
-    },
-    keywords: [
-      `${primaryService} ${area}`.trim(),
-      `${businessName} ${area}`.trim(),
-      `${primaryService} near me`,
-    ],
-    ad: {
-      finalUrl: websiteUrl,
-      headlines: [
-        truncateRsaText(businessName, 30),
-        truncateRsaText(`${primaryService} in ${area}`, 30),
-        'Get a Free Quote Today',
-      ],
-      descriptions: [
-        truncateRsaText(`Trusted ${primaryService} serving ${area}. Contact ${businessName} today.`, 90),
-        truncateRsaText(`Professional ${primaryService}. Visit our website to learn more.`, 90),
-      ],
-    },
-  };
+/**
+ * @param {import('./businessContextAdsReadinessService').AdsReadinessNormalized} normalized
+ * @param {object[]} conversionArtifacts
+ * @param {{ businessId: import('mongoose').Types.ObjectId | string, customerId: string }} resolveCtx
+ */
+async function buildValidatedCampaignIntent(normalized, conversionArtifacts, resolveCtx) {
+  const draft = buildCampaignIntentFromNormalized(normalized, conversionArtifacts);
+  const primaryLabel = draft.geoTargetLabels[0];
+
+  try {
+    const geoTarget = await resolvePrimaryGeoTargetConstant({
+      businessId: resolveCtx.businessId,
+      customerId: resolveCtx.customerId,
+      label: primaryLabel,
+    });
+    draft.geoTargets = [
+      {
+        resourceName: geoTarget.resourceName,
+        label: geoTarget.label,
+        canonicalName: geoTarget.canonicalName,
+        targetType: geoTarget.targetType,
+        countryCode: geoTarget.countryCode,
+      },
+    ];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Geo target resolution failed.';
+    const code =
+      err instanceof GeoTargetResolutionError
+        ? err.code
+        : err instanceof GoogleAdsApiError
+          ? err.code
+          : 'ADS_INTENT_UNRESOLVED_GEO';
+    throw new AdsProviderPreconditionError(message, code, err instanceof GoogleAdsApiError ? err.details : undefined);
+  }
+
+  return assertValidCampaignIntent(draft);
+}
+
+/**
+ * @param {object} bc — lean BusinessContext (must pass Ads readiness validation)
+ * @param {object[]} conversionArtifacts
+ * @param {{ businessId?: import('mongoose').Types.ObjectId | string, customerId?: string }} [resolveCtx]
+ */
+async function buildCampaignIntent(bc, conversionArtifacts, resolveCtx = {}) {
+  const readiness = validateBusinessContextAdsReadiness(bc);
+  if (!readiness.ok) {
+    throw new AdsProviderPreconditionError(
+      formatAdsReadinessSummary(readiness),
+      readiness.issues[0]?.code ?? 'ADS_READINESS_INVALID'
+    );
+  }
+
+  const businessId =
+    resolveCtx.businessId ??
+    bc.businessId ??
+    new mongoose.Types.ObjectId('507f1f77bcf86cd799439011');
+  const customerId = resolveCtx.customerId ?? '1234567890';
+
+  return buildValidatedCampaignIntent(readiness.normalized, conversionArtifacts, {
+    businessId,
+    customerId,
+  });
 }
 
 /**
@@ -139,10 +183,11 @@ async function createAdsAutoCampaign(ctx) {
     );
   }
 
-  if (!bc.websiteUrl?.trim()) {
+  const readiness = validateBusinessContextAdsReadiness(bc);
+  if (!readiness.ok) {
     throw new AdsProviderPreconditionError(
-      'Website URL is required on BusinessContext for campaign creation.',
-      'ADS_MISSING_WEBSITE_URL'
+      formatAdsReadinessSummary(readiness),
+      readiness.issues[0]?.code ?? 'ADS_READINESS_INVALID'
     );
   }
 
@@ -173,7 +218,10 @@ async function createAdsAutoCampaign(ctx) {
     );
   }
 
-  const intent = buildCampaignIntent(bc, conversionArtifacts);
+  const intent = await buildValidatedCampaignIntent(readiness.normalized, conversionArtifacts, {
+    businessId,
+    customerId,
+  });
 
   await CampaignPlan.findOneAndUpdate(
     { setupRunId },
@@ -257,8 +305,8 @@ async function createAdsAutoCampaign(ctx) {
     () => createCampaignBudget(clientCtx),
     (resourceName) => ({
       planId: planRow._id.toString(),
-      name: intent.budget.name,
-      amountMicros: intent.budget.amountMicros,
+      name: intent.campaign.budget.name,
+      amountMicros: intent.campaign.budget.amountMicros,
       createdBy: 'ads_auto_campaign_v1',
       source,
     })
@@ -270,13 +318,39 @@ async function createAdsAutoCampaign(ctx) {
     () => createCampaign({ ...clientCtx, budgetResourceName }),
     (resourceName) => ({
       planId: planRow._id.toString(),
-      name: intent.campaignName,
+      name: intent.campaign.name,
       budgetResourceName,
-      bidding: intent.bidding,
+      bidding: intent.campaign.bidding,
       createdBy: 'ads_auto_campaign_v1',
       source,
     })
   );
+
+  const geoExternalIds = [];
+  for (let index = 0; index < intent.geoTargets.length; index += 1) {
+    const geo = intent.geoTargets[index];
+    const logicalKey = `geo_${index}`;
+    const geoResourceName = await ensureResource(
+      logicalKey,
+      'ads_campaign_criterion',
+      () =>
+        createCampaignGeoTarget({
+          ...clientCtx,
+          campaignResourceName,
+          geoTargetConstant: geo.resourceName,
+          geoIndex: index,
+        }),
+      () => ({
+        planId: planRow._id.toString(),
+        campaignResourceName,
+        geoTargetConstant: geo.resourceName,
+        label: geo.label,
+        createdBy: 'ads_auto_campaign_v1',
+        source,
+      })
+    );
+    geoExternalIds.push(geoResourceName);
+  }
 
   const adGroupResourceName = await ensureResource(
     'ad_group',
@@ -284,13 +358,40 @@ async function createAdsAutoCampaign(ctx) {
     () => createAdGroup({ ...clientCtx, campaignResourceName }),
     (resourceName) => ({
       planId: planRow._id.toString(),
-      name: intent.adGroupName,
+      name: intent.adGroup.name,
       campaignResourceName,
-      keywords: intent.keywords,
+      keywordPlan: intent.keywords,
       createdBy: 'ads_auto_campaign_v1',
       source,
     })
   );
+
+  const keywordExternalIds = [];
+  for (let index = 0; index < intent.keywords.length; index += 1) {
+    const keyword = intent.keywords[index];
+    const logicalKey = `keyword_${index}`;
+    const keywordResourceName = await ensureResource(
+      logicalKey,
+      'ads_keyword',
+      () =>
+        createAdGroupKeyword({
+          ...clientCtx,
+          adGroupResourceName,
+          keywordText: keyword.text,
+          matchType: keyword.matchType,
+          keywordIndex: index,
+        }),
+      () => ({
+        planId: planRow._id.toString(),
+        adGroupResourceName,
+        keywordText: keyword.text,
+        matchType: keyword.matchType,
+        createdBy: 'ads_auto_campaign_v1',
+        source,
+      })
+    );
+    keywordExternalIds.push(keywordResourceName);
+  }
 
   const adResourceName = await ensureResource(
     'ad',
@@ -357,12 +458,16 @@ async function createAdsAutoCampaign(ctx) {
 
   const summary = {
     campaignCreated: true,
+    geoTargetsCreated: geoExternalIds.length,
     adGroupCreated: true,
     adCreated: true,
+    keywordsCreated: keywordExternalIds.length,
     reusedArtifacts,
     campaignExternalId: campaignResourceName,
+    geoExternalIds,
     adGroupExternalId: adGroupResourceName,
     adExternalId: adResourceName,
+    keywordExternalIds,
     budgetExternalId: budgetResourceName,
     conversionLinkCount: conversionArtifacts.length,
     conversionGoalLinked: true,

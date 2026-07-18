@@ -4,7 +4,18 @@ export interface ApiErrorBody {
   message: string
   detail?: string
   setupRunId?: string
+  issues?: AdsReadinessIssue[]
 }
+
+export interface AdsReadinessIssue {
+  code: string
+  field: string
+  message: string
+}
+
+export type AdsReadinessResult =
+  | { ok: true; normalized?: Record<string, unknown> }
+  | { ok: false; issues: AdsReadinessIssue[] }
 
 export interface UserDto {
   id: string
@@ -89,10 +100,12 @@ export interface BusinessContextDto {
 
 export interface GetBusinessContextResponse {
   businessContext: BusinessContextDto
+  adsReadiness: AdsReadinessResult
 }
 
 export interface PutBusinessContextResponse {
   businessContext: BusinessContextDto
+  adsReadiness: AdsReadinessResult
 }
 
 /** Subset matching backend EDITABLE_FIELDS */

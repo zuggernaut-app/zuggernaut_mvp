@@ -13,6 +13,10 @@ const {
 } = require('../../constants/temporalDefaults');
 const { buildSetupRunReport } = require('../../services/reports/setupRunReportService');
 const { detectStuckSetupRun } = require('../../services/setupRunStuckDetection');
+const {
+  validateBusinessContextAdsReadiness,
+  formatAdsReadinessSummary,
+} = require('../../services/capabilities/businessContextAdsReadinessService');
 
 const router = express.Router();
 
@@ -44,6 +48,15 @@ router.post('/', requireAuth, async (req, res) => {
       error: 'precondition_failed',
       message:
         'Business context must be confirmed (PUT /business-contexts/:businessId) before starting setup.',
+    });
+  }
+
+  const adsReadiness = validateBusinessContextAdsReadiness(bc);
+  if (!adsReadiness.ok) {
+    return res.status(400).json({
+      error: 'validation_error',
+      message: formatAdsReadinessSummary(adsReadiness),
+      issues: adsReadiness.issues,
     });
   }
 

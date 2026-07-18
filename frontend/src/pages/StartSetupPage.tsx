@@ -14,7 +14,12 @@ import {
   useIntegrationConnections,
 } from '../hooks/useIntegrationConnections'
 import { optionalIntegrationNudge, requiredProvidersReadyForSetup } from '../lib/provisioningUi'
+import {
+  adsReadinessIssueMessages,
+  isAdsReadinessOk,
+} from '../lib/businessContextAdsReadinessUi'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import type { AdsReadinessResult } from '../types/api'
 import type { IntegrationProvider } from '../api/integrations'
 
 interface Temporal503Body {
@@ -59,6 +64,7 @@ export function StartSetupPage(): ReactElement {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [integrationNotice, setIntegrationNotice] = useState<string | null>(null)
+  const [adsReadiness, setAdsReadiness] = useState<AdsReadinessResult | null>(null)
 
   const {
     connections,
@@ -79,8 +85,9 @@ export function StartSetupPage(): ReactElement {
     let cancelled = false
     void (async () => {
       try {
-        const { businessContext } = await getBusinessContext(businessId)
+        const { businessContext, adsReadiness: readiness } = await getBusinessContext(businessId)
         if (cancelled) return
+        setAdsReadiness(readiness)
         if (!businessContext.confirmedAt) {
           navigate('/onboarding/business', { replace: true })
         }
@@ -142,6 +149,9 @@ export function StartSetupPage(): ReactElement {
           } else {
             setError('Temporal unavailable but no setupRunId was returned.')
           }
+        } else if (err.status === 400 && Array.isArray(err.body?.issues)) {
+          setAdsReadiness({ ok: false, issues: err.body.issues })
+          setError(err.message)
         } else {
           setError(err.message)
         }
@@ -161,11 +171,13 @@ export function StartSetupPage(): ReactElement {
     )
   }
 
-  const adsReady = connections.google_ads?.ready === true
-  const canStartSetup = requiredProvidersReadyForSetup(connections)
+  const businessContextAdsReady = isAdsReadinessOk(adsReadiness)
+  const adsReadinessIssues = adsReadinessIssueMessages(adsReadiness)
+  const canStartSetup = requiredProvidersReadyForSetup(connections) && businessContextAdsReady
   const optionalNudges = optionalIntegrationNudge(connections)
+  const googleAdsConnected = connections.google_ads?.ready === true
   const adsNeedsProvisioning =
-    !adsReady && connections.google_ads?.reason === 'provisioning_required'
+    !googleAdsConnected && connections.google_ads?.reason === 'provisioning_required'
   const adsNeedsSelection = connections.google_ads?.reason === 'selection_required'
 
   return (
@@ -175,6 +187,18 @@ export function StartSetupPage(): ReactElement {
     >
       <form className="form" onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error ?? connectionsError} />
+        {!businessContextAdsReady && adsReadinessIssues.length > 0 ? (
+          <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+            <p style={{ margin: '0 0 0.5rem' }}>
+              Complete your business requirements before setup can start:
+            </p>
+            <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
+              {adsReadinessIssues.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {integrationNotice ? (
           <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
             {integrationNotice}
@@ -235,11 +259,13 @@ export function StartSetupPage(): ReactElement {
           </ul>
           {!canStartSetup ? (
             <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: '0.75rem' }}>
-              {adsNeedsSelection
-                ? 'Select your Google Ads customer before setup can start.'
-                : adsNeedsProvisioning
-                  ? 'Connect Google Ads via OAuth. If provisioning approval is needed, start setup and approve on the progress screen.'
-                  : 'Google Ads must be connected before setup can start. GTM and GBP are optional.'}
+              {!businessContextAdsReady
+                ? 'Update your confirmed business context with the required fields above.'
+                : adsNeedsSelection
+                  ? 'Select your Google Ads customer before setup can start.'
+                  : adsNeedsProvisioning
+                    ? 'Connect Google Ads via OAuth. If provisioning approval is needed, start setup and approve on the progress screen.'
+                    : 'Google Ads must be connected before setup can start. GTM and GBP are optional.'}
             </p>
           ) : optionalNudges.length > 0 ? (
             <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: '0.75rem' }}>

@@ -158,7 +158,7 @@ Zuggernaut's core logic translates a user's `BusinessContext` and derived `Campa
           "create": {
             "name": "Business Name — Core",
             "campaign": "customers/1234567890/campaigns/CAMPAIGN_ID",
-            "status": "ENABLED",
+            "status": "PAUSED",
             "type": "SEARCH_STANDARD"
           }
         }
@@ -168,7 +168,7 @@ Zuggernaut's core logic translates a user's `BusinessContext` and derived `Campa
 *   **Parameters:**
     *   `name`: **[Required]** Ad group name (e.g., `${businessName} — Core`).
     *   `campaign`: **[Required]** Resource name of the parent campaign.
-    *   `status`: **[Defaulted]** Typically `ENABLED`.
+    *   `status`: **[Defaulted]** `PAUSED` for V1 setup (matches campaign).
     *   `type`: **[Defaulted]** `SEARCH_STANDARD`.
 *   **Idempotency:** Zuggernaut tracks `ads_ad_group` artifacts using `IntegrationArtifact`.
 
@@ -211,8 +211,8 @@ Zuggernaut's core logic translates a user's `BusinessContext` and derived `Campa
     *   `status`: **[Defaulted]** Initially `PAUSED` to allow for verification.
     *   `ad`: Contains the RSA details:
         *   `responsiveSearchAd`: **[Required]**
-            *   `headlines`: **[Required, Array]** Array of headline objects (`{ text: string }`). Zuggernaut enforces minimums (3), maximums (15), and character limits (30) with fallbacks (`truncateRsaText`, `collectUniqueRsaTexts` in `googleAdsCampaignClient.js`).
-            *   `descriptions`: **[Required, Array]** Array of description objects (`{ text: string }`). Zuggernaut enforces minimums (2), maximums (4), and character limits (90) with fallbacks.
+            *   `headlines`: **[Required, Array]** Validated intent headlines only (minimum 3, max 30 chars each). Product path uses `strict: true` — no silent fallback injection.
+            *   `descriptions`: **[Required, Array]** Validated intent descriptions only (minimum 2, max 90 chars each).
         *   `finalUrls`: **[Required, Array]** Array containing the primary landing page URL.
 *   **Idempotency:** Zuggernaut tracks `ads_ad` artifacts using `IntegrationArtifact`.
 
@@ -254,14 +254,15 @@ As per `mvp_implementation_plan.md` Phase 10, Zuggernaut enforces strict validat
 2.  **Ad Group Structure & Ad Creative**
     *   `adGroup.name`: **[Required]**
     *   `adGroup.campaign`: **[Required]** Resource name.
-    *   `adGroup.status`: **[Defaulted]** (`ENABLED`).
+    *   `adGroup.status`: **[Defaulted]** (`PAUSED` for V1 setup).
     *   `adGroup.type`: **[Defaulted]** (`SEARCH_STANDARD`).
     *   `adGroupAd.status`: **[Defaulted]** (`PAUSED` initially).
     *   `adGroupAd.ad.responsiveSearchAd.headlines`: **[Required, Validated]** Minimums, maximums, and character limits (30 chars).
     *   `adGroupAd.ad.responsiveSearchAd.descriptions`: **[Required, Validated]** Minimums, maximums, and character limits (90 chars).
     *   `adGroupAd.ad.finalUrls`: **[Required]** Must be a valid URL.
 3.  **Core Targeting & Conversion Goal Linking**
-    *   `campaignCriterion` (for keywords and geographic targeting - *future implementation, currently simple keyword/geo intent*).
+    *   `adGroupCriterion.keyword` (keywords): **[Required, Implemented]** Created via `createAdGroupKeyword`; tracked as `ads_keyword` artifacts.
+    *   `campaignCriterion.location.geoTargetConstant` (geo): **[Required, Implemented]** Resolved from `primaryServiceArea` via `resolvePrimaryGeoTargetConstant`; created via `createCampaignGeoTarget`; tracked as `ads_campaign_criterion` artifacts.
     *   `customConversionGoal.conversionActions`: **[Required]** Array of `ConversionAction` resource names.
     *   `conversionGoalCampaignConfig.customConversionGoal`: **[Required]** Resource name of `CustomConversionGoal`.
 
@@ -371,11 +372,91 @@ Google Ads automatically creates `CampaignConversionGoal` objects based on conve
 
 ## 7. Targeting
 
-(Currently, Zuggernaut uses a simple intent-based keyword and geographic targeting derived from `BusinessContext`. This section will expand as more sophisticated targeting capabilities are integrated.)
+Phase 10 implements keyword and geographic targeting on the **product path** (`adsAutoCampaignService.js`). Intent is validated before any Google mutate; unresolved geo fails with `ADS_INTENT_UNRESOLVED_GEO` (no default US fallback).
 
-*   **Keywords:** Keywords are generated from `BusinessContext` (e.g., primary service, service area) and are included in the `adGroup` context for campaign creation.
-    *   **Services:** [KeywordPlanService](https://developers.google.com/google-ads/api/reference/rpc/v24/KeywordPlanService), [AdGroupCriterionService](https://developers.google.com/google-ads/api/reference/rpc/v24/AdGroupCriterionService) (for negative keywords), [CampaignCriterionService](https://developers.google.com/google-ads/api/reference/rpc/v24/CampaignCriterionService) (for negative keywords).
-*   **Geographic Targeting:** Will utilize [GeoTargetConstantService](https://developers.google.com/google-ads/api/reference/rpc/v24/GeoTargetConstantService) to apply specific geographic targets based on the user's defined service areas, via `CampaignCriterionService`.
+### Orchestration order
+
+1. Validate `BusinessContext` + build/resolve `CampaignPlan.intent`
+2. `createCampaignBudget` → `ads_campaign_budget`
+3. `createCampaign` → `ads_campaign`
+4. `createCampaignGeoTarget` (per resolved `intent.geoTargets[]`) → `ads_campaign_criterion`
+5. `createAdGroup` → `ads_ad_group`
+6. `createAdGroupKeyword` (per `intent.keywords[]`) → `ads_keyword`
+7. `createResponsiveSearchAd` → `ads_ad`
+8. `createCustomConversionGoal` + `linkCampaignToCustomConversionGoal`
+
+### Keyword creation (`createAdGroupKeyword`)
+
+*   **Service:** [AdGroupCriterionService](https://developers.google.com/google-ads/api/reference/rpc/v24/AdGroupCriterionService)
+*   **Method:** `AdGroupCriterionService.MutateAdGroupCriteria`
+*   **Endpoint:** `customers/{customer_id}/adGroupCriteria:mutate`
+*   **Function:** `createAdGroupKeyword` in `backend/services/integrations/googleAdsCampaignClient.js`
+*   **Intent source:** `intent.keywords[]` — `{ text, matchType }` built from `BusinessContext` keyword seeds (default `PHRASE`).
+*   **Sample create payload:**
+    ```json
+    {
+      "operations": [
+        {
+          "create": {
+            "adGroup": "customers/1234567890/adGroups/ADGROUP_ID",
+            "status": "PAUSED",
+            "keyword": {
+              "text": "plumbing Springfield",
+              "matchType": "PHRASE"
+            }
+          }
+        }
+      ]
+    }
+    ```
+*   **Idempotency:** Logical keys `keyword_0`, `keyword_1`, …; GAQL search-by-text before create; artifact type `ads_keyword`.
+
+### Geographic targeting
+
+#### Resolve service area (`resolvePrimaryGeoTargetConstant`)
+
+*   **Service:** [GeoTargetConstantService](https://developers.google.com/google-ads/api/reference/rpc/v24/GeoTargetConstantService)
+*   **Method:** `GeoTargetConstantService.SuggestGeoTargetConstants`
+*   **Endpoint:** `customers/{customer_id}/geoTargetConstants:suggest`
+*   **Function:** `resolvePrimaryGeoTargetConstant` in `backend/services/integrations/googleAdsGeoTargetClient.js`
+*   **Input:** `primaryServiceArea` label from Ads-ready `BusinessContext`
+*   **Request body (V1):** `locale: "en"`, `countryCode: "US"`, `locationNames.names: [label]`
+*   **Selection:** Single suggestion wins; multiple matches require exact canonical match; otherwise `ADS_INTENT_UNRESOLVED_GEO`
+*   **Persisted on intent:** `geoTargets: [{ resourceName, label, canonicalName, targetType, countryCode }]`
+
+#### Apply location criterion (`createCampaignGeoTarget`)
+
+*   **Service:** [CampaignCriterionService](https://developers.google.com/google-ads/api/reference/rpc/v24/CampaignCriterionService)
+*   **Method:** `CampaignCriterionService.MutateCampaignCriteria`
+*   **Endpoint:** `customers/{customer_id}/campaignCriteria:mutate`
+*   **Function:** `createCampaignGeoTarget` in `backend/services/integrations/googleAdsCampaignClient.js`
+*   **Sample create payload:**
+    ```json
+    {
+      "operations": [
+        {
+          "create": {
+            "campaign": "customers/1234567890/campaigns/CAMPAIGN_ID",
+            "location": {
+              "geoTargetConstant": "geoTargetConstants/1014044"
+            }
+          }
+        }
+      ]
+    }
+    ```
+*   **Idempotency:** Logical key `geo_0`; GAQL search on campaign + geo constant before create; artifact type `ads_campaign_criterion`.
+
+### Structural verification gate
+
+Per `mvp_implementation_plan.md` Phase 10, `setupRun.workflow.js` calls `createAdsCampaignActivity` **only when** `runStructuralVerificationActivity` returns `outcome: 'pass'`. Non-pass outcomes (`snippet_pending`, `needs_tracking_fix`, `manual_review`) stop the workflow before campaign creation. When GTM is not configured, verification is skipped but still returns `pass`.
+
+### Real-mode verification
+
+*   **Checklist:** `dev-tools/docs/PHASE10_REAL_MODE_E2E_CHECKLIST.md`
+*   **Post-run script:** `npm run verify:phase10-setup-run -- <setupRunId>` (from `backend/`)
+*   **Evidence log:** `dev-tools/docs/evidence/PHASE10_REAL_MODE_E2E_EVIDENCE.md`
+
 
 ## 8. Monitoring & Reporting (Planned)
 
@@ -431,11 +512,13 @@ Idempotency is a core principle in Zuggernaut's Google Ads integration to ensure
     2.  If it exists, reuse the `externalId` and skip the API creation call.
     3.  If not, call the respective Google Ads API function (e.g., `createCampaign`), and then persist the resulting `resourceName` as a new `IntegrationArtifact`.
 
-**Artifact Types Tracked (`backend/constants/enums.js`):**
+**Artifact Types Tracked (`backend/constants/enums.js` + `idempotency.js`):**
 
 *   `ads_campaign_budget`
 *   `ads_campaign`
+*   `ads_campaign_criterion` (location / geo)
 *   `ads_ad_group`
+*   `ads_keyword`
 *   `ads_ad`
 *   `ads_conversion_action` (for discovered/created actions)
 *   `ads_custom_conversion_goal`
@@ -445,8 +528,10 @@ Idempotency is a core principle in Zuggernaut's Google Ads integration to ensure
 
 Google Ads API errors are critical to handle gracefully.
 
-*   **`GoogleAdsApiError`:** Our custom error class (`backend/services/integrations/googleAdsApiConfig.js`) wraps API-specific errors, providing a consistent structure with `message` and `code` (e.g., `GOOGLE_ADS_MUTATE_FAILED`, `GOOGLE_ADS_RSA_INVALID`).
-*   **Non-Retryable Failures:** Many `INVALID_ARGUMENT` errors are non-retryable application failures (`nonRetryable: true`) as they require code changes or user input rather than simply retrying the same request.
+*   **`GoogleAdsApiError`:** Custom error class (`backend/services/integrations/googleAdsApiConfig.js`) with `message`, `code`, and optional `details` (field violations, request ID).
+*   **`AdsProviderPreconditionError`:** Pre-mutate failures (readiness, intent validation, missing conversions). Surfaced on `ads_campaign_creation` with `details.code` and `details.validationBucket` (`campaign`, `ad`, `keywords`, `geo`, `conversions`, `readiness`, `provider`, `preconditions`).
+*   **Intent codes:** Stable `ADS_INTENT_*` codes in `backend/constants/adsCampaignIntent.js`; mapped to buckets via `ADS_INTENT_VALIDATION_BUCKETS`.
+*   **Non-Retryable Failures:** `ApplicationFailure.nonRetryable` for precondition and `INVALID_ARGUMENT` class errors.
 *   **Logging:** Detailed logging (using `pino`) captures `setupRunId`, `businessId`, `stepName`, and `provider` to aid in debugging workflow failures.
 
 ### Troubleshooting `INVALID_ARGUMENT` for Campaign Creation
@@ -469,13 +554,14 @@ This section maps relevant parts of this guide to the `dev-tools/docs/REAL_MODE_
 *   **Prerequisites & Account Setup:** Directly maps to the "Prerequisites (live stack)" section of the E2E checklist (e.g., `GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_LOGIN_CUSTOMER_ID`).
 *   **Authentication & Authorization:** Covered by the "Register / log in (real session cookie)" and "Connect Google Ads via real OAuth" steps in the E2E checklist's "Happy path" section.
 *   **Account Provisioning & Linking:** Validated by reaching `ADS_PROVISIONING_REQUIRED` terminal state and successful provisioning in the "Provisioning consent" section.
-*   **Campaign Lifecycle - Creation & Management:** The successful execution of `createCampaign`, `createAdGroup`, `createResponsiveSearchAd` are central to the E2E checklist's "Happy path" under "Start setup run → workflow progresses". Failures in these steps directly manifest as a `BLOCKED` status in the checklist.
-*   **Conversion Tracking - Setup & Linkage:** The successful creation of custom conversion goals and their linkage to campaigns is part of the "Happy path" and ensures `CONVERSION_CATALOG_READY` and subsequent `ads_campaign_creation` success.
-*   **Idempotency & Artifacts:** Directly validated by the "Retries do not duplicate artifacts" item in the "Acceptance criteria" and "Guardrails" sections of the E2E checklist.
+*   **Campaign Lifecycle - Creation & Management:** Successful `createAdsCampaign` path creates budget, campaign, geo criteria, ad group, keywords, RSA, and conversion goal linkage. See [`PHASE10_REAL_MODE_E2E_CHECKLIST.md`](../dev-tools/docs/PHASE10_REAL_MODE_E2E_CHECKLIST.md).
+*   **Targeting (keywords + geo):** Validated by `ads_keyword` and `ads_campaign_criterion` artifacts; post-run `npm run verify:phase10-setup-run`.
+*   **Structural gate:** Workflow blocks Ads when structural verification does not pass.
+*   **Idempotency & Artifacts:** Validated by retry runs and `npm test` idempotency suites.
 
 ## 12. Known Open Gaps & Future Work
 
-*   **Targeting Refinement:** Expand keyword and geographic targeting beyond basic intent. Implement more sophisticated criteria management (e.g., negative keywords, audience segments).
+*   **Advanced targeting:** Negative keywords, audience segments, ad schedule criteria (diagnostics-only today).
 *   **Campaign Modification:** Currently, Zuggernaut focuses on initial campaign creation. Future work includes updating existing campaigns (e.g., budget changes, bidding strategy adjustments).
 *   **Ad Extensions:** Integration of ad extensions (sitelinks, callouts, call assets) for richer ad formats.
 *   **Reporting & Monitoring:** Full implementation of GAQL-based reporting and dashboard integration for ongoing campaign performance monitoring.
@@ -510,3 +596,6 @@ This section maps relevant parts of this guide to the `dev-tools/docs/REAL_MODE_
     *   `backend/services/integrations/googleTokenService.js`
     *   `backend/constants/enums.js`
     *   `backend/constants/idempotency.js`
+    *   `backend/services/integrations/googleAdsGeoTargetClient.js`
+    *   `backend/services/capabilities/adsCampaignIntentService.js`
+    *   `dev-tools/docs/PHASE10_REAL_MODE_E2E_CHECKLIST.md`

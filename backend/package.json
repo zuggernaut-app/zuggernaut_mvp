@@ -25,6 +25,7 @@
     "temporal:worker": "node scripts/temporal-worker.js",
     "temporal:demo-workflow": "node scripts/temporal-demo-workflow.js",
     "verify:real-mode-env": "node ../dev-tools/backend/scripts/verify-real-mode-env.js",
+    "verify:phase10-setup-run": "node ../dev-tools/backend/scripts/verify-phase10-setup-run.js",
     "test": "jest --runInBand",
     "ci": "npm test"
   },

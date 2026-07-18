@@ -15,6 +15,7 @@ const {
   hasRequiredIdentifiers,
   getMissingIdentifierKeys,
 } = require('../integrations/providerDiscoveryResult');
+const { getEffectiveAdsDiscoveryReason } = require('../integrations/googleAdsAccountClient');
 const { getFreshGoogleAccessToken, REFRESH_BUFFER_MS } = require('../integrations/googleTokenService');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
@@ -31,6 +32,7 @@ const CONNECTION_REASON = Object.freeze({
   PROVISIONING_REQUIRED: 'provisioning_required',
   SELECTION_REQUIRED: 'selection_required',
   GTM_ACCOUNT_REQUIRED: 'gtm_account_required',
+  ADS_CUSTOMER_REQUIRED: 'ads_customer_not_found',
 });
 
 const REQUIRED_FOR_SETUP = REQUIRED_FOR_SETUP_PROVIDERS;
@@ -111,6 +113,20 @@ function buildGtmAccountRequiredStatus(base, identifiers) {
 
 /**
  * @param {object} base
+ * @param {object | null | undefined} identifiers
+ */
+function buildAdsCustomerRequiredStatus(base, identifiers) {
+  return {
+    ...base,
+    ready: false,
+    reason: CONNECTION_REASON.ADS_CUSTOMER_REQUIRED,
+    nextAction: 'create_google_ads_account_manually',
+    identifiersMissing: getMissingIdentifierKeys('google_ads', identifiers),
+  };
+}
+
+/**
+ * @param {object} base
  * @param {string} provider
  * @param {{ connectionHealth?: string | null, providerIdentifiers?: object | null }} row
  */
@@ -121,6 +137,14 @@ function resolveIdentifierReadinessStatus(base, provider, row) {
     !hasRequiredIdentifiers(provider, row.providerIdentifiers)
   ) {
     return buildGtmAccountRequiredStatus(base, row.providerIdentifiers);
+  }
+
+  if (
+    provider === 'google_ads' &&
+    getEffectiveAdsDiscoveryReason(row.providerIdentifiers) === 'ADS_CUSTOMER_NOT_FOUND' &&
+    !hasRequiredIdentifiers(provider, row.providerIdentifiers)
+  ) {
+    return buildAdsCustomerRequiredStatus(base, row.providerIdentifiers);
   }
 
   if (

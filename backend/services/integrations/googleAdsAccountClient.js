@@ -305,6 +305,20 @@ async function describeAccessibleGoogleAdsCustomers(accessToken, customerIds) {
 }
 
 /**
+ * When listAccessibleCustomers returns zero rows, discovery records ADS_CUSTOMER_NOT_FOUND.
+ * Setup flows escalate to ADS_PROVISIONING_REQUIRED when an MCC login customer is configured.
+ *
+ * @param {object | null | undefined} providerIdentifiers
+ */
+function getEffectiveAdsDiscoveryReason(providerIdentifiers) {
+  const raw = providerIdentifiers?.discoveryReason ?? null;
+  if (raw === 'ADS_CUSTOMER_NOT_FOUND' && getGoogleAdsLoginCustomerId()) {
+    return 'ADS_PROVISIONING_REQUIRED';
+  }
+  return raw;
+}
+
+/**
  * Read-only Google Ads customer discovery — never creates or links customers.
  * Does not auto-select customerId; user must choose via resource selection.
  *
@@ -317,7 +331,7 @@ async function discoverGoogleAdsProviderIdentifiers(accessToken) {
     if (customerIds.length === 0) {
       return buildDiscoveryResult('google_ads', {
         accessibleCustomerIds: [],
-        discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+        discoveryReason: 'ADS_CUSTOMER_NOT_FOUND',
       });
     }
 
@@ -706,6 +720,7 @@ async function acceptCustomerManagerLink(accessToken, clientCustomerId, managerC
 
 module.exports = {
   GoogleAdsAccountError,
+  getEffectiveAdsDiscoveryReason,
   normalizeCustomerId,
   customerIdFromResourceName,
   getGoogleAdsLoginCustomerId,

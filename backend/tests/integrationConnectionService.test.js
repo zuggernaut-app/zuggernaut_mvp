@@ -129,6 +129,34 @@ describe('integrationConnectionService', () => {
     expect(s.identifiersMissing).toEqual(['customerId']);
   });
 
+  it('returns ads_customer_not_found when discovery found no accessible customers without MCC', async () => {
+    const priorLogin = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const user = await User.create({ email: 'ics-ads-not-found@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: ['https://www.googleapis.com/auth/adwords'],
+      providerIdentifiers: { discoveryReason: 'ADS_CUSTOMER_NOT_FOUND', accessibleCustomerIds: [] },
+    });
+
+    const s = await getConnectionStatus(bc.businessId, 'google_ads');
+    expect(s.ready).toBe(false);
+    expect(s.reason).toBe(CONNECTION_REASON.ADS_CUSTOMER_REQUIRED);
+    expect(s.nextAction).toBe('create_google_ads_account_manually');
+
+    if (priorLogin) process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = priorLogin;
+  });
+
   it('returns ok when GTM has all required identifiers', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');

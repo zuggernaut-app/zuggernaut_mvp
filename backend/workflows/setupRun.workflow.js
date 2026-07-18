@@ -207,6 +207,29 @@ async function setupRunWorkflow(input) {
     businessId: load.businessId,
   });
 
+  // Phase 10 strict gate (mvp_implementation_plan.md): Ads creation runs only after
+  // structural verification passes. Optional GTM (skipped verification) still returns pass.
+  if (verify.outcome !== 'pass') {
+    const terminal =
+      verify.outcome === 'snippet_pending'
+        ? T.SNIPPET_PENDING
+        : verify.outcome === 'needs_tracking_fix'
+          ? T.NEEDS_TRACKING_FIX
+          : verify.outcome === 'manual_review'
+            ? T.MANUAL_REVIEW
+            : T.FAILED;
+
+    return {
+      workflow: 'setupRunWorkflow',
+      terminal,
+      setupRunId: load.setupRunId,
+      gbp,
+      manage,
+      verify,
+      ads: null,
+    };
+  }
+
   const ads = await createAdsCampaignActivity({
     setupRunId: load.setupRunId,
     businessId: load.businessId,

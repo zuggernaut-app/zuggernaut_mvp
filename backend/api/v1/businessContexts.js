@@ -11,6 +11,9 @@ const {
   MAX_SINGLE_LINE_FIELD,
 } = require('../../lib/validation');
 const { BUSINESS_CONTEXT_CONFIRM_REQUIRED } = require('../../constants/onboarding');
+const {
+  validateBusinessContextAdsReadiness,
+} = require('../../services/capabilities/businessContextAdsReadinessService');
 
 const router = express.Router();
 
@@ -65,6 +68,7 @@ router.get('/:businessId', requireAuth, async (req, res) => {
 
   return res.status(200).json({
     businessContext: serializeBusinessContext(doc),
+    adsReadiness: validateBusinessContextAdsReadiness(doc),
   });
 });
 
@@ -184,6 +188,7 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
 
   return res.status(200).json({
     businessContext: serializeBusinessContext(doc),
+    adsReadiness: validateBusinessContextAdsReadiness(doc.toObject()),
   });
 });
 

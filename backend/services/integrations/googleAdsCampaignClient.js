@@ -30,6 +30,7 @@ function mockResourceName(customerId, collection, logicalKey) {
 async function createCampaignBudget(ctx) {
   const { customerId, setupRunId, intent } = ctx;
   const logicalKey = `zug-budget-${setupRunId}`;
+  const budget = intent.campaign?.budget ?? intent.budget;
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -53,8 +54,8 @@ async function createCampaignBudget(ctx) {
       operations: [
         {
           create: {
-            name: intent.budget.name,
-            amountMicros: String(intent.budget.amountMicros),
+            name: budget.name,
+            amountMicros: String(budget.amountMicros),
             deliveryMethod: 'STANDARD',
             explicitlyShared: false,
           },
@@ -133,6 +134,7 @@ function collectUniqueRsaTexts(candidates, maxChars, maxCount) {
  *   descriptions?: string[],
  *   fallbacks?: { businessName?: string },
  *   status?: string,
+ *   strict?: boolean,
  * }} input
  */
 function buildResponsiveSearchAdCreatePayload(input) {
@@ -141,39 +143,42 @@ function buildResponsiveSearchAdCreatePayload(input) {
     throw new GoogleAdsApiError('Responsive search ad requires a final URL.', 'GOOGLE_ADS_RSA_INVALID');
   }
 
-  const businessName = truncateRsaText(input.fallbacks?.businessName, RSA_HEADLINE_MAX_CHARS);
-  const headlineFallbacks = [
-    businessName,
-    'Learn More Today',
-    'Contact Us Now',
-    'Get Started Today',
-  ];
-  const descriptionFallbacks = [
-    businessName ? `Visit ${businessName} online today.` : null,
-    'Visit our website to learn more.',
-    'Contact us today for more information.',
-  ].filter(Boolean);
-
   let headlines = collectUniqueRsaTexts(input.headlines ?? [], RSA_HEADLINE_MAX_CHARS, RSA_MAX_HEADLINES);
-  if (headlines.length < RSA_MIN_HEADLINES) {
-    headlines = collectUniqueRsaTexts(
-      [...headlines, ...headlineFallbacks],
-      RSA_HEADLINE_MAX_CHARS,
-      RSA_MAX_HEADLINES
-    );
-  }
-
   let descriptions = collectUniqueRsaTexts(
     input.descriptions ?? [],
     RSA_DESCRIPTION_MAX_CHARS,
     RSA_MAX_DESCRIPTIONS
   );
-  if (descriptions.length < RSA_MIN_DESCRIPTIONS) {
-    descriptions = collectUniqueRsaTexts(
-      [...descriptions, ...descriptionFallbacks],
-      RSA_DESCRIPTION_MAX_CHARS,
-      RSA_MAX_DESCRIPTIONS
-    );
+
+  if (!input.strict) {
+    const businessName = truncateRsaText(input.fallbacks?.businessName, RSA_HEADLINE_MAX_CHARS);
+    const headlineFallbacks = [
+      businessName,
+      'Learn More Today',
+      'Contact Us Now',
+      'Get Started Today',
+    ];
+    const descriptionFallbacks = [
+      businessName ? `Visit ${businessName} online today.` : null,
+      'Visit our website to learn more.',
+      'Contact us today for more information.',
+    ].filter(Boolean);
+
+    if (headlines.length < RSA_MIN_HEADLINES) {
+      headlines = collectUniqueRsaTexts(
+        [...headlines, ...headlineFallbacks],
+        RSA_HEADLINE_MAX_CHARS,
+        RSA_MAX_HEADLINES
+      );
+    }
+
+    if (descriptions.length < RSA_MIN_DESCRIPTIONS) {
+      descriptions = collectUniqueRsaTexts(
+        [...descriptions, ...descriptionFallbacks],
+        RSA_DESCRIPTION_MAX_CHARS,
+        RSA_MAX_DESCRIPTIONS
+      );
+    }
   }
 
   if (headlines.length < RSA_MIN_HEADLINES || descriptions.length < RSA_MIN_DESCRIPTIONS) {
@@ -411,10 +416,11 @@ async function createCampaign(ctx) {
   }
 
   const normalizedCustomerId = normalizeCustomerId(customerId);
+  const campaignName = intent.campaign?.name ?? intent.campaignName;
   const lookupCtx = {
     businessId: ctx.businessId,
     customerId: normalizedCustomerId,
-    campaignName: intent.campaignName,
+    campaignName,
   };
 
   const existingResourceName = await findExistingCampaignResourceNameByName(lookupCtx);
@@ -430,7 +436,7 @@ async function createCampaign(ctx) {
       operations: [
         {
           create: buildSearchCampaignCreatePayload({
-            name: intent.campaignName,
+            name: campaignName,
             campaignBudget: budgetResourceName,
           }),
         },
@@ -479,10 +485,11 @@ async function createAdGroup(ctx) {
   }
 
   const normalizedCustomerId = normalizeCustomerId(customerId);
+  const adGroupName = intent.adGroup?.name ?? intent.adGroupName;
   const lookupCtx = {
     businessId: ctx.businessId,
     customerId: normalizedCustomerId,
-    adGroupName: intent.adGroupName,
+    adGroupName,
     campaignResourceName,
   };
 
@@ -499,9 +506,9 @@ async function createAdGroup(ctx) {
       operations: [
         {
           create: {
-            name: intent.adGroupName,
+            name: adGroupName,
             campaign: campaignResourceName,
-            status: 'ENABLED',
+            status: 'PAUSED',
             type: 'SEARCH_STANDARD',
           },
         },
@@ -520,6 +527,399 @@ async function createAdGroup(ctx) {
   } catch (err) {
     if (err instanceof GoogleAdsApiError && isDuplicateAdGroupNameError(err)) {
       const recovered = await findExistingAdGroupResourceNameByName(lookupCtx);
+      if (recovered) {
+        return { resourceName: recovered, source: 'google_ads_api_reused' };
+      }
+    }
+    throw err;
+  }
+}
+
+const ALLOWED_KEYWORD_MATCH_TYPES = new Set(['PHRASE', 'EXACT', 'BROAD']);
+
+/**
+ * @param {{
+ *   adGroupResourceName: string,
+ *   keywordText: string,
+ *   matchType: string,
+ * }} input
+ */
+function buildAdGroupKeywordCreatePayload(input) {
+  const adGroupResourceName = String(input.adGroupResourceName ?? '').trim();
+  const keywordText = String(input.keywordText ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const matchType = String(input.matchType ?? '').trim();
+
+  if (!adGroupResourceName) {
+    throw new GoogleAdsApiError('Ad group resource name is required for keyword create.', 'GOOGLE_ADS_KEYWORD_INVALID');
+  }
+  if (!keywordText) {
+    throw new GoogleAdsApiError('Keyword text is required.', 'GOOGLE_ADS_KEYWORD_INVALID');
+  }
+  if (!ALLOWED_KEYWORD_MATCH_TYPES.has(matchType)) {
+    throw new GoogleAdsApiError(
+      'Keyword match type must be PHRASE, EXACT, or BROAD.',
+      'GOOGLE_ADS_KEYWORD_INVALID'
+    );
+  }
+
+  return {
+    adGroup: adGroupResourceName,
+    status: 'PAUSED',
+    keyword: {
+      text: keywordText,
+      matchType,
+    },
+  };
+}
+
+/**
+ * @param {string} adGroupResourceName
+ * @param {string} keywordText
+ * @param {string} matchType
+ */
+function buildFindKeywordByTextQuery(adGroupResourceName, keywordText, matchType) {
+  const escapedGroup = escapeGaqlLiteral(adGroupResourceName);
+  const escapedText = escapeGaqlLiteral(keywordText);
+  return [
+    'SELECT ad_group_criterion.resource_name',
+    'FROM ad_group_criterion',
+    `WHERE ad_group.resource_name = '${escapedGroup}'`,
+    "AND ad_group_criterion.type = 'KEYWORD'",
+    `AND ad_group_criterion.keyword.text = '${escapedText}'`,
+    `AND ad_group_criterion.keyword.match_type = '${matchType}'`,
+    "AND ad_group_criterion.status IN ('ENABLED', 'PAUSED')",
+    'LIMIT 1',
+  ].join('\n');
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.customerId
+ * @param {string} ctx.adGroupResourceName
+ * @param {string} ctx.keywordText
+ * @param {string} ctx.matchType
+ * @returns {Promise<string | null>}
+ */
+async function findExistingAdGroupKeywordResourceNameByText(ctx) {
+  const { businessId, customerId: customerIdInput, adGroupResourceName, keywordText, matchType } = ctx;
+  const customerId = normalizeCustomerId(customerIdInput);
+  const text = String(keywordText ?? '').trim();
+  const mt = String(matchType ?? '').trim();
+
+  if (!customerId || !String(adGroupResourceName ?? '').trim() || !text || !ALLOWED_KEYWORD_MATCH_TYPES.has(mt)) {
+    return null;
+  }
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
+  const res = await axios.post(
+    url,
+    { query: buildFindKeywordByTextQuery(adGroupResourceName, text, mt) },
+    {
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_KEYWORD_SEARCH_FAILED',
+      {
+        label: 'Google Ads keyword search by text',
+        action: 'googleAds:search',
+        customerIds: [customerId],
+      }
+    );
+  }
+
+  const results = Array.isArray(res.data?.results) ? res.data.results : [];
+  const resourceName = results[0]?.adGroupCriterion?.resourceName;
+  return typeof resourceName === 'string' && resourceName.trim() ? resourceName.trim() : null;
+}
+
+/**
+ * @param {GoogleAdsApiError} err
+ */
+function isDuplicateKeywordError(err) {
+  const violations = err.details?.fieldViolations ?? [];
+  if (violations.some((v) => /DUPLICATE|ALREADY_EXISTS|CRITERION_ALREADY_EXISTS/i.test(v.description ?? ''))) {
+    return true;
+  }
+
+  const adsErrors = err.details?.googleAdsErrors ?? [];
+  return adsErrors.some(
+    (e) =>
+      /DUPLICATE|ALREADY_EXISTS|CRITERION_ALREADY_EXISTS/i.test(e.errorCode ?? '') ||
+      /DUPLICATE|already exists/i.test(e.message ?? '')
+  );
+}
+
+/**
+ * @param {object} ctx
+ * @param {string} ctx.adGroupResourceName
+ * @param {string} ctx.keywordText
+ * @param {string} ctx.matchType
+ * @param {number} ctx.keywordIndex
+ */
+async function createAdGroupKeyword(ctx) {
+  const {
+    customerId,
+    setupRunId,
+    adGroupResourceName,
+    keywordText,
+    matchType,
+    keywordIndex,
+  } = ctx;
+  const logicalKey = `zug-kw-${setupRunId}-${keywordIndex}`;
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      resourceName: mockResourceName(customerId, 'adGroupCriteria', logicalKey),
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError(
+      'Google Ads API is not enabled (set GOOGLE_ADS_API_ENABLED=true after configuring credentials).',
+      'GOOGLE_ADS_API_NOT_ENABLED'
+    );
+  }
+
+  const normalizedCustomerId = normalizeCustomerId(customerId);
+  const lookupCtx = {
+    businessId: ctx.businessId,
+    customerId: normalizedCustomerId,
+    adGroupResourceName,
+    keywordText,
+    matchType,
+  };
+
+  const existingResourceName = await findExistingAdGroupKeywordResourceNameByText(lookupCtx);
+  if (existingResourceName) {
+    return { resourceName: existingResourceName, source: 'google_ads_api_reused' };
+  }
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedCustomerId}/adGroupCriteria:mutate`);
+  const res = await axios.post(
+    url,
+    {
+      operations: [
+        {
+          create: buildAdGroupKeywordCreatePayload({
+            adGroupResourceName,
+            keywordText,
+            matchType,
+          }),
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  try {
+    const resourceName = extractMutateResourceName(res, 'ad group keyword', normalizedCustomerId);
+    return { resourceName, source: 'google_ads_api' };
+  } catch (err) {
+    if (err instanceof GoogleAdsApiError && isDuplicateKeywordError(err)) {
+      const recovered = await findExistingAdGroupKeywordResourceNameByText(lookupCtx);
+      if (recovered) {
+        return { resourceName: recovered, source: 'google_ads_api_reused' };
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * @param {{
+ *   campaignResourceName: string,
+ *   geoTargetConstant: string,
+ * }} input
+ */
+function buildCampaignGeoTargetCreatePayload(input) {
+  const campaignResourceName = String(input.campaignResourceName ?? '').trim();
+  const geoTargetConstant = String(input.geoTargetConstant ?? '').trim();
+
+  if (!campaignResourceName) {
+    throw new GoogleAdsApiError(
+      'Campaign resource name is required for geo target create.',
+      'GOOGLE_ADS_GEO_CRITERION_INVALID'
+    );
+  }
+  if (!geoTargetConstant) {
+    throw new GoogleAdsApiError(
+      'Geo target constant resource name is required.',
+      'GOOGLE_ADS_GEO_CRITERION_INVALID'
+    );
+  }
+
+  return {
+    campaign: campaignResourceName,
+    location: {
+      geoTargetConstant,
+    },
+  };
+}
+
+/**
+ * @param {string} campaignResourceName
+ * @param {string} geoTargetConstant
+ */
+function buildFindCampaignGeoTargetQuery(campaignResourceName, geoTargetConstant) {
+  const escapedCampaign = escapeGaqlLiteral(campaignResourceName);
+  const escapedGeo = escapeGaqlLiteral(geoTargetConstant);
+  return [
+    'SELECT campaign_criterion.resource_name',
+    'FROM campaign_criterion',
+    `WHERE campaign.resource_name = '${escapedCampaign}'`,
+    "AND campaign_criterion.type = 'LOCATION'",
+    `AND campaign_criterion.location.geo_target_constant = '${escapedGeo}'`,
+    "AND campaign_criterion.status IN ('ENABLED', 'PAUSED')",
+    'LIMIT 1',
+  ].join('\n');
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.customerId
+ * @param {string} ctx.campaignResourceName
+ * @param {string} ctx.geoTargetConstant
+ * @returns {Promise<string | null>}
+ */
+async function findExistingCampaignGeoTargetResourceName(ctx) {
+  const { businessId, customerId: customerIdInput, campaignResourceName, geoTargetConstant } = ctx;
+  const customerId = normalizeCustomerId(customerIdInput);
+  const campaign = String(campaignResourceName ?? '').trim();
+  const geo = String(geoTargetConstant ?? '').trim();
+
+  if (!customerId || !campaign || !geo) {
+    return null;
+  }
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
+  const res = await axios.post(
+    url,
+    { query: buildFindCampaignGeoTargetQuery(campaign, geo) },
+    {
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_GEO_CRITERION_SEARCH_FAILED',
+      {
+        label: 'Google Ads campaign geo criterion search',
+        action: 'googleAds:search',
+        customerIds: [customerId],
+      }
+    );
+  }
+
+  const results = Array.isArray(res.data?.results) ? res.data.results : [];
+  const resourceName = results[0]?.campaignCriterion?.resourceName;
+  return typeof resourceName === 'string' && resourceName.trim() ? resourceName.trim() : null;
+}
+
+/**
+ * @param {GoogleAdsApiError} err
+ */
+function isDuplicateCampaignGeoTargetError(err) {
+  const violations = err.details?.fieldViolations ?? [];
+  if (violations.some((v) => /DUPLICATE|ALREADY_EXISTS|CRITERION_ALREADY_EXISTS/i.test(v.description ?? ''))) {
+    return true;
+  }
+
+  const adsErrors = err.details?.googleAdsErrors ?? [];
+  return adsErrors.some(
+    (e) =>
+      /DUPLICATE|ALREADY_EXISTS|CRITERION_ALREADY_EXISTS/i.test(e.errorCode ?? '') ||
+      /DUPLICATE|already exists/i.test(e.message ?? '')
+  );
+}
+
+/**
+ * @param {object} ctx
+ * @param {string} ctx.campaignResourceName
+ * @param {string} ctx.geoTargetConstant
+ * @param {number} ctx.geoIndex
+ */
+async function createCampaignGeoTarget(ctx) {
+  const { customerId, setupRunId, campaignResourceName, geoTargetConstant, geoIndex } = ctx;
+  const logicalKey = `zug-geo-${setupRunId}-${geoIndex}`;
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      resourceName: mockResourceName(customerId, 'campaignCriteria', logicalKey),
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError(
+      'Google Ads API is not enabled (set GOOGLE_ADS_API_ENABLED=true after configuring credentials).',
+      'GOOGLE_ADS_API_NOT_ENABLED'
+    );
+  }
+
+  const normalizedCustomerId = normalizeCustomerId(customerId);
+  const lookupCtx = {
+    businessId: ctx.businessId,
+    customerId: normalizedCustomerId,
+    campaignResourceName,
+    geoTargetConstant,
+  };
+
+  const existingResourceName = await findExistingCampaignGeoTargetResourceName(lookupCtx);
+  if (existingResourceName) {
+    return { resourceName: existingResourceName, source: 'google_ads_api_reused' };
+  }
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedCustomerId}/campaignCriteria:mutate`);
+  const res = await axios.post(
+    url,
+    {
+      operations: [
+        {
+          create: buildCampaignGeoTargetCreatePayload({
+            campaignResourceName,
+            geoTargetConstant,
+          }),
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  try {
+    const resourceName = extractMutateResourceName(res, 'campaign geo target', normalizedCustomerId);
+    return { resourceName, source: 'google_ads_api' };
+  } catch (err) {
+    if (err instanceof GoogleAdsApiError && isDuplicateCampaignGeoTargetError(err)) {
+      const recovered = await findExistingCampaignGeoTargetResourceName(lookupCtx);
       if (recovered) {
         return { resourceName: recovered, source: 'google_ads_api_reused' };
       }
@@ -554,7 +954,7 @@ async function createResponsiveSearchAd(ctx) {
             finalUrl: intent.ad.finalUrl,
             headlines: intent.ad.headlines,
             descriptions: intent.ad.descriptions,
-            fallbacks: { businessName: intent.businessName ?? intent.campaignName?.split(' — ')[0] },
+            strict: true,
           }),
         },
       ],
@@ -728,6 +1128,85 @@ function buildConversionGoalCampaignConfigUpdateOperation(input) {
 }
 
 /**
+ * GAQL to find a custom conversion goal by exact name.
+ *
+ * @param {string} goalName
+ */
+function buildFindCustomConversionGoalByNameQuery(goalName) {
+  const escaped = escapeGaqlLiteral(goalName);
+  return [
+    'SELECT custom_conversion_goal.resource_name, custom_conversion_goal.name',
+    'FROM custom_conversion_goal',
+    `WHERE custom_conversion_goal.name = '${escaped}'`,
+    'LIMIT 1',
+  ].join('\n');
+}
+
+/**
+ * @param {GoogleAdsApiError} err
+ */
+function isCustomGoalDuplicateNameError(err) {
+  const googleAdsErrors = err?.details?.googleAdsErrors ?? [];
+  const message = String(err?.message ?? '');
+
+  const family = 'customConversionGoalError';
+  const value = 'CUSTOM_GOAL_DUPLICATE_NAME';
+
+  const structured = googleAdsErrors.some((e) => {
+    const code = String(e?.errorCode ?? '');
+    return code.includes(`${family}:${value}`);
+  });
+
+  const scopedFallback = message.includes(`${family}:${value}`);
+
+  return structured || scopedFallback;
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.customerId
+ * @param {string} ctx.goalName
+ * @returns {Promise<string | null>}
+ */
+async function findExistingCustomConversionGoalResourceNameByName(ctx) {
+  const { businessId, customerId: customerIdInput, goalName } = ctx;
+  const customerId = normalizeCustomerId(customerIdInput);
+  if (!customerId || !String(goalName ?? '').trim()) {
+    return null;
+  }
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
+  const res = await axios.post(
+    url,
+    { query: buildFindCustomConversionGoalByNameQuery(goalName) },
+    {
+      headers: buildGoogleAdsHeaders(accessToken),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_CUSTOM_CONVERSION_GOAL_SEARCH_FAILED',
+      {
+        label: 'Google Ads custom conversion goal search by name',
+        action: 'googleAds:search',
+        customerIds: [customerId],
+      }
+    );
+  }
+
+  const results = Array.isArray(res.data?.results) ? res.data.results : [];
+  const resourceName = results[0]?.customConversionGoal?.resourceName;
+  return typeof resourceName === 'string' && resourceName.trim() ? resourceName.trim() : null;
+}
+
+/**
  * @param {object} ctx
  * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
  * @param {string} ctx.customerId
@@ -753,8 +1232,20 @@ async function createCustomConversionGoal(ctx) {
     };
   }
 
+  const normalizedCustomerId = normalizeCustomerId(customerId);
+  const lookupCtx = {
+    businessId: ctx.businessId,
+    customerId: normalizedCustomerId,
+    goalName: name,
+  };
+
+  const existingResourceName = await findExistingCustomConversionGoalResourceNameByName(lookupCtx);
+  if (existingResourceName) {
+    return { resourceName: existingResourceName, source: 'google_ads_api_reused' };
+  }
+
   const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
-  const url = buildGoogleAdsApiUrl(`customers/${customerId}/customConversionGoals:mutate`);
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedCustomerId}/customConversionGoals:mutate`);
   const res = await axios.post(
     url,
     {
@@ -774,8 +1265,18 @@ async function createCustomConversionGoal(ctx) {
     }
   );
 
-  const resourceName = extractMutateResourceName(res, 'custom conversion goal', customerId);
-  return { resourceName, source: 'google_ads_api' };
+  try {
+    const resourceName = extractMutateResourceName(res, 'custom conversion goal', normalizedCustomerId);
+    return { resourceName, source: 'google_ads_api' };
+  } catch (err) {
+    if (err instanceof GoogleAdsApiError && isCustomGoalDuplicateNameError(err)) {
+      const recovered = await findExistingCustomConversionGoalResourceNameByName(lookupCtx);
+      if (recovered) {
+        return { resourceName: recovered, source: 'google_ads_api_reused' };
+      }
+    }
+    throw err;
+  }
 }
 
 /**
@@ -833,15 +1334,22 @@ module.exports = {
   escapeGaqlLiteral,
   buildFindCampaignByNameQuery,
   buildFindAdGroupByNameQuery,
+  buildFindKeywordByTextQuery,
+  buildFindCampaignGeoTargetQuery,
+  buildAdGroupKeywordCreatePayload,
+  buildCampaignGeoTargetCreatePayload,
   buildResponsiveSearchAdCreatePayload,
   buildSearchCampaignCreatePayload,
   buildCustomConversionGoalCreatePayload,
   buildConversionGoalCampaignConfigUpdateOperation,
+  buildFindCustomConversionGoalByNameQuery,
   resolveConversionActionResourceName,
   truncateRsaText,
   createCampaignBudget: (ctx) => withProviderRateLimit('google_ads', () => createCampaignBudget(ctx)),
   createCampaign: (ctx) => withProviderRateLimit('google_ads', () => createCampaign(ctx)),
   createAdGroup: (ctx) => withProviderRateLimit('google_ads', () => createAdGroup(ctx)),
+  createAdGroupKeyword: (ctx) => withProviderRateLimit('google_ads', () => createAdGroupKeyword(ctx)),
+  createCampaignGeoTarget: (ctx) => withProviderRateLimit('google_ads', () => createCampaignGeoTarget(ctx)),
   createResponsiveSearchAd: (ctx) => withProviderRateLimit('google_ads', () => createResponsiveSearchAd(ctx)),
   createCustomConversionGoal: (ctx) =>
     withProviderRateLimit('google_ads', () => createCustomConversionGoal(ctx)),

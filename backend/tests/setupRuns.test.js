@@ -34,7 +34,16 @@ describe('setup-runs API', () => {
       .post(`/api/v1/onboarding/business/${bid}/scrape`)
       .send({ websiteUrl: 'https://example.com' })
       .expect(202);
-    await agent.put(`/api/v1/business-contexts/${bid}`).send({ businessName: 'Co' }).expect(200);
+    await agent
+      .put(`/api/v1/business-contexts/${bid}`)
+      .send({
+        businessName: 'Co',
+        websiteUrl: 'https://example.com',
+        services: ['Example service'],
+        serviceAreas: ['Local area'],
+        goals: { primary: 'both' },
+      })
+      .expect(200);
     return { agent, bid };
   }
 
@@ -63,6 +72,22 @@ describe('setup-runs API', () => {
     const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
 
     expect(res.body.error).toBe('precondition_failed');
+  });
+
+  it('400 when confirmed business context is not ads-ready', async () => {
+    const { agent } = await registerAgent(app, 'sr_not_ready@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+    const bid = draft.body.businessId;
+    await agent
+      .put(`/api/v1/business-contexts/${bid}`)
+      .send({ businessName: 'Co' })
+      .expect(200);
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(400);
+
+    expect(res.body.error).toBe('validation_error');
+    expect(Array.isArray(res.body.issues)).toBe(true);
+    expect(res.body.issues.length).toBeGreaterThan(0);
   });
 
   it('201 starts workflow when Temporal is reachable', async () => {

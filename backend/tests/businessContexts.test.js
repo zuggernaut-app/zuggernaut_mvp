@@ -46,6 +46,7 @@ describe('PUT /api/v1/business-contexts', () => {
     expect(res.body.businessContext.businessId).toBe(bid);
     expect(res.body.businessContext.businessName).toBe('Acme');
     expect(res.body.businessContext.confirmedAt).toBeTruthy();
+    expect(res.body.adsReadiness.ok).toBe(false);
   });
 
   it('GET 404 for another users business', async () => {

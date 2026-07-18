@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const {
   listAccessibleCustomers,
   describeAccessibleGoogleAdsCustomers,
+  getEffectiveAdsDiscoveryReason,
 } = require('./googleAdsAccountClient');
 const { getFreshGoogleAccessToken } = require('./googleTokenService');
 const { getOAuthConnectionStatus } = require('../capabilities/integrationConnectionService');
@@ -59,11 +60,12 @@ async function listGoogleAdsResourceOptions(businessId) {
   const customerIds = await listAccessibleCustomers(accessToken);
 
   if (customerIds.length === 0) {
+    const reason = getEffectiveAdsDiscoveryReason({ discoveryReason: 'ADS_CUSTOMER_NOT_FOUND' });
     return {
       businessId: String(businessId),
       provider: 'google_ads',
       selectionRequired: false,
-      reason: 'ADS_PROVISIONING_REQUIRED',
+      reason,
       options: [],
       selected: null,
       accessibleCustomerIds: [],

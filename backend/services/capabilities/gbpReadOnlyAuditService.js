@@ -86,7 +86,13 @@ function findingsSummary(findings) {
   };
 }
 
-const GBP_MISSING_REASONS = Object.freeze(['GBP_NO_ACCOUNTS', 'GBP_NO_LOCATIONS']);
+const GBP_MISSING_REASONS = Object.freeze([
+  'GBP_NO_ACCOUNTS',
+  'GBP_NO_LOCATIONS',
+  // Treat API unavailability/rate-limits as optional (GBP audit is non-blocking).
+  'GBP_ACCOUNTS_FETCH_FAILED',
+  'GBP_LOCATIONS_FETCH_FAILED',
+]);
 
 /**
  * @param {string} code
@@ -115,6 +121,16 @@ function buildGbpMissingGuidance(reason) {
       title: 'No Google Business Profile location found',
       message:
         'Your Google account has a Business Profile account but no locations. Add or claim a business location in Google Business Profile to enable the audit.',
+      blocking: false,
+    };
+  }
+
+  if (reason === 'GBP_ACCOUNTS_FETCH_FAILED' || reason === 'GBP_LOCATIONS_FETCH_FAILED') {
+    return {
+      code: reason,
+      title: 'Google Business Profile unavailable',
+      message:
+        'We could not fetch your Google Business Profile (rate limited or temporarily unavailable). This GBP audit is optional; setup can continue without it.',
       blocking: false,
     };
   }

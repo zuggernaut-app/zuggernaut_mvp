@@ -41,6 +41,13 @@ export function GoogleAdsCustomerSelector({
           setOptions([])
           return
         }
+        if (result.reason === 'ADS_CUSTOMER_NOT_FOUND') {
+          setError(
+            'No accessible Google Ads customer was found for this Google account. Create a Google Ads account at ads.google.com (or connect a different Google account), then return here.',
+          )
+          setOptions([])
+          return
+        }
         setOptions(result.options)
         const initial =
           result.selected?.customerId ??

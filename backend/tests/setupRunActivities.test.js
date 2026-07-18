@@ -123,13 +123,19 @@ const {
   createAdsCampaignActivity,
 } = require('../activities/setupRunActivities');
 
+const { buildMinimalAdsReadyBusinessContext } = require('../services/capabilities/businessContextAdsReadinessService');
+
 async function seedRun(email) {
   const User = mongoose.model('User');
   const BusinessContext = mongoose.model('BusinessContext');
   const SetupRun = mongoose.model('SetupRun');
 
   const user = await User.create({ email });
-  const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+  const bc = await BusinessContext.create({
+    userId: user._id,
+    confirmedAt: new Date(),
+    ...buildMinimalAdsReadyBusinessContext(),
+  });
   const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
   return { bc, run };
 }
@@ -213,8 +219,10 @@ describe('setupRun activities (with mocked capabilities)', () => {
     const bc = await BusinessContext.create({
       userId: user._id,
       confirmedAt: new Date(),
-      websiteUrl: 'https://shop.example',
-      goals: { primary: 'leads' },
+      ...buildMinimalAdsReadyBusinessContext({
+        websiteUrl: 'https://shop.example',
+        goals: { primary: 'leads' },
+      }),
     });
     const run = await SetupRun.create({ businessId: bc.businessId, status: 'USER_INPUT_COLLECTED' });
 
@@ -245,7 +253,9 @@ describe('setupRun activities (with mocked capabilities)', () => {
     const bc = await BusinessContext.create({
       userId: user._id,
       confirmedAt: new Date(),
-      goals: { primary: 'calls' },
+      ...buildMinimalAdsReadyBusinessContext({
+        goals: { primary: 'calls' },
+      }),
     });
     const run = await SetupRun.create({ businessId: bc.businessId, status: 'USER_INPUT_COLLECTED' });
 
@@ -260,26 +270,29 @@ describe('setupRun activities (with mocked capabilities)', () => {
     expect(updated.conversionStrategy.requiredSlots[0].resolution).toBe('pending');
   });
 
-  it('loadSetupContextActivity derives default strategy when goals are null', async () => {
+  it('loadSetupContextActivity fails when BusinessContext is not ads-ready', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
     const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
 
     const user = await User.create({ email: 'act-strategy-default@test.com' });
     const bc = await BusinessContext.create({
       userId: user._id,
       confirmedAt: new Date(),
-      goals: null,
+      businessName: 'Incomplete Co',
     });
     const run = await SetupRun.create({ businessId: bc.businessId, status: 'USER_INPUT_COLLECTED' });
 
     const out = await loadSetupContextActivity({ setupRunId: run._id.toString() });
-    expect(out.outcome).toBe('ok');
+    expect(out.outcome).toBe('failed');
+    expect(out.issues).toBeDefined();
 
-    const updated = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
-    expect(updated.conversionStrategy.resolvedPrimaryGoal).toBe('both');
-    expect(updated.conversionStrategy.derivedFrom).toBe('default');
-    expect(updated.conversionStrategy.requiredSlots).toHaveLength(2);
+    const step = await SetupStepExecution.findOne({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.LOAD_CONTEXT,
+    }).lean();
+    expect(step.status).toBe('failed');
   });
 
   it('loadSetupContextActivity still succeeds when conversion strategy derivation fails', async () => {
@@ -450,7 +463,7 @@ describe('setupRun activities (with mocked capabilities)', () => {
     expect(updated.status).toBe('SETUP_NEEDS_MANUAL_REVIEW');
   });
 
-  it('discoverGoogleAdsCustomersActivity returns provisioning_required when no accessible customers', async () => {
+  it('discoverGoogleAdsCustomersActivity returns provisioning_required when no accessible customers and MCC configured', async () => {
     const SetupRun = mongoose.model('SetupRun');
     const SetupStepExecution = mongoose.model('SetupStepExecution');
     const IntegrationConnection = mongoose.model('IntegrationConnection');
@@ -463,10 +476,11 @@ describe('setupRun activities (with mocked capabilities)', () => {
       refreshTokenEnc: encryptToken('refresh'),
       tokenExpiryAt: new Date(Date.now() + 3600_000),
       scopes: allScopesForProvider('google_ads'),
-      providerIdentifiers: { discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
+      providerIdentifiers: { discoveryReason: 'ADS_CUSTOMER_NOT_FOUND' },
     });
     process.env.GOOGLE_ADS_API_MOCK = 'false';
     process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'test-dev-token';
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
     const axios = require('axios');
     jest.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { resourceNames: [] } });
 
@@ -478,6 +492,44 @@ describe('setupRun activities (with mocked capabilities)', () => {
 
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.status).toBe('ADS_PROVISIONING_REQUIRED');
+
+    const step = await SetupStepExecution.findOne({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.DISCOVER_GOOGLE_ADS_CUSTOMERS,
+    }).lean();
+    expect(step.status).toBe('skipped');
+  });
+
+  it('discoverGoogleAdsCustomersActivity returns customer_not_found when no accessible customers and no MCC', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const { bc, run } = await seedRun('act-ads-not-found@test.com');
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: { discoveryReason: 'ADS_CUSTOMER_NOT_FOUND' },
+    });
+    process.env.GOOGLE_ADS_API_MOCK = 'false';
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'test-dev-token';
+    delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    const axios = require('axios');
+    jest.spyOn(axios, 'get').mockResolvedValueOnce({ status: 200, data: { resourceNames: [] } });
+
+    const out = await discoverGoogleAdsCustomersActivity({
+      setupRunId: run._id.toString(),
+      businessId: bc.businessId.toString(),
+    });
+    expect(out.outcome).toBe('manual_review');
+    expect(out.errorCode).toBe('ADS_CUSTOMER_NOT_FOUND');
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.status).toBe('SETUP_NEEDS_MANUAL_REVIEW');
 
     const step = await SetupStepExecution.findOne({
       setupRunId: run._id,
@@ -1100,6 +1152,39 @@ describe('setupRun activities (with mocked capabilities)', () => {
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.status).toBe('FAILED');
     expect(updated.meta?.supportState?.failedStep).toBe(SETUP_STEP_NAMES.GTM_CONVERSION_SETUP);
+  });
+
+  it('createAdsCampaignActivity persists validationBucket for intent precondition failures', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    const { ADS_INTENT_CODES } = require('../constants/adsCampaignIntent');
+    const { bc, run } = await seedRun('act-ads-intent@test.com');
+    capabilities.createAdsAutoCampaign.mockRejectedValue(
+      new capabilities.AdsProviderPreconditionError(
+        'Responsive search ads require at least 3 unique headlines.',
+        ADS_INTENT_CODES.RSA_HEADLINE_COUNT
+      )
+    );
+
+    await expect(
+      createAdsCampaignActivity({
+        setupRunId: run._id.toString(),
+        businessId: bc.businessId.toString(),
+      })
+    ).rejects.toThrow(ApplicationFailure);
+
+    const step = await SetupStepExecution.findOne({
+      setupRunId: run._id,
+      stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
+    }).lean();
+    expect(step.status).toBe('failed');
+    expect(step.details.code).toBe(ADS_INTENT_CODES.RSA_HEADLINE_COUNT);
+    expect(step.details.validationBucket).toBe('ad');
+    expect(step.lastErrorSummary).toContain('3 unique headlines');
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.status).toBe('FAILED');
+    expect(updated.lastErrorSummary).toContain('3 unique headlines');
   });
 
   it('createAdsCampaignActivity records supportState and pauses partial campaign on failure', async () => {

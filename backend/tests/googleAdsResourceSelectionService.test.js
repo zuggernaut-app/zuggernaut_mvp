@@ -145,4 +145,25 @@ describe('googleAdsResourceSelectionService', () => {
       saveGoogleAdsSelection(bc.businessId, { customerId: '2940178860' })
     ).rejects.toMatchObject({ code: 'ADS_SELECTION_NOT_ALLOWED' });
   });
+
+  it('returns ADS_PROVISIONING_REQUIRED when no customers and MCC is configured', async () => {
+    axios.get.mockResolvedValue({ status: 200, data: { resourceNames: [] } });
+
+    const bc = await seedConnection();
+    const result = await listGoogleAdsResourceOptions(bc.businessId);
+
+    expect(result.reason).toBe('ADS_PROVISIONING_REQUIRED');
+    expect(result.options).toEqual([]);
+  });
+
+  it('returns ADS_CUSTOMER_NOT_FOUND when no customers and MCC is not configured', async () => {
+    delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    axios.get.mockResolvedValue({ status: 200, data: { resourceNames: [] } });
+
+    const bc = await seedConnection();
+    const result = await listGoogleAdsResourceOptions(bc.businessId);
+
+    expect(result.reason).toBe('ADS_CUSTOMER_NOT_FOUND');
+    expect(result.options).toEqual([]);
+  });
 });
