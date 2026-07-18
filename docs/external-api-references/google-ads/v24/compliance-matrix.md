@@ -107,21 +107,22 @@ Maps Zuggernaut Phase 10 setup-run parameters to Google Ads API constraints, val
 
 ```
 BusinessContext (ads-ready)
-  → buildCampaignIntentFromNormalized()   // sanitized keywords
-  → resolveGeoTargets()                   // suggest API
-  → validateCampaignIntent()              // fail-fast before any mutate
-  → assertGoogleAdsCampaignCompliance()     // keyword bucket gate
-  → adsAutoCampaignService                  // sequential mutates via ensureResource
+  → prepareCompliantCampaignPlan() in adsAutoCampaignService.js
+      1. buildCampaignIntentFromNormalized()
+      2. resolvePrimaryGeoTargetConstant()
+      3. validateCampaignIntent()
+      4. assertGoogleAdsCampaignCompliance()
+      5. persist CampaignPlan (bucketValidation + status)
+  → Google Ads mutate helpers (only when status = ready)
 ```
 
-| Stage | File | Blocks mutate? |
-|-------|------|----------------|
-| Intent build + sanitize | `adsCampaignIntentService.js` + `googleAdsCampaignComplianceService.js` | No |
-| Geo resolve | `googleAdsGeoTargetClient.js` | Yes (throws) |
-| Intent validate | `adsCampaignIntentService.js` | Yes |
-| Keyword compliance assert | `googleAdsCampaignComplianceService.js` | Yes |
-| Payload build | `googleAdsCampaignClient.js` | Yes (sanitizes + rejects unsafe keywords) |
-| Google mutate | `googleAdsCampaignClient.js` | API errors only if policy gap remains |
+| Stage | File | Blocks mutate? | Persists to `CampaignPlan`? |
+|-------|------|----------------|-----------------------------|
+| Pre-mutate preparation | `adsAutoCampaignService.js` (`prepareCompliantCampaignPlan`) | Yes on any validation/compliance failure | Yes — single persist per outcome |
+| Payload build | `googleAdsCampaignClient.js` | Yes (sanitizes + rejects unsafe keywords) | No |
+| Google mutate | `googleAdsCampaignClient.js` | API errors only if policy gap remains | No — `status` updated to `applied` on success |
+
+On validation failure, `CampaignPlan.status` is set to `failed_validation` or `failed_compliance` and setup step details include `validationBucket`, `field`, `code`, `message`, `issues`, and `bucketValidation`. No `IntegrationArtifact` campaign resources are created.
 
 ---
 
@@ -134,6 +135,7 @@ BusinessContext (ads-ready)
 | Pre-mutate compliance pass | `adsAutoCampaignService.js` | ✅ Implemented |
 | Intent codes for keyword compliance | `adsCampaignIntent.js` | ✅ Implemented |
 | Regression tests with scraped seed fixtures | `backend/tests/googleAdsCampaignComplianceService.test.js` | ✅ Implemented |
+| Persist bucketed validation on `CampaignPlan` | `prepareCompliantCampaignPlan()` in `adsAutoCampaignService.js` | ✅ Implemented |
 | EU political field in intent validator | `validateCampaignIntent` | P2 (deferred) |
 
 ---

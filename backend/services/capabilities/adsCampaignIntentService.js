@@ -466,6 +466,50 @@ function validateCampaignIntent(intent) {
   return { ok: true, intent: data };
 }
 
+/** @returns {Record<string, { status: string, issues: object[] }>} */
+function createEmptyBucketValidation(initialStatus = 'pending') {
+  return {
+    campaign: { status: initialStatus, issues: [] },
+    ad_group: { status: initialStatus, issues: [] },
+    ad: { status: initialStatus, issues: [] },
+    keywords: { status: initialStatus, issues: [] },
+    geo: { status: initialStatus, issues: [] },
+    conversions: { status: initialStatus, issues: [] },
+  };
+}
+
+/**
+ * @param {CampaignIntentIssue[]} issues
+ * @returns {Record<string, { status: string, issues: object[] }>}
+ */
+function buildBucketValidationFromIssues(issues) {
+  const bucketValidation = createEmptyBucketValidation('pass');
+
+  if (!Array.isArray(issues) || issues.length < 1) {
+    return bucketValidation;
+  }
+
+  for (const row of issues) {
+    const bucket =
+      row.bucket ||
+      resolveAdsCampaignValidationBucket(row.code) ||
+      'campaign';
+    if (!bucketValidation[bucket]) {
+      continue;
+    }
+    bucketValidation[bucket].status = 'fail';
+    bucketValidation[bucket].issues.push({
+      code: row.code,
+      field: row.field,
+      message: row.message,
+      ...(row.rawValue !== undefined ? { rawValue: row.rawValue } : {}),
+      ...(row.sanitizedValue !== undefined ? { sanitizedValue: row.sanitizedValue } : {}),
+    });
+  }
+
+  return bucketValidation;
+}
+
 /**
  * @param {{ ok: false, issues: CampaignIntentIssue[] }} result
  */
@@ -504,15 +548,21 @@ function resolveAdsCampaignValidationBucket(code) {
 }
 
 /**
- * @param {{ message?: string, code?: string }} err
+ * @param {{ message?: string, code?: string, field?: string, issues?: CampaignIntentIssue[], bucketValidation?: object }} err
  */
 function formatAdsCampaignPreconditionDetails(err) {
   const code = String(err?.code ?? 'ADS_PROVIDER_PRECONDITION').trim();
   const message = String(err?.message ?? 'Ads campaign creation failed.').trim();
+  const firstIssue = Array.isArray(err?.issues) && err.issues.length > 0 ? err.issues[0] : null;
+
   return {
     message,
     code,
-    validationBucket: resolveAdsCampaignValidationBucket(code),
+    validationBucket:
+      resolveAdsCampaignValidationBucket(code) ?? firstIssue?.bucket ?? null,
+    field: err?.field ?? firstIssue?.field ?? null,
+    issues: Array.isArray(err?.issues) ? err.issues : firstIssue ? [firstIssue] : [],
+    bucketValidation: err?.bucketValidation ?? null,
   };
 }
 
@@ -565,6 +615,8 @@ module.exports = {
   buildKeywordsFromSeeds,
   buildCampaignIntentFromNormalized,
   buildMinimalCampaignIntent,
+  createEmptyBucketValidation,
+  buildBucketValidationFromIssues,
   validateCampaignIntent,
   formatCampaignIntentSummary,
   resolveAdsCampaignValidationBucket,

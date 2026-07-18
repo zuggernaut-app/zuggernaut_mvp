@@ -28,6 +28,18 @@ const campaignPlanSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       required: true,
     },
+    /** Pre-mutate validation results grouped by Ads intent bucket */
+    bucketValidation: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({
+        campaign: { status: 'pending', issues: [] },
+        ad_group: { status: 'pending', issues: [] },
+        ad: { status: 'pending', issues: [] },
+        keywords: { status: 'pending', issues: [] },
+        geo: { status: 'pending', issues: [] },
+        conversions: { status: 'pending', issues: [] },
+      }),
+    },
   },
   { timestamps: true }
 );

@@ -103,7 +103,14 @@ const ARTIFACT_TYPES = Object.freeze([
   'other',
 ]);
 
-const CAMPAIGN_PLAN_STATUS = Object.freeze(['draft', 'ready', 'applied', 'superseded']);
+const CAMPAIGN_PLAN_STATUS = Object.freeze([
+  'draft',
+  'ready',
+  'failed_validation',
+  'failed_compliance',
+  'applied',
+  'superseded',
+]);
 
 /** Async website scrape job (Temporal orchestration; raw output stored on BusinessContext). */
 const SCRAPE_RUN_STATUS = Object.freeze([

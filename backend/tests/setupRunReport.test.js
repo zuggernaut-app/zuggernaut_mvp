@@ -172,6 +172,7 @@ describe('setupRunReportService', () => {
     expect(report.gtmSetup.status).toBe('setup_complete');
     expect(report.structuralVerification.status).toBe('pass');
     expect(report.adsCampaign.status).toBe('campaigns_recorded');
+    expect(report.adsCampaign.failure).toBeNull();
     expect(report.adsCampaign.plan?.campaignName).toContain('Acme Co');
     expect(report.artifactCounts.adsCampaigns).toBe(1);
     expect(report.steps.length).toBeGreaterThanOrEqual(2);
@@ -486,5 +487,77 @@ describe('setupRunReportService', () => {
     expect(report.stuckState.stuck).toBe(true);
     expect(report.outcome.recovery?.title).toMatch(/stuck/i);
     expect(detectStuckSetupRun({ status: 'RUNNING', updatedAt: oldUpdatedAt }).stuck).toBe(true);
+  });
+
+  it('buildSetupRunReport surfaces normalized Ads campaign failure details', async () => {
+    const { ADS_INTENT_CODES } = require('../constants/adsCampaignIntent');
+    const { recommendedActionForAdsFailure } = require('../services/reports/setupRunReportService');
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const SetupRun = mongoose.model('SetupRun');
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+
+    const user = await User.create({ email: 'report-ads-fail@test.com' });
+    const bc = await BusinessContext.create({
+      userId: user._id,
+      confirmedAt: new Date(),
+      businessName: 'Fail Co',
+      websiteUrl: 'https://fail.example',
+      goals: { primary: 'calls' },
+    });
+    const run = await SetupRun.create({
+      businessId: bc.businessId,
+      status: 'FAILED',
+      lastErrorSummary: 'Keyword text contains invalid characters or symbols.',
+      meta: {},
+    });
+
+    await SetupStepExecution.create({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
+      status: 'failed',
+      provider: 'google_ads',
+      attemptCount: 1,
+      lastErrorSummary: 'Keyword text contains invalid characters or symbols.',
+      details: {
+        provider: 'google_ads',
+        stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
+        message: 'Keyword text contains invalid characters or symbols.',
+        code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+        validationBucket: 'keywords',
+        field: 'keywords[0].text',
+        issues: [
+          {
+            code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+            field: 'keywords[0].text',
+            message: 'Keyword text contains invalid characters or symbols.',
+            bucket: 'keywords',
+          },
+        ],
+      },
+    });
+
+    const report = await buildSetupRunReport(run._id);
+    expect(report.adsCampaign.status).toBe('failed');
+    expect(report.adsCampaign.failure).toEqual(
+      expect.objectContaining({
+        provider: 'google_ads',
+        stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
+        validationBucket: 'keywords',
+        bucketLabel: 'Bucket 3: Keywords',
+        field: 'keywords[0].text',
+        code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+        message: 'Keyword text contains invalid characters or symbols.',
+        recommendedAction: recommendedActionForAdsFailure({
+          validationBucket: 'keywords',
+          code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+          field: 'keywords[0].text',
+        }),
+      })
+    );
+    expect(report.adsCampaign.failure?.recommendedAction).toBe(
+      'Remove unsupported symbols or adjust business/service wording.'
+    );
   });
 });

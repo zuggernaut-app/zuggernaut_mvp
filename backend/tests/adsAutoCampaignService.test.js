@@ -30,7 +30,7 @@ describe('adsAutoCampaignService', () => {
       businessName: opts.businessName ?? 'Acme Plumbing',
       websiteUrl: opts.websiteUrl ?? 'https://acme.example',
       industry: 'plumbing',
-      services: ['Emergency plumbing'],
+      services: opts.services ?? ['Emergency plumbing'],
       serviceAreas: ['Springfield'],
       goals: opts.goals ?? { primary: 'calls' },
     });
@@ -132,6 +132,12 @@ describe('adsAutoCampaignService', () => {
     expect(plan?.status).toBe('applied');
     expect(plan?.intent?.campaign?.name).toContain('Acme Plumbing');
     expect(plan?.intent?.campaign?.bidding).toBe('manual_cpc');
+    expect(plan?.bucketValidation?.campaign?.status).toBe('pass');
+    expect(plan?.bucketValidation?.ad_group?.status).toBe('pass');
+    expect(plan?.bucketValidation?.ad?.status).toBe('pass');
+    expect(plan?.bucketValidation?.keywords?.status).toBe('pass');
+    expect(plan?.bucketValidation?.geo?.status).toBe('pass');
+    expect(plan?.bucketValidation?.conversions?.status).toBe('pass');
     expect(plan?.intent?.geoTargets).toEqual([
       expect.objectContaining({
         resourceName: 'geoTargetConstants/mock-geo-springfield',
@@ -229,6 +235,165 @@ describe('adsAutoCampaignService', () => {
       logger,
     });
     expect(result.summary.campaignCreated).toBe(true);
+  });
+
+  it('persists bucketValidation and failed_validation when intent validation fails', async () => {
+    const CampaignPlan = mongoose.model('CampaignPlan');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const intentService = require('../services/capabilities/adsCampaignIntentService');
+    const { ADS_INTENT_CODES } = require('../constants/adsCampaignIntent');
+    const { bc, run } = await seedAdsCampaignRun('ads-intent-fail@test.com');
+
+    jest.spyOn(intentService, 'validateCampaignIntent').mockReturnValueOnce({
+      ok: false,
+      issues: [
+        {
+          code: ADS_INTENT_CODES.RSA_HEADLINE_COUNT,
+          field: 'ad.headlines',
+          message: 'Responsive search ads require at least 3 unique headlines.',
+          bucket: 'ad',
+        },
+      ],
+    });
+
+    await expect(
+      createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger })
+    ).rejects.toMatchObject({
+      code: ADS_INTENT_CODES.RSA_HEADLINE_COUNT,
+      field: 'ad.headlines',
+    });
+
+    const plan = await CampaignPlan.findOne({ setupRunId: run._id }).lean();
+    expect(plan?.status).toBe('failed_validation');
+    expect(plan?.bucketValidation?.ad?.status).toBe('fail');
+    expect(plan?.bucketValidation?.ad?.issues[0]?.code).toBe(ADS_INTENT_CODES.RSA_HEADLINE_COUNT);
+
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run._id,
+        artifactType: { $in: ['ads_campaign', 'ads_campaign_budget', 'ads_ad_group', 'ads_keyword'] },
+      })
+    ).toBe(0);
+
+    jest.restoreAllMocks();
+  });
+
+  it('persists bucketValidation and failed_compliance when keyword compliance fails', async () => {
+    const CampaignPlan = mongoose.model('CampaignPlan');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const complianceService = require('../services/capabilities/googleAdsCampaignComplianceService');
+    const { ADS_INTENT_CODES } = require('../constants/adsCampaignIntent');
+    const { bc, run } = await seedAdsCampaignRun('ads-compliance-fail@test.com');
+
+    jest.spyOn(complianceService, 'assertGoogleAdsCampaignCompliance').mockImplementationOnce(() => {
+      const err = new Error('Keyword text contains invalid characters or symbols.');
+      err.code = ADS_INTENT_CODES.KEYWORD_INVALID_CHARS;
+      err.issues = [
+        {
+          code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+          field: 'keywords[0].text',
+          message: 'Keyword text contains invalid characters or symbols.',
+          bucket: 'keywords',
+        },
+      ];
+      throw err;
+    });
+
+    await expect(
+      createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger })
+    ).rejects.toMatchObject({
+      code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+      field: 'keywords[0].text',
+    });
+
+    const plan = await CampaignPlan.findOne({ setupRunId: run._id }).lean();
+    expect(plan?.status).toBe('failed_compliance');
+    expect(plan?.bucketValidation?.keywords?.status).toBe('fail');
+    expect(plan?.bucketValidation?.keywords?.issues[0]?.code).toBe(
+      ADS_INTENT_CODES.KEYWORD_INVALID_CHARS
+    );
+
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run._id,
+        artifactType: { $in: ['ads_campaign', 'ads_campaign_budget', 'ads_ad_group', 'ads_keyword'] },
+      })
+    ).toBe(0);
+
+    jest.restoreAllMocks();
+  });
+
+  it('rejects invalid keyword intent before compliance or Google Ads mutations run', async () => {
+    const CampaignPlan = mongoose.model('CampaignPlan');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const intentService = require('../services/capabilities/adsCampaignIntentService');
+    const complianceService = require('../services/capabilities/googleAdsCampaignComplianceService');
+    const { ADS_INTENT_CODES } = require('../constants/adsCampaignIntent');
+    const { bc, run } = await seedAdsCampaignRun('ads-invalid-keyword-pre-mutate@test.com');
+    const originalBuild = intentService.buildCampaignIntentFromNormalized;
+    const complianceSpy = jest.spyOn(complianceService, 'assertGoogleAdsCampaignCompliance');
+
+    jest.spyOn(intentService, 'buildCampaignIntentFromNormalized').mockImplementationOnce((...args) => ({
+      ...originalBuild(...args),
+      keywords: [{ text: 'bad#keyword', matchType: 'PHRASE' }],
+    }));
+
+    await expect(
+      createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger })
+    ).rejects.toMatchObject({
+      code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+      field: 'keywords[0].text',
+    });
+
+    expect(complianceSpy).not.toHaveBeenCalled();
+
+    const plan = await CampaignPlan.findOne({ setupRunId: run._id }).lean();
+    expect(plan?.status).toBe('failed_validation');
+    expect(plan?.bucketValidation?.keywords?.status).toBe('fail');
+    expect(plan?.bucketValidation?.keywords?.issues[0]).toEqual(
+      expect.objectContaining({
+        code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+        field: 'keywords[0].text',
+      })
+    );
+
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run._id,
+        artifactType: {
+          $in: ['ads_campaign', 'ads_campaign_budget', 'ads_ad_group', 'ads_keyword'],
+        },
+      })
+    ).toBe(0);
+
+    jest.restoreAllMocks();
+  });
+
+  it('creates campaign with sanitized keyword seeds', async () => {
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const { bc, run } = await seedAdsCampaignRun('ads-sanitized-keywords@test.com', {
+      services: ['HVAC repair/service'],
+    });
+
+    const result = await createAdsAutoCampaign({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      logger,
+    });
+
+    expect(result.summary.campaignCreated).toBe(true);
+    expect(result.summary.keywordsCreated).toBe(3);
+
+    const keywords = await IntegrationArtifact.find({
+      setupRunId: run._id,
+      artifactType: 'ads_keyword',
+    }).lean();
+    expect(keywords.map((row) => row.metadata?.keywordText)).toEqual(
+      expect.arrayContaining([
+        'HVAC repair service Springfield',
+        'HVAC repair service near me',
+      ])
+    );
   });
 
   it('rejects when website URL is missing', async () => {

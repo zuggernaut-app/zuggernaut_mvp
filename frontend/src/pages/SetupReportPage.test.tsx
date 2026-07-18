@@ -96,6 +96,7 @@ function fullReport(overrides: Partial<SetupRunReportResponse['report']> = {}): 
           bidding: 'maximize_conversions',
           budgetAmountMicros: 10_000_000,
         },
+        failure: null,
       },
       recommendations: [],
       artifactCounts: {
@@ -182,6 +183,65 @@ describe('SetupReportPage', () => {
     expect(screen.getByText(/customers\/123\/campaigns\/zug-campaign/)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Artifacts created/i })).toBeInTheDocument()
     expect(screen.getByText(/Ads campaigns/)).toBeInTheDocument()
+  })
+
+  it('shows Ads campaign failure details when campaign creation failed', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-1',
+          status: 'FAILED',
+          lastErrorSummary: 'Keyword text contains invalid characters or symbols.',
+          meta: null,
+        },
+        outcome: {
+          kind: 'failed',
+          headline: 'Setup failed.',
+          recovery: null,
+        },
+        adsCampaign: {
+          status: 'failed',
+          summary: null,
+          plan: null,
+          failure: {
+            provider: 'google_ads',
+            stepName: 'ads_campaign_creation',
+            validationBucket: 'keywords',
+            bucketLabel: 'Bucket 3: Keywords',
+            field: 'keywords[0].text',
+            code: 'ADS_INTENT_KEYWORD_INVALID_CHARS',
+            message: 'Keyword text contains invalid characters or symbols.',
+            recommendedAction: 'Remove unsupported symbols or adjust business/service wording.',
+            issues: [
+              {
+                code: 'ADS_INTENT_KEYWORD_INVALID_CHARS',
+                field: 'keywords[0].text',
+                message: 'Keyword text contains invalid characters or symbols.',
+                bucket: 'keywords',
+              },
+            ],
+          },
+        },
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    expect(
+      await screen.findByText(/Google Ads campaign creation failed in Bucket 3: Keywords/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/keywords\[0\]\.text/i)).toBeInTheDocument()
+    expect(screen.getByText(/ADS_INTENT_KEYWORD_INVALID_CHARS/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Remove unsupported symbols or adjust business\/service wording\./i),
+    ).toBeInTheDocument()
   })
 
   it('shows GBP guidance when no profile location was accessible', async () => {

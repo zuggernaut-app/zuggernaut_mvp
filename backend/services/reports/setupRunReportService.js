@@ -442,6 +442,103 @@ function normalizeStructuralVerification(meta, steps, setupRunStatus) {
   };
 }
 
+/** @type {Record<string, string>} */
+const ADS_BUCKET_LABELS = {
+  campaign: 'Bucket 1: Campaign',
+  ad_group: 'Bucket 2: Ad Group',
+  ad: 'Bucket 2: Ads',
+  keywords: 'Bucket 3: Keywords',
+  geo: 'Bucket 3: Geo Targeting',
+  conversions: 'Bucket 3: Conversion Goal Linking',
+};
+
+/**
+ * @param {{ validationBucket?: string | null, code?: string | null, field?: string | null }} input
+ * @returns {string}
+ */
+function recommendedActionForAdsFailure({ validationBucket, code, field }) {
+  void code;
+  void field;
+  if (validationBucket === 'keywords') {
+    return 'Remove unsupported symbols or adjust business/service wording.';
+  }
+  if (validationBucket === 'geo') {
+    return 'Use a clearer city, region, or service area name.';
+  }
+  if (validationBucket === 'ad' || validationBucket === 'ad_group') {
+    return 'Review ad headlines, descriptions, and final URL requirements.';
+  }
+  if (validationBucket === 'campaign') {
+    return 'Review campaign budget, bidding, status, and network settings.';
+  }
+  if (validationBucket === 'conversions') {
+    return 'Select or create at least one valid Google Ads conversion action.';
+  }
+  return 'Review the highlighted campaign setup field and try again.';
+}
+
+/**
+ * @param {string | null | undefined} validationBucket
+ * @returns {string | null}
+ */
+function adsBucketLabel(validationBucket) {
+  if (typeof validationBucket !== 'string' || !validationBucket.trim()) return null;
+  return ADS_BUCKET_LABELS[validationBucket] ?? null;
+}
+
+/**
+ * @param {object | null | undefined} step
+ */
+function buildAdsCampaignFailureFromStep(step) {
+  if (!step || step.status !== 'failed') return null;
+
+  const details = isObject(step.details) ? step.details : {};
+  const issues = Array.isArray(details.issues) ? details.issues : [];
+  const firstIssue = issues.length > 0 && isObject(issues[0]) ? issues[0] : null;
+
+  const validationBucket =
+    (typeof details.validationBucket === 'string' && details.validationBucket.trim()
+      ? details.validationBucket.trim()
+      : null) ??
+    (typeof firstIssue?.bucket === 'string' && firstIssue.bucket.trim() ? firstIssue.bucket.trim() : null);
+
+  const field =
+    (typeof details.field === 'string' && details.field.trim() ? details.field.trim() : null) ??
+    (typeof firstIssue?.field === 'string' && firstIssue.field.trim() ? firstIssue.field.trim() : null);
+
+  const code =
+    (typeof details.code === 'string' && details.code.trim() ? details.code.trim() : null) ??
+    (typeof firstIssue?.code === 'string' && firstIssue.code.trim() ? firstIssue.code.trim() : null);
+
+  const message =
+    (typeof details.message === 'string' && details.message.trim() ? details.message.trim() : null) ??
+    (typeof step.lastErrorSummary === 'string' && step.lastErrorSummary.trim()
+      ? step.lastErrorSummary.trim()
+      : 'Google Ads campaign creation failed.');
+
+  const provider =
+    details.provider === 'google_ads' || step.provider === 'google_ads' ? 'google_ads' : 'google_ads';
+
+  const stepName =
+    typeof details.stepName === 'string' && details.stepName.trim()
+      ? details.stepName.trim()
+      : typeof step.stepName === 'string'
+        ? step.stepName
+        : SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION;
+
+  return {
+    provider,
+    stepName,
+    validationBucket,
+    bucketLabel: adsBucketLabel(validationBucket),
+    field,
+    code,
+    message,
+    recommendedAction: recommendedActionForAdsFailure({ validationBucket, code, field }),
+    issues: issues.filter((row) => isObject(row)),
+  };
+}
+
 /**
  * @param {object | null | undefined} meta
  * @param {object[]} steps
@@ -449,6 +546,7 @@ function normalizeStructuralVerification(meta, steps, setupRunStatus) {
  */
 function normalizeAdsCampaign(meta, steps, campaignPlan) {
   const adsStep = findStep(steps, SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION);
+  const failure = buildAdsCampaignFailureFromStep(adsStep);
   const recorded = adsStep?.status === 'success' || metaValue(meta, 'ads') === 'campaigns_recorded';
 
   const summary =
@@ -468,10 +566,15 @@ function normalizeAdsCampaign(meta, steps, campaignPlan) {
     };
   }
 
+  let status = 'not_run';
+  if (recorded) status = 'campaigns_recorded';
+  else if (failure) status = 'failed';
+
   return {
-    status: recorded ? 'campaigns_recorded' : 'not_run',
+    status,
     summary: isObject(summary) ? summary : null,
     plan,
+    failure,
   };
 }
 
@@ -761,5 +864,8 @@ module.exports = {
   normalizeProvisioning,
   normalizeStructuralVerification,
   normalizeAdsCampaign,
+  buildAdsCampaignFailureFromStep,
+  recommendedActionForAdsFailure,
+  ADS_BUCKET_LABELS,
   buildRecovery,
 };

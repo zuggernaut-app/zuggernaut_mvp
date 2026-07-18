@@ -8,6 +8,15 @@ import { useSetupRunReport } from '../hooks/useSetupRunReport'
 import { useOnboardingState } from '../hooks/useOnboardingState'
 import { conversionActionHeadline } from '../lib/conversionActionsUi'
 
+function adsCampaignFailureHeadline(failure: {
+  bucketLabel: string | null
+}): string {
+  if (failure.bucketLabel) {
+    return `Google Ads campaign creation failed in ${failure.bucketLabel}`
+  }
+  return 'Google Ads campaign creation failed'
+}
+
 function statusTone(status: string): string {
   if (status === 'RUNNING') return 'status-running'
   if (status === 'FAILED') return 'status-failed'
@@ -306,6 +315,37 @@ export function SetupReportPage(): ReactElement {
                   </ol>
                 </div>
               ))}
+            </section>
+          ) : null}
+
+          {report.adsCampaign.status === 'failed' && report.adsCampaign.failure ? (
+            <section style={{ marginTop: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Google Ads campaign</h2>
+              <div className="alert alert-error">
+                <p style={{ marginTop: 0, marginBottom: '0.75rem' }}>
+                  {adsCampaignFailureHeadline(report.adsCampaign.failure)}
+                </p>
+                <ul className="stepsList" style={{ marginBottom: 0 }}>
+                  {report.adsCampaign.failure.field ? (
+                    <li>
+                      <strong>Parameter</strong> ·{' '}
+                      <code style={{ fontSize: '0.75rem', wordBreak: 'break-all' }}>
+                        {report.adsCampaign.failure.field}
+                      </code>
+                    </li>
+                  ) : null}
+                  {report.adsCampaign.failure.code ? (
+                    <li>
+                      <strong>Error code</strong> · {report.adsCampaign.failure.code}
+                    </li>
+                  ) : null}
+                  {report.adsCampaign.failure.recommendedAction ? (
+                    <li>
+                      <strong>Recommended action</strong> · {report.adsCampaign.failure.recommendedAction}
+                    </li>
+                  ) : null}
+                </ul>
+              </div>
             </section>
           ) : null}
 

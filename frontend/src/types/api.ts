@@ -273,8 +273,27 @@ export interface SetupRunReportStructuralVerification {
   } | null
 }
 
+export interface SetupRunReportAdsCampaignFailure {
+  provider: 'google_ads'
+  stepName: string
+  validationBucket: string | null
+  bucketLabel: string | null
+  field: string | null
+  code: string | null
+  message: string
+  recommendedAction: string
+  issues: Array<{
+    code?: string
+    field?: string
+    message?: string
+    bucket?: string
+    rawValue?: string
+    sanitizedValue?: string
+  }>
+}
+
 export interface SetupRunReportAdsCampaign {
-  status: 'campaigns_recorded' | 'not_run'
+  status: 'campaigns_recorded' | 'failed' | 'not_run'
   summary: {
     campaignCreated: boolean
     adGroupCreated: boolean
@@ -288,6 +307,7 @@ export interface SetupRunReportAdsCampaign {
     bidding: string | null
     budgetAmountMicros: number | null
   } | null
+  failure: SetupRunReportAdsCampaignFailure | null
 }
 
 export interface SetupRunReportArtifactCounts {

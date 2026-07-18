@@ -530,6 +530,63 @@ describe('SetupProgressPage', () => {
     expect(section).toHaveTextContent('Conversion links')
   })
 
+  it('shows Ads campaign failure details when the step failed', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'FAILED',
+          lastErrorSummary: 'Keyword text contains invalid characters or symbols.',
+          meta: {},
+        },
+        steps: [
+          {
+            stepName: 'ads_campaign_creation',
+            status: 'failed',
+            provider: 'google_ads',
+            lastErrorSummary: 'Keyword text contains invalid characters or symbols.',
+            details: {
+              provider: 'google_ads',
+              stepName: 'ads_campaign_creation',
+              message: 'Keyword text contains invalid characters or symbols.',
+              code: 'ADS_INTENT_KEYWORD_INVALID_CHARS',
+              validationBucket: 'keywords',
+              field: 'keywords[0].text',
+              issues: [
+                {
+                  code: 'ADS_INTENT_KEYWORD_INVALID_CHARS',
+                  field: 'keywords[0].text',
+                  message: 'Keyword text contains invalid characters or symbols.',
+                  bucket: 'keywords',
+                },
+              ],
+            },
+          },
+        ],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(
+      await screen.findByText(/Google Ads campaign creation failed in Bucket 3: Keywords/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/keywords\[0\]\.text/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Remove unsupported symbols or adjust business\/service wording\./i),
+    ).toBeInTheDocument()
+  })
+
   it('shows GTM snippet pending instructions', async () => {
     seedSession({ userId: TEST_IDS.user })
 

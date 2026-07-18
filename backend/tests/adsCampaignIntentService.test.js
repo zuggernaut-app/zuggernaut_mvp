@@ -4,6 +4,7 @@ const {
   buildCampaignIntentFromNormalized,
   buildMinimalCampaignIntent,
   buildKeywordsFromSeeds,
+  buildBucketValidationFromIssues,
   validateCampaignIntent,
   formatCampaignIntentSummary,
   resolveAdsCampaignValidationBucket,
@@ -77,7 +78,15 @@ describe('adsCampaignIntentService', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.issues.some((row) => row.code === ADS_INTENT_CODES.KEYWORD_INVALID_CHARS)).toBe(true);
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+          bucket: 'keywords',
+          field: 'keywords[0].text',
+        }),
+      ])
+    );
   });
 
   it('fails when keywords exceed 10 words', () => {
@@ -194,12 +203,62 @@ describe('adsCampaignIntentService', () => {
     const details = formatAdsCampaignPreconditionDetails({
       message: 'Responsive search ads require at least 3 unique headlines.',
       code: ADS_INTENT_CODES.RSA_HEADLINE_COUNT,
+      field: 'ad.headlines',
+      issues: [
+        {
+          code: ADS_INTENT_CODES.RSA_HEADLINE_COUNT,
+          field: 'ad.headlines',
+          message: 'Responsive search ads require at least 3 unique headlines.',
+          bucket: 'ad',
+        },
+      ],
     });
 
     expect(details).toEqual({
       message: 'Responsive search ads require at least 3 unique headlines.',
       code: ADS_INTENT_CODES.RSA_HEADLINE_COUNT,
       validationBucket: 'ad',
+      field: 'ad.headlines',
+      issues: [
+        expect.objectContaining({
+          code: ADS_INTENT_CODES.RSA_HEADLINE_COUNT,
+          field: 'ad.headlines',
+          bucket: 'ad',
+        }),
+      ],
+      bucketValidation: null,
     });
+  });
+
+  it('buildBucketValidationFromIssues groups issues by validation bucket', () => {
+    const bucketValidation = buildBucketValidationFromIssues([
+      {
+        code: ADS_INTENT_CODES.RSA_HEADLINE_COUNT,
+        field: 'ad.headlines',
+        message: 'Need more headlines.',
+        bucket: 'ad',
+      },
+      {
+        code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+        field: 'keywords[0].text',
+        message: 'Invalid keyword chars.',
+        bucket: 'keywords',
+      },
+    ]);
+
+    expect(bucketValidation.ad.status).toBe('fail');
+    expect(bucketValidation.ad.issues).toHaveLength(1);
+    expect(bucketValidation.keywords.status).toBe('fail');
+    expect(bucketValidation.keywords.issues).toEqual([
+      expect.objectContaining({
+        code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+        field: 'keywords[0].text',
+        message: 'Invalid keyword chars.',
+      }),
+    ]);
+    expect(bucketValidation.campaign.status).toBe('pass');
+    expect(bucketValidation.ad_group.status).toBe('pass');
+    expect(bucketValidation.geo.status).toBe('pass');
+    expect(bucketValidation.conversions.status).toBe('pass');
   });
 });

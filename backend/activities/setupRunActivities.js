@@ -1334,6 +1334,9 @@ async function createAdsCampaignActivity(input) {
             message: safeErrorMessage(err, 'Ads campaign creation failed'),
             code: 'AdsCampaignError',
             validationBucket: null,
+            field: null,
+            issues: [],
+            bucketValidation: null,
           };
     const msg = precondition.message;
     const code = precondition.code;
@@ -1360,8 +1363,14 @@ async function createAdsCampaignActivity(input) {
       provider: 'google_ads',
       summary: msg,
       details: {
+        provider: 'google_ads',
+        stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
+        message: msg,
         code,
         validationBucket: precondition.validationBucket,
+        field: precondition.field,
+        issues: precondition.issues,
+        bucketValidation: precondition.bucketValidation,
         fieldViolations: googleAdsDetails?.fieldViolations ?? [],
         googleAdsErrors: googleAdsDetails?.googleAdsErrors ?? [],
         requestId: googleAdsDetails?.requestId ?? null,

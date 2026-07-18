@@ -20,13 +20,9 @@ const {
   validateBusinessContextAdsReadiness,
   formatAdsReadinessSummary,
 } = require('./businessContextAdsReadinessService');
-const {
-  buildCampaignIntentFromNormalized,
-  validateCampaignIntent,
-  formatCampaignIntentSummary,
-} = require('./adsCampaignIntentService');
-const { assertGoogleAdsCampaignCompliance } = require('./googleAdsCampaignComplianceService');
-const { resolvePrimaryGeoTargetConstant, GeoTargetResolutionError } = require('../integrations/googleAdsGeoTargetClient');
+const adsCampaignIntentService = require('./adsCampaignIntentService');
+const googleAdsCampaignComplianceService = require('./googleAdsCampaignComplianceService');
+const googleAdsGeoTargetClient = require('../integrations/googleAdsGeoTargetClient');
 const BusinessContext = mongoose.model('BusinessContext');
 const CampaignPlan = mongoose.model('CampaignPlan');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
@@ -36,47 +32,93 @@ class AdsProviderPreconditionError extends Error {
    * @param {string} message
    * @param {string} [code]
    * @param {import('../integrations/googleAdsApiConfig').GoogleAdsApiErrorDetails | undefined} [googleAdsDetails]
+   * @param {{ issues?: object[], bucketValidation?: object, field?: string }} [meta]
    */
-  constructor(message, code = 'ADS_PROVIDER_PRECONDITION', googleAdsDetails = undefined) {
+  constructor(message, code = 'ADS_PROVIDER_PRECONDITION', googleAdsDetails = undefined, meta = undefined) {
     super(message);
     this.name = 'AdsProviderPreconditionError';
     this.code = code;
     if (googleAdsDetails !== undefined) {
       this.googleAdsDetails = googleAdsDetails;
     }
+    if (meta && typeof meta === 'object') {
+      if (Array.isArray(meta.issues)) {
+        this.issues = meta.issues;
+      }
+      if (meta.bucketValidation) {
+        this.bucketValidation = meta.bucketValidation;
+      }
+      if (meta.field) {
+        this.field = meta.field;
+      }
+    }
   }
 }
 
 /**
+ * @param {object} firstIssue
+ * @param {object[]} issues
+ * @param {object} bucketValidation
+ * @param {import('../integrations/googleAdsApiConfig').GoogleAdsApiErrorDetails | undefined} [googleAdsDetails]
+ */
+function throwCampaignPlanValidationError(firstIssue, issues, bucketValidation, googleAdsDetails = undefined) {
+  throw new AdsProviderPreconditionError(firstIssue.message, firstIssue.code, googleAdsDetails, {
+    issues,
+    bucketValidation,
+    field: firstIssue.field,
+  });
+}
+
+/**
+ * @param {import('mongoose').Types.ObjectId | string | undefined} setupRunId
+ * @param {import('mongoose').Types.ObjectId | string} businessId
  * @param {object} intent
+ * @param {object} bucketValidation
+ * @param {string} status
  */
-function assertValidCampaignIntent(intent) {
-  const validation = validateCampaignIntent(intent);
-  if (!validation.ok) {
-    throw new AdsProviderPreconditionError(
-      formatCampaignIntentSummary(validation),
-      validation.issues[0]?.code ?? 'ADS_INTENT_INVALID'
-    );
+async function persistCampaignPlanValidation(setupRunId, businessId, intent, bucketValidation, status) {
+  if (!setupRunId) {
+    return null;
   }
-  return intent;
+
+  return CampaignPlan.findOneAndUpdate(
+    { setupRunId },
+    {
+      $set: {
+        businessId,
+        intent,
+        bucketValidation,
+        status,
+      },
+    },
+    { upsert: true, setDefaultsOnInsert: true, returnDocument: 'after' }
+  ).lean();
 }
 
 /**
- * @param {import('./businessContextAdsReadinessService').AdsReadinessNormalized} normalized
- * @param {object[]} conversionArtifacts
- * @param {{ businessId: import('mongoose').Types.ObjectId | string, customerId: string }} resolveCtx
+ * Single pre-mutate pipeline: build intent, resolve geo, validate, persist CampaignPlan.
+ *
+ * @param {{
+ *   setupRunId?: import('mongoose').Types.ObjectId | string,
+ *   businessId: import('mongoose').Types.ObjectId | string,
+ *   customerId: string,
+ *   normalized: import('./businessContextAdsReadinessService').AdsReadinessNormalized,
+ *   conversionArtifacts: object[],
+ * }} ctx
+ * @returns {Promise<{ intent: object, bucketValidation: object, plan: object | null }>}
  */
-async function buildValidatedCampaignIntent(normalized, conversionArtifacts, resolveCtx) {
-  const draft = buildCampaignIntentFromNormalized(normalized, conversionArtifacts);
-  const primaryLabel = draft.geoTargetLabels[0];
+async function prepareCompliantCampaignPlan(ctx) {
+  const { setupRunId, businessId, customerId, normalized, conversionArtifacts } = ctx;
+  const intent = adsCampaignIntentService.buildCampaignIntentFromNormalized(normalized, conversionArtifacts);
+  const primaryLabel = intent.geoTargetLabels[0];
 
   try {
-    const geoTarget = await resolvePrimaryGeoTargetConstant({
-      businessId: resolveCtx.businessId,
-      customerId: resolveCtx.customerId,
+    const geoTarget = await googleAdsGeoTargetClient.resolvePrimaryGeoTargetConstant({
+      businessId,
+      customerId,
       label: primaryLabel,
     });
-    draft.geoTargets = [
+    intent.geoTargets = [
       {
         resourceName: geoTarget.resourceName,
         label: geoTarget.label,
@@ -88,15 +130,84 @@ async function buildValidatedCampaignIntent(normalized, conversionArtifacts, res
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Geo target resolution failed.';
     const code =
-      err instanceof GeoTargetResolutionError
+      err instanceof googleAdsGeoTargetClient.GeoTargetResolutionError
         ? err.code
         : err instanceof GoogleAdsApiError
           ? err.code
           : 'ADS_INTENT_UNRESOLVED_GEO';
-    throw new AdsProviderPreconditionError(message, code, err instanceof GoogleAdsApiError ? err.details : undefined);
+    const geoIssue = {
+      code,
+      field: 'geoTargetLabels',
+      message,
+      bucket: 'geo',
+    };
+    const bucketValidation = adsCampaignIntentService.buildBucketValidationFromIssues([geoIssue]);
+    await persistCampaignPlanValidation(
+      setupRunId,
+      businessId,
+      intent,
+      bucketValidation,
+      'failed_validation'
+    );
+    throwCampaignPlanValidationError(
+      geoIssue,
+      [geoIssue],
+      bucketValidation,
+      err instanceof GoogleAdsApiError ? err.details : undefined
+    );
   }
 
-  return assertValidCampaignIntent(draft);
+  const intentValidation = adsCampaignIntentService.validateCampaignIntent(intent);
+  if (!intentValidation.ok) {
+    const bucketValidation = adsCampaignIntentService.buildBucketValidationFromIssues(
+      intentValidation.issues
+    );
+    await persistCampaignPlanValidation(
+      setupRunId,
+      businessId,
+      intent,
+      bucketValidation,
+      'failed_validation'
+    );
+    throwCampaignPlanValidationError(
+      intentValidation.issues[0],
+      intentValidation.issues,
+      bucketValidation
+    );
+  }
+
+  try {
+    googleAdsCampaignComplianceService.assertGoogleAdsCampaignCompliance(intent);
+  } catch (err) {
+    const complianceIssues =
+      err && typeof err === 'object' && Array.isArray(err.issues) && err.issues.length > 0
+        ? err.issues
+        : [
+            {
+              code:
+                err && typeof err === 'object' && 'code' in err
+                  ? String(err.code)
+                  : 'ADS_INTENT_KEYWORD_INVALID_CHARS',
+              field: 'keywords',
+              message: err instanceof Error ? err.message : 'Keyword compliance check failed.',
+              bucket: 'keywords',
+            },
+          ];
+    const bucketValidation = adsCampaignIntentService.buildBucketValidationFromIssues(complianceIssues);
+    await persistCampaignPlanValidation(
+      setupRunId,
+      businessId,
+      intent,
+      bucketValidation,
+      'failed_compliance'
+    );
+    throwCampaignPlanValidationError(complianceIssues[0], complianceIssues, bucketValidation);
+  }
+
+  const bucketValidation = adsCampaignIntentService.buildBucketValidationFromIssues([]);
+  const plan = await persistCampaignPlanValidation(setupRunId, businessId, intent, bucketValidation, 'ready');
+
+  return { intent, bucketValidation, plan };
 }
 
 /**
@@ -119,10 +230,14 @@ async function buildCampaignIntent(bc, conversionArtifacts, resolveCtx = {}) {
     new mongoose.Types.ObjectId('507f1f77bcf86cd799439011');
   const customerId = resolveCtx.customerId ?? '1234567890';
 
-  return buildValidatedCampaignIntent(readiness.normalized, conversionArtifacts, {
+  const { intent } = await prepareCompliantCampaignPlan({
     businessId,
     customerId,
+    normalized: readiness.normalized,
+    conversionArtifacts,
   });
+
+  return intent;
 }
 
 /**
@@ -219,35 +334,14 @@ async function createAdsAutoCampaign(ctx) {
     );
   }
 
-  const intent = await buildValidatedCampaignIntent(readiness.normalized, conversionArtifacts, {
+  const { intent, plan: planRow } = await prepareCompliantCampaignPlan({
+    setupRunId,
     businessId,
     customerId,
+    normalized: readiness.normalized,
+    conversionArtifacts,
   });
 
-  try {
-    assertGoogleAdsCampaignCompliance(intent);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Keyword compliance check failed.';
-    const code =
-      err && typeof err === 'object' && 'code' in err
-        ? String(err.code)
-        : 'ADS_INTENT_KEYWORD_INVALID_CHARS';
-    throw new AdsProviderPreconditionError(message, code);
-  }
-
-  await CampaignPlan.findOneAndUpdate(
-    { setupRunId },
-    {
-      $set: {
-        businessId,
-        intent,
-        status: 'ready',
-      },
-    },
-    { upsert: true, setDefaultsOnInsert: true }
-  );
-
-  const planRow = await CampaignPlan.findOne({ setupRunId }).lean();
   if (!planRow) {
     throw new AdsProviderPreconditionError('Campaign plan not persisted.', 'ADS_PLAN_PERSIST_FAILED');
   }

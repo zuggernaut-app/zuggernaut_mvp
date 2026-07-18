@@ -68,9 +68,20 @@ jest.mock('../services/capabilities', () => {
     },
   }),
   AdsProviderPreconditionError: class AdsProviderPreconditionError extends Error {
-    constructor(m, code = 'ADS_PROVIDER_PRECONDITION') {
+    constructor(m, code = 'ADS_PROVIDER_PRECONDITION', _googleAdsDetails = undefined, meta = undefined) {
       super(m);
       this.code = code;
+      if (meta && typeof meta === 'object') {
+        if (Array.isArray(meta.issues)) {
+          this.issues = meta.issues;
+        }
+        if (meta.bucketValidation) {
+          this.bucketValidation = meta.bucketValidation;
+        }
+        if (meta.field) {
+          this.field = meta.field;
+        }
+      }
     }
   },
   ensureSetupProvisioningRequest: jest.fn(),
@@ -1154,15 +1165,39 @@ describe('setupRun activities (with mocked capabilities)', () => {
     expect(updated.meta?.supportState?.failedStep).toBe(SETUP_STEP_NAMES.GTM_CONVERSION_SETUP);
   });
 
-  it('createAdsCampaignActivity persists validationBucket for intent precondition failures', async () => {
+  it('createAdsCampaignActivity persists keyword bucket failure details', async () => {
     const SetupRun = mongoose.model('SetupRun');
     const SetupStepExecution = mongoose.model('SetupStepExecution');
     const { ADS_INTENT_CODES } = require('../constants/adsCampaignIntent');
     const { bc, run } = await seedRun('act-ads-intent@test.com');
     capabilities.createAdsAutoCampaign.mockRejectedValue(
       new capabilities.AdsProviderPreconditionError(
-        'Responsive search ads require at least 3 unique headlines.',
-        ADS_INTENT_CODES.RSA_HEADLINE_COUNT
+        'Keyword text contains invalid characters or symbols.',
+        ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+        undefined,
+        {
+          field: 'keywords[0].text',
+          issues: [
+            {
+              code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+              field: 'keywords[0].text',
+              message: 'Keyword text contains invalid characters or symbols.',
+              bucket: 'keywords',
+            },
+          ],
+          bucketValidation: {
+            keywords: {
+              status: 'fail',
+              issues: [
+                {
+                  code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+                  field: 'keywords[0].text',
+                  message: 'Keyword text contains invalid characters or symbols.',
+                },
+              ],
+            },
+          },
+        }
       )
     );
 
@@ -1178,13 +1213,33 @@ describe('setupRun activities (with mocked capabilities)', () => {
       stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
     }).lean();
     expect(step.status).toBe('failed');
-    expect(step.details.code).toBe(ADS_INTENT_CODES.RSA_HEADLINE_COUNT);
-    expect(step.details.validationBucket).toBe('ad');
-    expect(step.lastErrorSummary).toContain('3 unique headlines');
+    expect(step.details.code).toBe(ADS_INTENT_CODES.KEYWORD_INVALID_CHARS);
+    expect(step.details.provider).toBe('google_ads');
+    expect(step.details.stepName).toBe(SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION);
+    expect(step.details.message).toContain('invalid characters');
+    expect(step.details.validationBucket).toBe('keywords');
+    expect(step.details.field).toBe('keywords[0].text');
+    expect(step.details.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+          field: 'keywords[0].text',
+          bucket: 'keywords',
+        }),
+      ])
+    );
+    expect(step.details.bucketValidation?.keywords?.status).toBe('fail');
+    expect(step.details.bucketValidation?.keywords?.issues[0]).toEqual(
+      expect.objectContaining({
+        code: ADS_INTENT_CODES.KEYWORD_INVALID_CHARS,
+        field: 'keywords[0].text',
+      })
+    );
+    expect(step.lastErrorSummary).toContain('invalid characters');
 
     const updated = await SetupRun.findById(run._id).lean();
     expect(updated.status).toBe('FAILED');
-    expect(updated.lastErrorSummary).toContain('3 unique headlines');
+    expect(updated.lastErrorSummary).toContain('invalid characters');
   });
 
   it('createAdsCampaignActivity records supportState and pauses partial campaign on failure', async () => {

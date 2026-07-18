@@ -19,6 +19,7 @@ import {
   conversionActionHeadline,
   parseConversionActionMeta,
 } from '../lib/conversionActionsUi'
+import type { SetupRunReportAdsCampaignFailure } from '../types/api'
 
 interface GbpAuditSummary {
   presentCount: number
@@ -177,6 +178,106 @@ interface AdsCampaignSummary {
   reusedArtifacts: number
   campaignExternalId: string
   conversionLinkCount: number
+}
+
+const ADS_BUCKET_LABELS: Record<string, string> = {
+  campaign: 'Bucket 1: Campaign',
+  ad_group: 'Bucket 2: Ad Group',
+  ad: 'Bucket 2: Ads',
+  keywords: 'Bucket 3: Keywords',
+  geo: 'Bucket 3: Geo Targeting',
+  conversions: 'Bucket 3: Conversion Goal Linking',
+}
+
+function recommendedActionForAdsFailure(validationBucket: string | null): string {
+  if (validationBucket === 'keywords') {
+    return 'Remove unsupported symbols or adjust business/service wording.'
+  }
+  if (validationBucket === 'geo') {
+    return 'Use a clearer city, region, or service area name.'
+  }
+  if (validationBucket === 'ad' || validationBucket === 'ad_group') {
+    return 'Review ad headlines, descriptions, and final URL requirements.'
+  }
+  if (validationBucket === 'campaign') {
+    return 'Review campaign budget, bidding, status, and network settings.'
+  }
+  if (validationBucket === 'conversions') {
+    return 'Select or create at least one valid Google Ads conversion action.'
+  }
+  return 'Review the highlighted campaign setup field and try again.'
+}
+
+function parseAdsCampaignFailureFromStep(
+  step:
+    | {
+        status: string
+        stepName?: string
+        provider?: string
+        lastErrorSummary?: string | null
+        details?: unknown
+      }
+    | undefined,
+): SetupRunReportAdsCampaignFailure | null {
+  if (!step || step.status !== 'failed') return null
+
+  const details =
+    step.details && typeof step.details === 'object' && step.details !== null
+      ? (step.details as Record<string, unknown>)
+      : {}
+  const issues = Array.isArray(details.issues)
+    ? details.issues.filter(
+        (row): row is NonNullable<SetupRunReportAdsCampaignFailure['issues'][number]> =>
+          Boolean(row) && typeof row === 'object',
+      )
+    : []
+  const firstIssue = issues[0] ?? null
+
+  const validationBucket =
+    (typeof details.validationBucket === 'string' && details.validationBucket.trim()
+      ? details.validationBucket.trim()
+      : null) ??
+    (typeof firstIssue?.bucket === 'string' && firstIssue.bucket.trim() ? firstIssue.bucket.trim() : null)
+
+  const field =
+    (typeof details.field === 'string' && details.field.trim() ? details.field.trim() : null) ??
+    (typeof firstIssue?.field === 'string' && firstIssue.field.trim() ? firstIssue.field.trim() : null)
+
+  const code =
+    (typeof details.code === 'string' && details.code.trim() ? details.code.trim() : null) ??
+    (typeof firstIssue?.code === 'string' && firstIssue.code.trim() ? firstIssue.code.trim() : null)
+
+  const message =
+    (typeof details.message === 'string' && details.message.trim() ? details.message.trim() : null) ??
+    (typeof step.lastErrorSummary === 'string' && step.lastErrorSummary.trim()
+      ? step.lastErrorSummary.trim()
+      : 'Google Ads campaign creation failed.')
+
+  const stepName =
+    typeof details.stepName === 'string' && details.stepName.trim()
+      ? details.stepName.trim()
+      : typeof step.stepName === 'string'
+        ? step.stepName
+        : 'ads_campaign_creation'
+
+  return {
+    provider: 'google_ads',
+    stepName,
+    validationBucket,
+    bucketLabel: validationBucket ? (ADS_BUCKET_LABELS[validationBucket] ?? null) : null,
+    field,
+    code,
+    message,
+    recommendedAction: recommendedActionForAdsFailure(validationBucket),
+    issues,
+  }
+}
+
+function adsCampaignFailureHeadline(failure: SetupRunReportAdsCampaignFailure): string {
+  if (failure.bucketLabel) {
+    return `Google Ads campaign creation failed in ${failure.bucketLabel}`
+  }
+  return 'Google Ads campaign creation failed'
 }
 
 function parseAdsCampaignMeta(meta: unknown): {
@@ -393,6 +494,7 @@ export function SetupProgressPage(): ReactElement {
       ? ((adsCampaignStep.details as { summary: AdsCampaignSummary }).summary ?? null)
       : null
   const adsCampaignSummary = adsCampaign.summary ?? adsCampaignStepSummary
+  const adsCampaignFailure = parseAdsCampaignFailureFromStep(adsCampaignStep)
 
   const provisioningProvider =
     run && isProvisioningRequiredStatus(run.status)
@@ -595,6 +697,26 @@ export function SetupProgressPage(): ReactElement {
                   </code>
                 </li>
               </ul>
+            </section>
+          ) : null}
+          {adsCampaignFailure ? (
+            <section style={{ marginTop: '1.5rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Google Ads campaign</h2>
+              <div className="alert alert-error">
+                <p style={{ marginTop: 0, marginBottom: '0.5rem' }}>
+                  {adsCampaignFailureHeadline(adsCampaignFailure)}
+                </p>
+                {adsCampaignFailure.field ? (
+                  <p style={{ marginTop: 0, marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+                    Parameter: <code>{adsCampaignFailure.field}</code>
+                  </p>
+                ) : null}
+                {adsCampaignFailure.recommendedAction ? (
+                  <p style={{ marginTop: 0, marginBottom: 0, fontSize: '0.875rem' }}>
+                    Recommended action: {adsCampaignFailure.recommendedAction}
+                  </p>
+                ) : null}
+              </div>
             </section>
           ) : null}
           {adsCampaign.status === 'campaigns_recorded' && adsCampaignSummary ? (
