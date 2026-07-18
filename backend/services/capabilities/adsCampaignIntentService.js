@@ -8,13 +8,11 @@ const {
   CAMPAIGN_STATUS,
   AD_GROUP_TYPE,
   BIDDING_STRATEGY,
-  ALLOWED_KEYWORD_MATCH_TYPES,
   MIN_DAILY_BUDGET_MICROS,
   DEFAULT_DAILY_BUDGET_MICROS,
   MAX_CAMPAIGN_NAME_CHARS,
   MAX_AD_GROUP_NAME_CHARS,
   MAX_BUDGET_NAME_CHARS,
-  MAX_KEYWORD_TEXT_CHARS,
   RSA_MIN_HEADLINES,
   RSA_MAX_HEADLINES,
   RSA_MIN_DESCRIPTIONS,
@@ -24,6 +22,10 @@ const {
   DEFAULT_NETWORK_SETTINGS,
   ADS_INTENT_VALIDATION_BUCKETS,
 } = require('../../constants/adsCampaignIntent');
+const {
+  sanitizeKeywordSeeds,
+  validateKeywordCompliance,
+} = require('./googleAdsCampaignComplianceService');
 
 /**
  * @typedef {object} CampaignIntentIssue
@@ -91,25 +93,7 @@ function validateUniqueRsaTexts(texts, minCount, maxCount, maxChars) {
  * @param {string[]} keywordSeeds
  */
 function buildKeywordsFromSeeds(keywordSeeds) {
-  const keywords = [];
-  const seen = new Set();
-
-  for (const raw of keywordSeeds) {
-    const text = String(raw ?? '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, MAX_KEYWORD_TEXT_CHARS);
-    if (!text) {
-      continue;
-    }
-    const key = text.toLowerCase();
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    keywords.push({ text, matchType: 'PHRASE' });
-  }
-
+  const { keywords } = sanitizeKeywordSeeds(keywordSeeds);
   return keywords;
 }
 
@@ -403,68 +387,9 @@ function validateCampaignIntent(intent) {
   }
 
   const keywords = Array.isArray(data.keywords) ? data.keywords : [];
-  if (keywords.length < 1) {
-    issues.push(
-      issue(
-        ADS_INTENT_CODES.MISSING_KEYWORDS,
-        'keywords',
-        'At least one keyword is required for campaign setup.',
-        'keywords'
-      )
-    );
-  } else {
-    const seenKeywords = new Set();
-    for (let index = 0; index < keywords.length; index += 1) {
-      const row = keywords[index];
-      const text = String(row?.text ?? '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!text) {
-        issues.push(
-          issue(
-            ADS_INTENT_CODES.INVALID_KEYWORD,
-            `keywords[${index}].text`,
-            'Keyword text is required.',
-            'keywords'
-          )
-        );
-        continue;
-      }
-      if (text.length > MAX_KEYWORD_TEXT_CHARS) {
-        issues.push(
-          issue(
-            ADS_INTENT_CODES.INVALID_KEYWORD,
-            `keywords[${index}].text`,
-            `Keyword text must be at most ${MAX_KEYWORD_TEXT_CHARS} characters.`,
-            'keywords'
-          )
-        );
-      }
-      const matchType = row?.matchType;
-      if (!ALLOWED_KEYWORD_MATCH_TYPES.includes(matchType)) {
-        issues.push(
-          issue(
-            ADS_INTENT_CODES.INVALID_KEYWORD_MATCH_TYPE,
-            `keywords[${index}].matchType`,
-            'Keyword match type must be PHRASE, EXACT, or BROAD.',
-            'keywords'
-          )
-        );
-      }
-      const key = text.toLowerCase();
-      if (seenKeywords.has(key)) {
-        issues.push(
-          issue(
-            ADS_INTENT_CODES.DUPLICATE_KEYWORD,
-            `keywords[${index}].text`,
-            `Duplicate keyword: ${text}`,
-            'keywords'
-          )
-        );
-      } else {
-        seenKeywords.add(key);
-      }
-    }
+  const keywordCompliance = validateKeywordCompliance(keywords);
+  if (!keywordCompliance.ok) {
+    issues.push(...keywordCompliance.issues);
   }
 
   const geoLabels = Array.isArray(data.geoTargetLabels)

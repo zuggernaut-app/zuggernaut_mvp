@@ -38,7 +38,7 @@ describe('adsCampaignIntentService', () => {
     expect(intent.keywords[0]).toEqual(
       expect.objectContaining({ matchType: 'PHRASE' })
     );
-    expect(intent.geoTargetLabels).toEqual(['United States']);
+    expect(intent.geoTargetLabels).toEqual(['Mountain View']);
     expect(intent.selectedConversionIds).toEqual(['1001']);
   });
 
@@ -53,6 +53,47 @@ describe('adsCampaignIntentService', () => {
     expect(keywords).toHaveLength(2);
     expect(keywords[0].text).toBe('plumbing Springfield');
     expect(keywords[1].text).toBe('plumbing near me');
+  });
+
+  it('buildKeywordsFromSeeds sanitizes invalid symbols from scraped seeds', () => {
+    const keywords = buildKeywordsFromSeeds([
+      'tax prep & bookkeeping',
+      '#1 dentist near me!',
+      'HVAC repair/service',
+    ]);
+
+    expect(keywords.map((row) => row.text)).toEqual([
+      'tax prep bookkeeping',
+      '1 dentist near me',
+      'HVAC repair service',
+    ]);
+  });
+
+  it('fails when keywords contain invalid characters after intent build', () => {
+    const intent = buildMinimalCampaignIntent({
+      keywords: [{ text: 'bad#keyword', matchType: 'PHRASE' }],
+    });
+    const result = validateCampaignIntent(intent);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.some((row) => row.code === ADS_INTENT_CODES.KEYWORD_INVALID_CHARS)).toBe(true);
+  });
+
+  it('fails when keywords exceed 10 words', () => {
+    const intent = buildMinimalCampaignIntent({
+      keywords: [
+        {
+          text: 'one two three four five six seven eight nine ten eleven',
+          matchType: 'PHRASE',
+        },
+      ],
+    });
+    const result = validateCampaignIntent(intent);
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues.some((row) => row.code === ADS_INTENT_CODES.KEYWORD_TOO_MANY_WORDS)).toBe(true);
   });
 
   it('passes validation for a minimal valid intent', () => {

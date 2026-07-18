@@ -273,4 +273,82 @@ describe('googleAdsGeoTargetClient', () => {
     expect(result.label).toBe('miosalon.com area');
     expect(axios.post).toHaveBeenCalledTimes(2);
   });
+
+  it('uses geoTargetConstants:suggest without a customer-scoped path prefix', async () => {
+    process.env.GOOGLE_ADS_API_MOCK = 'false';
+    process.env.GOOGLE_ADS_API_ENABLED = 'true';
+
+    axios.post.mockImplementation((url) => {
+      expect(url).toMatch(/\/geoTargetConstants:suggest$/);
+      expect(url).not.toMatch(/\/customers\/[^/]+\/geoTargetConstants:suggest$/);
+      return Promise.resolve({
+        status: 200,
+        data: {
+          geoTargetConstantSuggestions: [
+            {
+              geoTargetConstant: {
+                resourceName: 'geoTargetConstants/2840',
+                name: 'United States',
+                canonicalName: 'United States',
+                targetType: 'Country',
+                countryCode: 'US',
+                status: 'ENABLED',
+              },
+            },
+          ],
+        },
+      });
+    });
+
+    await resolvePrimaryGeoTargetConstant({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '7809414862',
+      label: 'United States',
+    });
+  });
+
+  it('retries alternative US labels on 404 when label is already United States', async () => {
+    process.env.GOOGLE_ADS_API_MOCK = 'false';
+    process.env.GOOGLE_ADS_API_ENABLED = 'true';
+
+    axios.post.mockImplementation((_url, body) => {
+      const label = body?.locationNames?.names?.[0];
+
+      if (label === 'United States') {
+        return Promise.resolve({ status: 404, data: {} });
+      }
+
+      if (label === 'United States of America') {
+        return Promise.resolve({
+          status: 200,
+          data: {
+            geoTargetConstantSuggestions: [
+              {
+                geoTargetConstant: {
+                  resourceName: 'geoTargetConstants/2840',
+                  name: 'United States',
+                  canonicalName: 'United States',
+                  targetType: 'Country',
+                  countryCode: 'US',
+                  status: 'ENABLED',
+                },
+              },
+            ],
+          },
+        });
+      }
+
+      return Promise.resolve({ status: 404, data: {} });
+    });
+
+    const out = await resolvePrimaryGeoTargetConstant({
+      businessId: '507f1f77bcf86cd799439011',
+      customerId: '7809414862',
+      label: 'United States',
+    });
+
+    expect(out.resourceName).toBe('geoTargetConstants/2840');
+    expect(out.label).toBe('United States');
+    expect(axios.post).toHaveBeenCalledTimes(2);
+  });
 });

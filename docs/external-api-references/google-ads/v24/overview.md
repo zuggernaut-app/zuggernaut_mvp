@@ -1,3 +1,7 @@
+# Google Ads API v24 — RPC Overview
+
+> **Zuggernaut reference pack:** See [README.md](./README.md) for resource-specific docs and [compliance-matrix.md](./compliance-matrix.md) for validation mapping.
+
 # Content from https://developers.google.com/google-ads/api/reference/rpc/v24/overview
 
 ## Overview

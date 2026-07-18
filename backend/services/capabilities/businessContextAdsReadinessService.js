@@ -244,37 +244,6 @@ function validateBusinessContextAdsReadiness(businessContext) {
   }
 
   const primaryServiceArea = normalizeServiceAreaForGeoSuggest(rawPrimaryServiceArea);
-  // #region agent log H1
-  try {
-    fetch('http://127.0.0.1:7339/ingest/583ddef9-88e2-4ce1-a279-f07b672fe4de', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': 'e86c9c',
-      },
-      body: JSON.stringify({
-        sessionId: 'e86c9c',
-        runId: 'ads_readiness',
-        hypothesisId: 'H1',
-        location: 'businessContextAdsReadinessService.js:primaryServiceAreaNormalized',
-        message: 'primaryServiceArea normalization for geo suggest',
-        data: { rawPrimaryServiceArea, primaryServiceArea },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  } catch {
-    /* ignore instrumentation errors */
-  }
-  // #endregion
-  try {
-    // Console marker so we can see evidence even if the debug ingest endpoint is unreachable.
-    console.log('[AGENT_DEBUG H1_console]', {
-      rawPrimaryServiceArea,
-      primaryServiceArea,
-    });
-  } catch {
-    /* ignore */
-  }
   const resolvedPrimaryGoal = resolvePrimaryGoal(bc.goals);
   const keywordSeeds = buildKeywordSeeds(businessName, primaryService, primaryServiceArea);
   const adCopySeeds = buildAdCopySeeds(businessName, primaryService, primaryServiceArea);

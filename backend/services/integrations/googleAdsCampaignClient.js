@@ -1,6 +1,13 @@
 'use strict';
 
 const axios = require('axios');
+const { MAX_KEYWORD_TEXT_CHARS } = require('../../constants/adsCampaignIntent');
+const {
+  sanitizeKeywordText,
+  isKeywordTextCompliant,
+  countKeywordWords,
+  MAX_KEYWORD_WORDS,
+} = require('../capabilities/googleAdsCampaignComplianceService');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
 const { getFreshGoogleAccessToken } = require('./googleTokenService');
 const {
@@ -546,16 +553,36 @@ const ALLOWED_KEYWORD_MATCH_TYPES = new Set(['PHRASE', 'EXACT', 'BROAD']);
  */
 function buildAdGroupKeywordCreatePayload(input) {
   const adGroupResourceName = String(input.adGroupResourceName ?? '').trim();
-  const keywordText = String(input.keywordText ?? '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const sanitized = sanitizeKeywordText(input.keywordText);
+  const keywordText = sanitized.text;
   const matchType = String(input.matchType ?? '').trim();
 
   if (!adGroupResourceName) {
     throw new GoogleAdsApiError('Ad group resource name is required for keyword create.', 'GOOGLE_ADS_KEYWORD_INVALID');
   }
   if (!keywordText) {
-    throw new GoogleAdsApiError('Keyword text is required.', 'GOOGLE_ADS_KEYWORD_INVALID');
+    throw new GoogleAdsApiError(
+      'Keyword text is required after Google Ads compliance sanitization.',
+      'GOOGLE_ADS_KEYWORD_INVALID'
+    );
+  }
+  if (keywordText.length > MAX_KEYWORD_TEXT_CHARS) {
+    throw new GoogleAdsApiError(
+      `Keyword text must be at most ${MAX_KEYWORD_TEXT_CHARS} characters.`,
+      'GOOGLE_ADS_KEYWORD_INVALID'
+    );
+  }
+  if (countKeywordWords(keywordText) > MAX_KEYWORD_WORDS) {
+    throw new GoogleAdsApiError(
+      `Keyword text must be at most ${MAX_KEYWORD_WORDS} words.`,
+      'GOOGLE_ADS_KEYWORD_INVALID'
+    );
+  }
+  if (!isKeywordTextCompliant(keywordText)) {
+    throw new GoogleAdsApiError(
+      'Keyword text contains invalid characters or symbols.',
+      'GOOGLE_ADS_KEYWORD_INVALID'
+    );
   }
   if (!ALLOWED_KEYWORD_MATCH_TYPES.has(matchType)) {
     throw new GoogleAdsApiError(

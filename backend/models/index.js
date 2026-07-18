@@ -1,6 +1,7 @@
 /**
- * Side-effect import — registers all Mongoose models with the default connection.
- * Require this once early in server bootstrap (see `mvp_implementation_plan.md` Phase 1 / Database Architecture Strategy).
+ * Side-effect import — registers production Mongoose models with the default connection.
+ * Dev-only diagnostic models live in `./devDiagnosticModels.js` (loaded by dev-tools).
+ * Require this once early in server bootstrap (see `mvp_implementation_plan.md` Phase 1).
  */
 require('./User');
 require('./BusinessContext');
@@ -11,8 +12,6 @@ require('./IntegrationConnection');
 require('./IntegrationProvisioningRequest');
 require('./ProviderSnapshot');
 require('./IntegrationArtifact');
-require('./IntegrationDiagnosticArtifact');
-require('./IntegrationDiagnosticRun');
 require('./AuditReport');
 require('./CampaignPlan');
 
@@ -26,8 +25,6 @@ module.exports = {
   IntegrationProvisioningRequest: require('./IntegrationProvisioningRequest'),
   ProviderSnapshot: require('./ProviderSnapshot'),
   IntegrationArtifact: require('./IntegrationArtifact'),
-  IntegrationDiagnosticArtifact: require('./IntegrationDiagnosticArtifact'),
-  IntegrationDiagnosticRun: require('./IntegrationDiagnosticRun'),
   AuditReport: require('./AuditReport'),
   CampaignPlan: require('./CampaignPlan'),
 };

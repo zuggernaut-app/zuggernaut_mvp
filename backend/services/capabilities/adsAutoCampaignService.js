@@ -25,6 +25,7 @@ const {
   validateCampaignIntent,
   formatCampaignIntentSummary,
 } = require('./adsCampaignIntentService');
+const { assertGoogleAdsCampaignCompliance } = require('./googleAdsCampaignComplianceService');
 const { resolvePrimaryGeoTargetConstant, GeoTargetResolutionError } = require('../integrations/googleAdsGeoTargetClient');
 const BusinessContext = mongoose.model('BusinessContext');
 const CampaignPlan = mongoose.model('CampaignPlan');
@@ -222,6 +223,17 @@ async function createAdsAutoCampaign(ctx) {
     businessId,
     customerId,
   });
+
+  try {
+    assertGoogleAdsCampaignCompliance(intent);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Keyword compliance check failed.';
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? String(err.code)
+        : 'ADS_INTENT_KEYWORD_INVALID_CHARS';
+    throw new AdsProviderPreconditionError(message, code);
+  }
 
   await CampaignPlan.findOneAndUpdate(
     { setupRunId },

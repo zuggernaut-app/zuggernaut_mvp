@@ -183,30 +183,6 @@ async function resolvePrimaryGeoTargetConstant(ctx) {
     );
   }
 
-  // #region agent log H5/H4
-  try {
-    const customerIdProbe = normalizeCustomerId(ctx.customerId);
-    fetch('http://127.0.0.1:7339/ingest/583ddef9-88e2-4ce1-a279-f07b672fe4de', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': 'e86c9c',
-      },
-      body: JSON.stringify({
-        sessionId: 'e86c9c',
-        runId: 'geo_resolve',
-        hypothesisId: 'H5',
-        location: 'googleAdsGeoTargetClient.js:resolvePrimaryGeoTargetConstant.input',
-        message: 'geo suggest inputs (marker to confirm new code loaded)',
-        data: { label, customerIdNormalized: customerIdProbe },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  } catch {
-    /* ignore instrumentation errors */
-  }
-  // #endregion
-
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return buildMockGeoTarget(label);
   }
@@ -226,54 +202,10 @@ async function resolvePrimaryGeoTargetConstant(ctx) {
   const accessToken = await getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'google_ads' });
   let res = await postGeoTargetSuggest(accessToken, customerId, label);
 
-  try {
-    console.log('[AGENT_DEBUG H2_console]', {
-      label,
-      customerId,
-      firstStatus: res?.status,
-      fallbackLabel: GEO_SUGGEST_FALLBACK_LABEL,
-    });
-  } catch {
-    /* ignore */
-  }
-
-  // #region agent log H2
-  try {
-    fetch('http://127.0.0.1:7339/ingest/583ddef9-88e2-4ce1-a279-f07b672fe4de', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': 'e86c9c',
-      },
-      body: JSON.stringify({
-        sessionId: 'e86c9c',
-        runId: 'geo_resolve',
-        hypothesisId: 'H2',
-        location: 'googleAdsGeoTargetClient.js:resolvePrimaryGeoTargetConstant.response1',
-        message: 'geo suggest response status (first attempt)',
-        data: { label, customerId, status: res?.status },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  } catch {
-    /* ignore instrumentation errors */
-  }
-  // #endregion
-
   if (res.status === 404) {
     const labelNorm = label.toLowerCase();
     const candidates =
       labelNorm === GEO_SUGGEST_FALLBACK_LABEL.toLowerCase() ? GEO_SUGGEST_ALTERNATIVE_LABELS_FOR_US : [GEO_SUGGEST_FALLBACK_LABEL];
-
-    try {
-      console.log('[AGENT_DEBUG H3_console]', {
-        label,
-        firstStatus: res?.status,
-        triggeringFallback: true,
-      });
-    } catch {
-      /* ignore */
-    }
 
     for (const candidateLabel of candidates) {
       const candidateRes = await postGeoTargetSuggest(accessToken, customerId, candidateLabel);
@@ -289,16 +221,6 @@ async function resolvePrimaryGeoTargetConstant(ctx) {
         );
 
         if (candidatePicked) {
-          try {
-            console.log('[AGENT_DEBUG H3_console_pick]', {
-              fallbackStatus: candidateRes?.status,
-              candidateLabel,
-              pickedResourceName: candidatePicked?.resourceName,
-            });
-          } catch {
-            /* ignore */
-          }
-
           return toResolvedGeoTarget(candidatePicked, label);
         }
       }
@@ -331,39 +253,6 @@ async function resolvePrimaryGeoTargetConstant(ctx) {
       ADS_INTENT_CODES.UNRESOLVED_GEO
     );
   }
-
-  try {
-    console.log('[AGENT_DEBUG H2_console_pick]', {
-      label,
-      finalStatus: res?.status,
-      pickedResourceName: picked?.resourceName,
-    });
-  } catch {
-    /* ignore */
-  }
-
-  // #region agent log H2
-  try {
-    fetch('http://127.0.0.1:7339/ingest/583ddef9-88e2-4ce1-a279-f07b672fe4de', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Debug-Session-Id': 'e86c9c',
-      },
-      body: JSON.stringify({
-        sessionId: 'e86c9c',
-        runId: 'geo_resolve',
-        hypothesisId: 'H2',
-        location: 'googleAdsGeoTargetClient.js:resolvePrimaryGeoTargetConstant.response2',
-        message: 'geo suggest picked from suggestions',
-        data: { label, status: res?.status, pickedResourceName: picked?.resourceName },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  } catch {
-    /* ignore instrumentation errors */
-  }
-  // #endregion
 
   return toResolvedGeoTarget(picked, label);
 }

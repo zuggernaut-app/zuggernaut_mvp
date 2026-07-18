@@ -221,6 +221,26 @@ describe('googleAdsCampaignClient', () => {
     });
   });
 
+  it('buildAdGroupKeywordCreatePayload sanitizes unsafe keyword text before mutate', () => {
+    const payload = buildAdGroupKeywordCreatePayload({
+      adGroupResourceName: 'customers/1234567890/adGroups/99',
+      keywordText: 'tax prep & bookkeeping',
+      matchType: 'PHRASE',
+    });
+
+    expect(payload.keyword.text).toBe('tax prep bookkeeping');
+  });
+
+  it('buildAdGroupKeywordCreatePayload rejects keywords that sanitize to empty', () => {
+    expect(() =>
+      buildAdGroupKeywordCreatePayload({
+        adGroupResourceName: 'customers/1234567890/adGroups/99',
+        keywordText: '(((( ))))',
+        matchType: 'PHRASE',
+      })
+    ).toThrow('Keyword text is required after Google Ads compliance sanitization.');
+  });
+
   it('buildFindKeywordByTextQuery scopes search to ad group and keyword text', () => {
     const query = buildFindKeywordByTextQuery(
       'customers/1234567890/adGroups/99',
