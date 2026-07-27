@@ -16,6 +16,7 @@ const GOOGLE_PROVIDER_OAUTH = Object.freeze({
     displayName: 'Google Tag Manager',
     requiredScopes: Object.freeze([
       'https://www.googleapis.com/auth/tagmanager.edit.containers',
+      'https://www.googleapis.com/auth/tagmanager.edit.containerversions',
       'https://www.googleapis.com/auth/tagmanager.publish',
       'https://www.googleapis.com/auth/tagmanager.manage.accounts',
     ]),

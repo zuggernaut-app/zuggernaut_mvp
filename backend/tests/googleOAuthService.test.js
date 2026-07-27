@@ -61,6 +61,7 @@ describe('googleOAuthService', () => {
     expect(check.ok).toBe(false);
     expect(check.missing).toEqual(
       expect.arrayContaining([
+        'https://www.googleapis.com/auth/tagmanager.edit.containerversions',
         'https://www.googleapis.com/auth/tagmanager.publish',
         'https://www.googleapis.com/auth/tagmanager.manage.accounts',
       ])

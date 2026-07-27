@@ -1,7 +1,12 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const { runGtmConversionSetup, GtmProviderPreconditionError } = require('../services/capabilities/gtmConversionSetupService');
+const {
+  runGtmConversionSetup,
+  GtmProviderPreconditionError,
+  gtmTriggerIdFromPath,
+  requiredClickBuiltinTypes,
+} = require('../services/capabilities/gtmConversionSetupService');
 const { buildGtmSetupPlan } = require('../services/capabilities/gtmTemplates/v1');
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { createLogger } = require('../lib/observability/logger');
@@ -157,6 +162,31 @@ describe('gtmConversionSetupService', () => {
 
     process.env.GTM_API_MOCK = prevMock;
     process.env.GTM_API_ENABLED = prevEnabled;
+  });
+
+  it('gtmTriggerIdFromPath extracts numeric id from GTM trigger resource path', () => {
+    expect(
+      gtmTriggerIdFromPath(
+        'accounts/6357971694/containers/253902272/workspaces/2/triggers/7'
+      )
+    ).toBe('7');
+    expect(gtmTriggerIdFromPath('accounts/mock-account/containers/mock-container/workspaces/mock-workspace/triggers/trig_call_tel_click')).toBeNull();
+  });
+
+  it('requiredClickBuiltinTypes maps click trigger filters to built-in variable types', () => {
+    const plan = buildGtmSetupPlan({
+      conversionArtifacts: [
+        { externalId: '1001', metadata: { logicalCategory: 'call' } },
+        { externalId: '1002', metadata: { logicalCategory: 'form' } },
+      ],
+      adsCustomerId: '1234567890',
+      websiteUrl: 'https://acme.example',
+    });
+
+    expect(requiredClickBuiltinTypes(plan)).toEqual(
+      expect.arrayContaining(['clickUrl', 'clickText', 'clickElement'])
+    );
+    expect(requiredClickBuiltinTypes(plan)).toHaveLength(3);
   });
 
   it('creates call-only GTM artifacts for calls goal', async () => {

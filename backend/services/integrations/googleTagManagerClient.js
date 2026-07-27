@@ -2,7 +2,10 @@
 
 const axios = require('axios');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
+const { createLogger } = require('../../lib/observability/logger');
 const { getFreshGoogleAccessToken } = require('./googleTokenService');
+
+const gtmClientLogger = createLogger({ name: 'googleTagManagerClient' });
 
 const GTM_API_BASE = 'https://tagmanager.googleapis.com/tagmanager/v2';
 const {
@@ -17,6 +20,69 @@ class GtmApiError extends Error {
     this.name = 'GtmApiError';
     this.code = code;
   }
+}
+
+/**
+ * @param {{ data?: object, status?: number }} res
+ */
+function formatGtmApiErrorSuffix(res) {
+  const err = res?.data?.error;
+  if (err && typeof err.message === 'string' && err.message.trim()) {
+    const reason = err.errors?.[0]?.reason;
+    return reason ? `: ${err.message} (${reason})` : `: ${err.message}`;
+  }
+  if (res?.data && typeof res.data.message === 'string' && res.data.message.trim()) {
+    return `: ${res.data.message}`;
+  }
+  return '';
+}
+
+/**
+ * @param {object} payload
+ */
+function constantVariableValue(payload) {
+  if (payload?.type !== 'c' || !Array.isArray(payload.parameter)) return null;
+  const valueParam = payload.parameter.find((p) => p && p.key === 'value');
+  return valueParam?.value != null ? String(valueParam.value) : null;
+}
+
+/**
+ * Reuse an existing workspace resource only when name/type (and constant value) match intent.
+ *
+ * @param {object} existing — GTM API resource row
+ * @param {object} payload — intended create body
+ * @param {'variables' | 'triggers' | 'tags'} collection
+ */
+function workspaceResourceMatchesPayload(existing, payload, collection) {
+  if (!existing || !payload?.name || existing.name !== payload.name) {
+    return false;
+  }
+  if (payload.type && existing.type !== payload.type) {
+    return false;
+  }
+  if (collection === 'variables' && payload.type === 'c') {
+    const expected = constantVariableValue(payload);
+    const actual = constantVariableValue(existing);
+    if (expected != null && actual !== expected) {
+      return false;
+    }
+  }
+  return Boolean(existing.path);
+}
+
+/**
+ * @param {string} accessToken
+ * @param {object} gtmIds
+ * @param {'variables' | 'triggers' | 'tags'} collection
+ * @param {object} payload
+ */
+async function findMatchingWorkspaceResource(accessToken, gtmIds, collection, payload) {
+  const listPath = `${workspaceBasePath(gtmIds)}/${collection}`;
+  const data = await gtmGet(accessToken, listPath);
+  const pathKey = collection.slice(0, -1);
+  const items = Array.isArray(data?.[pathKey]) ? data[pathKey] : [];
+  const match = items.find((item) => workspaceResourceMatchesPayload(item, payload, collection));
+  return match?.path ?? null;
 }
 
 /**
@@ -61,6 +127,17 @@ async function createGtmWorkspaceResource(ctx) {
   }
 
   const url = `${GTM_API_BASE}/${workspaceBasePath(gtmIds)}/${collection}`;
+
+  let reusablePath = null;
+  try {
+    reusablePath = await findMatchingWorkspaceResource(accessToken, gtmIds, collection, payload);
+  } catch {
+    reusablePath = null;
+  }
+  if (reusablePath) {
+    return { resourcePath: reusablePath, source: 'gtm_api_reused' };
+  }
+
   const res = await axios.post(url, payload, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -70,8 +147,31 @@ async function createGtmWorkspaceResource(ctx) {
     validateStatus: () => true,
   });
 
+  if (res.status === 429) {
+    throw new GtmApiError(`GTM ${collection} create failed (429)`, 'GTM_RATE_LIMITED');
+  }
+
+  if (res.status === 400) {
+    try {
+      const onConflictPath = await findMatchingWorkspaceResource(
+        accessToken,
+        gtmIds,
+        collection,
+        payload
+      );
+      if (onConflictPath) {
+        return { resourcePath: onConflictPath, source: 'gtm_api_reused' };
+      }
+    } catch {
+      /* fall through to error with API detail */
+    }
+  }
+
   if (res.status < 200 || res.status >= 300) {
-    throw new GtmApiError(`GTM ${collection} create failed (${res.status})`, 'GTM_CREATE_FAILED');
+    throw new GtmApiError(
+      `GTM ${collection} create failed (${res.status})${formatGtmApiErrorSuffix(res)}`,
+      'GTM_CREATE_FAILED'
+    );
   }
 
   const pathKey = collection.slice(0, -1);
@@ -130,9 +230,35 @@ async function createGtmContainerVersion(ctx) {
   );
 
   if (createRes.status < 200 || createRes.status >= 300) {
+    gtmClientLogger.error(
+      {
+        operation: 'create_version',
+        status: createRes.status,
+        url: createUrl,
+        responseBody: createRes.data,
+      },
+      'GTM container version create failed'
+    );
     throw new GtmApiError(
       `GTM container version create failed (${createRes.status})`,
       'GTM_VERSION_CREATE_FAILED'
+    );
+  }
+
+  gtmClientLogger.info(
+    {
+      operation: 'create_version',
+      status: createRes.status,
+      url: createUrl,
+      responseBody: createRes.data,
+    },
+    'GTM container version create succeeded'
+  );
+
+  if (createRes.data?.compilerError === true) {
+    throw new GtmApiError(
+      'GTM container version create failed due to compiler errors',
+      'GTM_VERSION_COMPILER_ERROR'
     );
   }
 
@@ -187,6 +313,16 @@ async function publishGtmContainerVersion(ctx) {
   );
 
   if (publishRes.status < 200 || publishRes.status >= 300) {
+    gtmClientLogger.error(
+      {
+        operation: 'publish',
+        status: publishRes.status,
+        url: publishUrl,
+        containerVersionId,
+        responseBody: publishRes.data,
+      },
+      'GTM container version publish failed'
+    );
     throw new GtmApiError(`GTM container version publish failed (${publishRes.status})`, 'GTM_PUBLISH_FAILED');
   }
 
@@ -234,11 +370,11 @@ async function createAndPublishContainerVersion(ctx) {
  */
 async function enableGtmBuiltinVariables(accessToken, gtmIds, types) {
   const base = workspaceBasePath(gtmIds);
-  const enabled = [];
+  const requestedTypes = [...new Set(types.filter(Boolean).map(String))];
 
   if (process.env.GTM_API_MOCK === 'true') {
     return {
-      enabledTypes: types,
+      enabledTypes: requestedTypes,
       source: 'gtm_api_mock',
     };
   }
@@ -250,15 +386,62 @@ async function enableGtmBuiltinVariables(accessToken, gtmIds, types) {
     );
   }
 
-  for (const type of types) {
-    const data = await gtmPost(accessToken, `${base}/built_in_variables`, { type });
-    if (data?.type) {
-      enabled.push(String(data.type));
-    }
+  if (requestedTypes.length === 0) {
+    return { enabledTypes: [], source: 'gtm_api' };
   }
 
+  const listData = await gtmGet(accessToken, `${base}/built_in_variables`);
+  const alreadyEnabled = new Set(
+    (listData?.builtInVariable ?? [])
+      .map((row) => row?.type)
+      .filter(Boolean)
+      .map(String)
+  );
+  const toEnable = requestedTypes.filter((type) => !alreadyEnabled.has(type));
+
+  if (toEnable.length === 0) {
+    return { enabledTypes: requestedTypes, source: 'gtm_api' };
+  }
+
+  const urlPath = `${base}/built_in_variables`;
+  const url = `${GTM_API_BASE}/${urlPath.replace(/^\/+/, '')}`;
+  const res = await axios.post(
+    url,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      params: { type: toEnable },
+      paramsSerializer: (params) => {
+        const search = new URLSearchParams();
+        for (const type of params.type) {
+          search.append('type', type);
+        }
+        return search.toString();
+      },
+      timeout: 30000,
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw new GtmApiError(
+      `GTM built-in variables enable failed (${res.status})${formatGtmApiErrorSuffix(res)}`,
+      'GTM_BUILTIN_VARIABLE_ENABLE_FAILED'
+    );
+  }
+
+  const enabledNow = (res.data?.builtInVariable ?? [])
+    .map((row) => row?.type)
+    .filter(Boolean)
+    .map(String);
+
   return {
-    enabledTypes: enabled,
+    enabledTypes: [...new Set([...alreadyEnabled, ...enabledNow, ...toEnable])].filter((type) =>
+      requestedTypes.includes(type)
+    ),
     source: 'gtm_api',
   };
 }

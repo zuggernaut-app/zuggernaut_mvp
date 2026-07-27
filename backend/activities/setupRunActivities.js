@@ -49,6 +49,7 @@ const {
   formatAdsReadinessSummary,
 } = require('../services/capabilities/businessContextAdsReadinessService');
 const { formatAdsCampaignPreconditionDetails } = require('../services/capabilities/adsCampaignIntentService');
+const { GtmApiError } = require('../services/integrations/googleTagManagerClient');
 
 async function blockSetupForMissingProviders({
   setupRunId,
@@ -365,6 +366,31 @@ async function checkGtmPreconditionsActivity(input) {
       provider: 'gtm',
       ready: true,
       reason: status.reason,
+      setupRunId: rawRun,
+      businessId: rawBiz,
+    };
+  }
+
+  if (status.reason === CONNECTION_REASON.PROVISIONING_REQUIRED) {
+    await markStepSuccess({
+      setupRunId,
+      businessId,
+      stepName: SETUP_STEP_NAMES.CHECK_GTM_CONNECTION,
+      provider: 'gtm',
+      details: {
+        provisioningRequired: true,
+        reason: status.reason,
+        nextAction: status.nextAction,
+        identifiersMissing: status.identifiersMissing,
+      },
+      logger,
+    });
+    return {
+      outcome: 'gtm_provisioning_required',
+      provider: 'gtm',
+      ready: false,
+      reason: status.reason,
+      nextAction: status.nextAction,
       setupRunId: rawRun,
       businessId: rawBiz,
     };
@@ -1103,6 +1129,9 @@ async function runGtmConversionSetupActivity(input) {
     return { outcome: 'ok', setupRunId: rawRun, businessId: rawBiz, summary: result.summary };
   } catch (err) {
     const msg = safeErrorMessage(err, 'GTM setup failed');
+    if (err instanceof GtmApiError && err.code === 'GTM_RATE_LIMITED') {
+      throw ApplicationFailure.retryable(msg, 'GTM_RATE_LIMITED');
+    }
     const code = err instanceof GtmProviderPreconditionError ? err.code : 'GtmSetupError';
     await markStepFailed({
       setupRunId,

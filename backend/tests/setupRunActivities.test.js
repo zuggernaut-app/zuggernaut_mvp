@@ -384,7 +384,7 @@ describe('setupRun activities (with mocked capabilities)', () => {
       setupRunId: run._id.toString(),
       businessId: bc.businessId.toString(),
     });
-    expect(out.outcome).toBe('not_ready');
+    expect(out.outcome).toBe('gtm_provisioning_required');
     expect(out.reason).toBe('provisioning_required');
     expect(capabilities.ensureSetupProvisioningRequest).not.toHaveBeenCalled();
 
@@ -392,7 +392,7 @@ describe('setupRun activities (with mocked capabilities)', () => {
       setupRunId: run._id,
       stepName: SETUP_STEP_NAMES.CHECK_GTM_CONNECTION,
     }).lean();
-    expect(step.status).toBe('skipped');
+    expect(step.status).toBe('success');
   });
 
   it('discoverGoogleAdsCustomersActivity returns ok when saved customer is still accessible', async () => {

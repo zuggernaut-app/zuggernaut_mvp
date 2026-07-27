@@ -152,6 +152,22 @@ async function setupRunWorkflow(input) {
     businessId: load.businessId,
   });
 
+  let gtmReady = gtmPre.ready === true;
+
+  if (gtmPre.outcome === 'gtm_provisioning_required') {
+    const gtmGate = await ensureProviderReady(load, 'gtm');
+    if (gtmGate) {
+      return {
+        workflow: 'setupRunWorkflow',
+        terminal: gtmGate.terminal,
+        setupRunId: load.setupRunId,
+        pre: gtmGate.pre,
+        approval: gtmGate.approval ?? null,
+      };
+    }
+    gtmReady = true;
+  }
+
   const adsGate = await ensureProviderReady(load, 'google_ads');
   if (adsGate) {
     return {
@@ -195,7 +211,7 @@ async function setupRunWorkflow(input) {
     businessId: load.businessId,
   });
 
-  if (gtmPre.ready) {
+  if (gtmReady) {
     await runGtmConversionSetupActivity({
       setupRunId: load.setupRunId,
       businessId: load.businessId,

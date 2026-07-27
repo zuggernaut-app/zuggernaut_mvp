@@ -405,11 +405,55 @@ describe('adsAutoCampaignService', () => {
   });
 
   it('rejects when conversion artifacts are missing', async () => {
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
     const { bc, run } = await seedAdsCampaignRun('ads-no-conv@test.com', { conversions: [] });
 
     await expect(
       createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger })
     ).rejects.toMatchObject({ code: 'ADS_MISSING_CONVERSIONS' });
+
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run._id,
+        artifactType: { $in: ['ads_campaign', 'ads_campaign_budget', 'ads_ad_group', 'ads_keyword'] },
+      })
+    ).toBe(0);
+  });
+
+  it('persists bucketValidation and failed_validation when geo resolution fails', async () => {
+    const CampaignPlan = mongoose.model('CampaignPlan');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const geoClient = require('../services/integrations/googleAdsGeoTargetClient');
+    const { ADS_INTENT_CODES } = require('../constants/adsCampaignIntent');
+    const { bc, run } = await seedAdsCampaignRun('ads-geo-fail@test.com');
+
+    jest.spyOn(geoClient, 'resolvePrimaryGeoTargetConstant').mockRejectedValueOnce(
+      new geoClient.GeoTargetResolutionError(
+        'Could not resolve a unique geographic target for "The Lost City of Z".',
+        ADS_INTENT_CODES.UNRESOLVED_GEO
+      )
+    );
+
+    await expect(
+      createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger })
+    ).rejects.toMatchObject({
+      code: ADS_INTENT_CODES.UNRESOLVED_GEO,
+      field: 'geoTargetLabels',
+    });
+
+    const plan = await CampaignPlan.findOne({ setupRunId: run._id }).lean();
+    expect(plan?.status).toBe('failed_validation');
+    expect(plan?.bucketValidation?.geo?.status).toBe('fail');
+    expect(plan?.bucketValidation?.geo?.issues[0]?.code).toBe(ADS_INTENT_CODES.UNRESOLVED_GEO);
+
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run._id,
+        artifactType: { $in: ['ads_campaign', 'ads_campaign_budget', 'ads_ad_group', 'ads_keyword'] },
+      })
+    ).toBe(0);
+
+    jest.restoreAllMocks();
   });
 
   it('rejects when customerId is missing on connection', async () => {

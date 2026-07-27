@@ -40,6 +40,7 @@ describe('gtmResourceSelectionService', () => {
       tokenExpiryAt: new Date(Date.now() + 3600_000),
       scopes: [
         'https://www.googleapis.com/auth/tagmanager.edit.containers',
+        'https://www.googleapis.com/auth/tagmanager.edit.containerversions',
         'https://www.googleapis.com/auth/tagmanager.publish',
         'https://www.googleapis.com/auth/tagmanager.manage.accounts',
       ],

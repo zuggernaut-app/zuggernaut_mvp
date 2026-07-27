@@ -8,6 +8,7 @@ const { requireSetupReadyConnection, validateGtmIdentifiers } = require('./setup
 const {
   createGtmWorkspaceResource,
   createAndPublishContainerVersion,
+  enableGtmBuiltinVariables,
   getGtmAccessToken,
 } = require('../integrations/googleTagManagerClient');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
@@ -20,6 +21,29 @@ class GtmProviderPreconditionError extends Error {
     this.name = 'GtmProviderPreconditionError';
     this.code = code;
   }
+}
+
+/**
+ * GTM tag payloads require numeric trigger IDs in firingTriggerId[], not full resource paths.
+ *
+ * @param {string | null | undefined} resourcePath
+ * @returns {string | null}
+ */
+function gtmTriggerIdFromPath(resourcePath) {
+  if (!resourcePath || typeof resourcePath !== 'string') return null;
+  const match = resourcePath.match(/\/triggers\/(\d+)$/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Click built-in types to enable before create_version.
+ * create_version compiles the whole workspace, not just this run's plan.
+ *
+ * @param {object} _plan
+ * @returns {string[]}
+ */
+function requiredClickBuiltinTypes(_plan) {
+  return ['clickUrl', 'clickText', 'clickElement'];
 }
 
 /**
@@ -166,7 +190,11 @@ async function runGtmConversionSetup(ctx) {
       });
     }
 
-    resourcePaths.set(spec.logicalKey, resourcePath);
+    if (spec.kind === 'trigger') {
+      resourcePaths.set(spec.logicalKey, gtmTriggerIdFromPath(resourcePath) ?? resourcePath);
+    } else {
+      resourcePaths.set(spec.logicalKey, resourcePath);
+    }
   }
 
   for (const spec of tagResources) {
@@ -238,6 +266,11 @@ async function runGtmConversionSetup(ctx) {
     publishedVersionPath = existingVersion.externalId;
     reusedArtifacts += 1;
   } else {
+    const clickBuiltinTypes = requiredClickBuiltinTypes(plan);
+    if (clickBuiltinTypes.length > 0) {
+      await enableGtmBuiltinVariables(accessToken, gtmIds, clickBuiltinTypes);
+    }
+
     const published = await createAndPublishContainerVersion({
       gtmIds,
       accessToken,
@@ -317,4 +350,6 @@ module.exports = {
   runGtmConversionSetup,
   GtmProviderPreconditionError,
   validateGtmIdentifiers,
+  gtmTriggerIdFromPath,
+  requiredClickBuiltinTypes,
 };
