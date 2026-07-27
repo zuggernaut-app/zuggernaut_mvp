@@ -327,8 +327,14 @@ Instructions:
 - For primary goal `Both`, deterministically select one call conversion and one form conversion where available, **or programmatically create them if missing and required, ensuring they meet the criteria for Core Targeting & Conversion Goal Linking.**
 - Persist full catalog fetch in `ProviderSnapshot`; persist selected conversion identifiers in `IntegrationArtifact` for idempotent linkage.
 
-### Phase 8: GTM Conversion Setup Capability
+### Phase 8: GTM Conversion Setup Capability — **COMPLETE**
+
 Purpose: automate conversion tracking setup.
+
+#### Real-mode GTM conversion setup (optional E2E sign-off) — **PENDING**
+
+- **Automated verification:** Done — inventory, idempotency, templates, preconditions, workflow order, and `ProviderSnapshot` checks; runbook and evidence in `dev-tools/docs/PHASE8_GTM_CONVERSION_SETUP.md`.
+- **Manual real-mode E2E:** **Not done — deferred.** Same rerun/scrape constraints as Phase 7 Track A; optional operator happy-path run recorded in `dev-tools/docs/evidence/PHASE8_GTM_CONVERSION_SETUP_EVIDENCE.md`.
 
 Instructions:
 - Build `GTMConversionSetupService`.
@@ -349,8 +355,14 @@ V1 trigger templates:
 - Call `tel:` click trigger.
 - Call element hint click trigger.
 
-### Phase 9: GTM Snippet Setup-Pending and Verification
+### Phase 9: GTM Snippet Setup-Pending and Verification — **COMPLETE**
+
 Purpose: handle the manual website step without losing users.
+
+#### Real-mode snippet detection E2E (optional sign-off) — **PENDING**
+
+- **Automated verification:** Done — snippet presence check, structural verification coverage, state transitions, UI/recovery copy; runbook and evidence in `dev-tools/docs/PHASE9_GTM_SNIPPET_SETUP_PENDING.md`.
+- **Manual real-mode E2E:** **Not done — deferred.** No V1 re-verify API; user installs snippet and starts a **new** setup run (same rerun constraints as Phase 7 Track A). Optional operator run in `dev-tools/docs/evidence/PHASE9_GTM_SNIPPET_SETUP_PENDING_EVIDENCE.md`.
 
 Instructions:
 - Provide clear GTM snippet installation instructions in the UI.
@@ -379,7 +391,14 @@ Instructions:
 - Store campaign, ad group, ad, and conversion mapping IDs in `IntegrationArtifact`.
 - Campaign creation only runs after structural verification passes.
 
-### Phase 11: Reporting Dashboard
+#### Google Ads failure-path validation (real-mode E2E) — **PENDING**
+
+- **Track B (automated):** Done — intent/precondition failure codes covered by Jest; runbook and evidence templates in `dev-tools/docs/PHASE7_GOOGLE_ADS_FAILURE_VALIDATION.md`.
+- **Track A (manual real-mode E2E):** **Not done — deferred.** Cannot reliably trigger geo-unresolved or missing-conversion precondition failures from the product UI today: each new Setup Run creates a new run (no rerun), and scrape/setup re-derives `BusinessContext` (e.g. `serviceAreas`) so Mongo edits before a new run do not hold. Completing Track A requires a future rerun hook, dev-only failure injection, or equivalent — not blocking move to GTM / next phase.
+- **Interim:** Real-mode runs may still fail for other reasons (e.g. Google Ads policy on generated ad copy); verify failure surfaces in UI and `SetupStepExecution` without duplicate mutations when observed.
+
+### Phase 11: Reporting Dashboard — **COMPLETE**
+
 Purpose: show the customer the setup result.
 
 V1 dashboard should show:
@@ -389,6 +408,8 @@ V1 dashboard should show:
 - SetupRun progress and stuck-state instructions.
 
 Do not build a full optimization dashboard in V1.
+
+**Delivery:** Existing `SetupReportPage` (`/setup/report/:setupRunId`) and `SetupProgressPage` (`/setup/progress/:setupRunId`) backed by `setupRunReportService` and `GET /api/v1/setupRuns/:setupRunId` — no separate dashboard API or page. Inventory and sign-off: `dev-tools/docs/PHASE11_REPORTING_DASHBOARD.md` (stop gate passed; no additional implementation required).
 
 ### Phase 12: Reliability and Guardrails
 Purpose: make the MVP safe enough for real customers.
