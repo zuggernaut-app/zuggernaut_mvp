@@ -16,6 +16,8 @@ const {
   getMissingIdentifierKeys,
 } = require('../integrations/providerDiscoveryResult');
 const { getEffectiveAdsDiscoveryReason } = require('../integrations/googleAdsAccountClient');
+const { getGoogleAdsLoginCustomerId } = require('../integrations/googleAdsApiConfig');
+const { isMccLinkActiveForSetup } = require('./googleAdsMccLinkService');
 const { getFreshGoogleAccessToken, REFRESH_BUFFER_MS } = require('../integrations/googleTokenService');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
@@ -33,6 +35,8 @@ const CONNECTION_REASON = Object.freeze({
   SELECTION_REQUIRED: 'selection_required',
   GTM_ACCOUNT_REQUIRED: 'gtm_account_required',
   ADS_CUSTOMER_REQUIRED: 'ads_customer_not_found',
+  MCC_LINK_REQUIRED: 'mcc_link_required',
+  MCC_LINK_PENDING: 'mcc_link_pending',
 });
 
 const REQUIRED_FOR_SETUP = REQUIRED_FOR_SETUP_PROVIDERS;
@@ -127,6 +131,36 @@ function buildAdsCustomerRequiredStatus(base, identifiers) {
 
 /**
  * @param {object} base
+ * @param {object | null | undefined} identifiers
+ */
+function buildMccLinkRequiredStatus(base, identifiers) {
+  return {
+    ...base,
+    ready: false,
+    reason: CONNECTION_REASON.MCC_LINK_REQUIRED,
+    nextAction: 'link_google_ads_mcc',
+    identifiersMissing: ['mccLink'],
+    mccLink: identifiers?.mccLink ?? null,
+  };
+}
+
+/**
+ * @param {object} base
+ * @param {object | null | undefined} identifiers
+ */
+function buildMccLinkPendingStatus(base, identifiers) {
+  return {
+    ...base,
+    ready: false,
+    reason: CONNECTION_REASON.MCC_LINK_PENDING,
+    nextAction: 'verify_google_ads_mcc_link',
+    identifiersMissing: ['mccLink'],
+    mccLink: identifiers?.mccLink ?? null,
+  };
+}
+
+/**
+ * @param {object} base
  * @param {string} provider
  * @param {{ connectionHealth?: string | null, providerIdentifiers?: object | null }} row
  */
@@ -156,6 +190,20 @@ function resolveIdentifierReadinessStatus(base, provider, row) {
 
   if (!hasRequiredIdentifiers(provider, row.providerIdentifiers)) {
     return buildProvisioningRequiredStatus(base, provider, row.providerIdentifiers);
+  }
+
+  if (provider === 'google_ads') {
+    const loginCustomerId = getGoogleAdsLoginCustomerId();
+    if (loginCustomerId) {
+      const customerId = row.providerIdentifiers?.customerId;
+      const mccLink = row.providerIdentifiers?.mccLink ?? null;
+      if (!isMccLinkActiveForSetup(mccLink, customerId, loginCustomerId)) {
+        if (mccLink?.status === 'PENDING') {
+          return buildMccLinkPendingStatus(base, row.providerIdentifiers);
+        }
+        return buildMccLinkRequiredStatus(base, row.providerIdentifiers);
+      }
+    }
   }
 
   return {

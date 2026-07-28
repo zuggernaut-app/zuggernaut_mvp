@@ -17,6 +17,7 @@ const {
 } = require('./providerResourceSelection');
 const { SELECTION_SOURCE } = require('../../constants/providerResourceSelection');
 const { recordProviderResourceSelection } = require('./recordProviderResourceSelection');
+const { preserveMccLinkForSelection } = require('../capabilities/googleAdsMccLinkService');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
@@ -157,6 +158,18 @@ async function saveGoogleAdsSelection(businessId, selection) {
     selectionRequired: false,
     ...selectionTimestampFields(SELECTION_SOURCE.PRODUCT_SETUP),
   };
+
+  const priorConn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
+    .select('providerIdentifiers')
+    .lean();
+  const preservedMccLink = preserveMccLinkForSelection(
+    priorConn?.providerIdentifiers?.mccLink,
+    customerId,
+    described.loginCustomerId
+  );
+  if (preservedMccLink) {
+    providerIdentifiers.mccLink = preservedMccLink;
+  }
 
   await recordProviderResourceSelection(businessId, 'google_ads', providerIdentifiers, {
     source: SELECTION_SOURCE.PRODUCT_SETUP,

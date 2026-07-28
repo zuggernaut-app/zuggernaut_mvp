@@ -5,6 +5,7 @@ import { ApiError } from '../api/client'
 import { getBusinessContext } from '../api/businessContexts'
 import { startSetupRun } from '../api/setupRuns'
 import { GoogleAdsCustomerSelector } from '../components/integrations/GoogleAdsCustomerSelector'
+import { MccLinkPanel } from '../components/integrations/MccLinkPanel'
 import { GtmResourceSelector } from '../components/integrations/GtmResourceSelector'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
@@ -179,6 +180,15 @@ export function StartSetupPage(): ReactElement {
   const adsNeedsProvisioning =
     !googleAdsConnected && connections.google_ads?.reason === 'provisioning_required'
   const adsNeedsSelection = connections.google_ads?.reason === 'selection_required'
+  const adsCustomerId =
+    typeof connections.google_ads?.providerIdentifiers?.customerId === 'string'
+      ? connections.google_ads.providerIdentifiers.customerId
+      : null
+  const adsNeedsMccLink =
+    Boolean(adsCustomerId) &&
+    !googleAdsConnected &&
+    (connections.google_ads?.reason === 'mcc_link_required' ||
+      connections.google_ads?.reason === 'mcc_link_pending')
 
   return (
     <PageLayout
@@ -253,6 +263,13 @@ export function StartSetupPage(): ReactElement {
                       />
                     )
                   ) : null}
+                  {provider === 'google_ads' && adsCustomerId ? (
+                    <MccLinkPanel
+                      businessId={businessId}
+                      customerId={adsCustomerId}
+                      onUpdated={() => void refetchConnections()}
+                    />
+                  ) : null}
                 </li>
               )
             })}
@@ -263,7 +280,9 @@ export function StartSetupPage(): ReactElement {
                 ? 'Update your confirmed business context with the required fields above.'
                 : adsNeedsSelection
                   ? 'Select your Google Ads customer before setup can start.'
-                  : adsNeedsProvisioning
+                  : adsNeedsMccLink
+                    ? 'Link your selected Google Ads account to the Zuggernaut MCC before setup can start.'
+                    : adsNeedsProvisioning
                     ? 'Connect Google Ads via OAuth. If provisioning approval is needed, start setup and approve on the progress screen.'
                     : 'Google Ads must be connected before setup can start. GTM and GBP are optional.'}
             </p>

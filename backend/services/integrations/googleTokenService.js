@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
 const { GOOGLE_OAUTH_ENDPOINTS } = require('../../constants/googleOAuth');
 const { encryptToken, decryptToken } = require('../../lib/crypto/tokenEncryption');
+const { getMccGoogleAdsRefreshToken } = require('./googleAdsApiConfig');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
@@ -122,8 +123,27 @@ async function getFreshGoogleAccessToken({ businessId, provider }) {
   return refreshed.access_token;
 }
 
+/**
+ * Platform-level MCC admin access token for manager-side Google Ads API calls (invite only).
+ * Uses GOOGLE_ADS_MCC_REFRESH_TOKEN from server secrets — not tenant IntegrationConnection.
+ *
+ * @returns {Promise<string>}
+ */
+async function getMccGoogleAdsAccessToken() {
+  if (process.env.GOOGLE_OAUTH_MOCK === 'true') {
+    return 'mock-mcc-access-token';
+  }
+
+  const refreshToken = getMccGoogleAdsRefreshToken({ required: true });
+  const refreshed = await withProviderRateLimit('google_oauth', () =>
+    refreshGoogleAccessToken(refreshToken)
+  );
+  return refreshed.access_token;
+}
+
 module.exports = {
   REFRESH_BUFFER_MS,
   refreshGoogleAccessToken,
   getFreshGoogleAccessToken,
+  getMccGoogleAdsAccessToken,
 };

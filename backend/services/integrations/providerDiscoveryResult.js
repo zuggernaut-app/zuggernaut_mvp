@@ -181,6 +181,18 @@ function mergeRediscoveryWithSavedSelection(provider, priorIdentifiers, discover
     selectionRequired: false,
   };
 
+  if (provider === 'google_ads') {
+    const { preserveMccLinkForSelection } = require('../capabilities/googleAdsMccLinkService');
+    const preservedMccLink = preserveMccLinkForSelection(
+      priorIdentifiers.mccLink,
+      mergedIdentifiers.customerId,
+      mergedIdentifiers.loginCustomerId ?? mergedIdentifiers.managerCustomerId
+    );
+    if (preservedMccLink) {
+      mergedIdentifiers.mccLink = preservedMccLink;
+    }
+  }
+
   return buildDiscoveryResult(provider, mergedIdentifiers);
 }
 

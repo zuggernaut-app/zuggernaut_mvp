@@ -122,6 +122,24 @@ function getGoogleAdsLoginCustomerId(opts = {}) {
 }
 
 /**
+ * Platform-level MCC admin OAuth refresh token for manager-side Google Ads mutations
+ * (e.g. CustomerClientLink invite). Never tenant-scoped; load from server secrets only.
+ *
+ * @param {{ required?: boolean }} [opts]
+ * @returns {string | null}
+ */
+function getMccGoogleAdsRefreshToken(opts = {}) {
+  const refreshToken = process.env.GOOGLE_ADS_MCC_REFRESH_TOKEN?.trim();
+  if (!refreshToken && opts.required !== false) {
+    throw new GoogleAdsAccountError(
+      'GOOGLE_ADS_MCC_REFRESH_TOKEN is required for MCC link invite operations.',
+      'ADS_MCC_REFRESH_TOKEN_MISSING'
+    );
+  }
+  return refreshToken || null;
+}
+
+/**
  * @param {string} accessToken
  * @param {{
  *   loginCustomerId?: string | number | null,
@@ -373,6 +391,7 @@ module.exports = {
   redactCustomerId,
   getGoogleAdsDeveloperToken,
   getGoogleAdsLoginCustomerId,
+  getMccGoogleAdsRefreshToken,
   buildGoogleAdsHeaders,
   parseGoogleAdsApiError,
   formatGoogleAdsApiErrorMessage,

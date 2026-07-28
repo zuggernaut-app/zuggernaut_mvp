@@ -3,6 +3,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const BusinessContext = mongoose.model('BusinessContext');
+const IntegrationConnection = mongoose.model('IntegrationConnection');
 const SetupRun = mongoose.model('SetupRun');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
 const { requireAuth } = require('./middleware/requireAuth');
@@ -17,6 +18,11 @@ const {
   validateBusinessContextAdsReadiness,
   formatAdsReadinessSummary,
 } = require('../../services/capabilities/businessContextAdsReadinessService');
+const {
+  assertMccLinkReadyForSetup,
+  GoogleAdsMccLinkError,
+} = require('../../services/capabilities/googleAdsMccLinkService');
+const { getGoogleAdsLoginCustomerId } = require('../../services/integrations/googleAdsApiConfig');
 
 const router = express.Router();
 
@@ -58,6 +64,31 @@ router.post('/', requireAuth, async (req, res) => {
       message: formatAdsReadinessSummary(adsReadiness),
       issues: adsReadiness.issues,
     });
+  }
+
+  if (getGoogleAdsLoginCustomerId()) {
+    const adsConnection = await IntegrationConnection.findOne({
+      businessId,
+      provider: 'google_ads',
+    })
+      .select('providerIdentifiers')
+      .lean();
+    const selectedCustomerId = adsConnection?.providerIdentifiers?.customerId;
+
+    if (selectedCustomerId) {
+      try {
+        await assertMccLinkReadyForSetup(businessId, { refresh: false });
+      } catch (err) {
+        if (err instanceof GoogleAdsMccLinkError) {
+          return res.status(409).json({
+            error: err.code === 'ADS_MCC_LINK_PENDING' ? 'mcc_link_pending' : 'mcc_link_required',
+            message: err.message,
+            mccLink: err.details?.mccLink ?? null,
+          });
+        }
+        throw err;
+      }
+    }
   }
 
   const setupRun = await SetupRun.create({

@@ -27,6 +27,20 @@ const {
   GoogleAdsSetupError,
 } = require('./googleAdsSetupService');
 const {
+  GoogleAdsMccLinkError,
+  buildMccLinkKey,
+  isMccLinkForSelectedCustomer,
+  isMccLinkActiveForSetup,
+  persistMccLink,
+  refreshMccLinkStatus,
+  ensureMccLinkInvited,
+  assertMccLinkReadyForSetup,
+  acceptMccLinkIfAllowed,
+  buildNewlyCreatedUnderMccLink,
+  preserveMccLinkForSelection,
+  getMccLinkManualAcceptInstructions,
+} = require('./googleAdsMccLinkService');
+const {
   loadSetupReadyConnection,
   requireSetupReadyConnection,
   SetupReadyConnectionError,
@@ -68,4 +82,15 @@ module.exports = {
   ensureGoogleAdsProvisioningApproval,
   assertGoogleAdsSetupReady,
   GoogleAdsSetupError,
+  GoogleAdsMccLinkError,
+  buildMccLinkKey,
+  isMccLinkForSelectedCustomer,
+  isMccLinkActiveForSetup,
+  persistMccLink,
+  refreshMccLinkStatus,
+  ensureMccLinkInvited,
+  assertMccLinkReadyForSetup,
+  acceptMccLinkIfAllowed,
+  buildNewlyCreatedUnderMccLink,
+  preserveMccLinkForSelection,
 };

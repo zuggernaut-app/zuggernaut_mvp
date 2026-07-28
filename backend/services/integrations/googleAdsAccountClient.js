@@ -546,14 +546,20 @@ async function getCustomerManagerLinkStatus(accessToken, clientCustomerId, manag
 /**
  * Combine manager-side and client-side link views, preferring PENDING then ACTIVE.
  *
- * @param {string} accessToken
+ * @param {string} managerAccessToken — MCC admin token for manager-side CustomerClientLink queries
  * @param {string} managerCustomerId
  * @param {string} clientCustomerId
+ * @param {string} [customerAccessToken] — tenant token for client-side CustomerManagerLink queries
  */
-async function resolveMccLinkStatus(accessToken, managerCustomerId, clientCustomerId) {
+async function resolveMccLinkStatus(
+  managerAccessToken,
+  managerCustomerId,
+  clientCustomerId,
+  customerAccessToken = managerAccessToken
+) {
   const [managerView, clientView] = await Promise.all([
-    getCustomerClientLinkStatus(accessToken, managerCustomerId, clientCustomerId),
-    getCustomerManagerLinkStatus(accessToken, clientCustomerId, managerCustomerId),
+    getCustomerClientLinkStatus(managerAccessToken, managerCustomerId, clientCustomerId),
+    getCustomerManagerLinkStatus(customerAccessToken, clientCustomerId, managerCustomerId),
   ]);
 
   const managerLink = { ...managerView, source: 'manager' };

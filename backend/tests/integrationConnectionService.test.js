@@ -21,6 +21,10 @@ const SETUP_READY_ADS_IDS = {
 };
 
 describe('integrationConnectionService', () => {
+  afterEach(() => {
+    delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+  });
+
   it('returns missing_connection when no row exists', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
@@ -335,6 +339,69 @@ describe('integrationConnectionService', () => {
     const { missing, allReady } = await getRequiredSetupConnections(bc.businessId);
     expect(allReady).toBe(true);
     expect(missing).toEqual([]);
+  });
+
+  it('returns mcc_link_required when customer selected but MCC link missing', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const user = await User.create({ email: 'ics-mcc-required@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: ['https://www.googleapis.com/auth/adwords'],
+      providerIdentifiers: {
+        customerId: '1234567890',
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+      },
+    });
+
+    const s = await getConnectionStatus(bc.businessId, 'google_ads');
+    expect(s.ready).toBe(false);
+    expect(s.reason).toBe(CONNECTION_REASON.MCC_LINK_REQUIRED);
+    expect(s.nextAction).toBe('link_google_ads_mcc');
+  });
+
+  it('returns mcc_link_pending when invitation is pending', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const user = await User.create({ email: 'ics-mcc-pending@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: ['https://www.googleapis.com/auth/adwords'],
+      providerIdentifiers: {
+        customerId: '1234567890',
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+        mccLink: {
+          status: 'PENDING',
+          managerCustomerId: '3462198684',
+          clientCustomerId: '1234567890',
+        },
+      },
+    });
+
+    const s = await getConnectionStatus(bc.businessId, 'google_ads');
+    expect(s.ready).toBe(false);
+    expect(s.reason).toBe(CONNECTION_REASON.MCC_LINK_PENDING);
+    expect(s.nextAction).toBe('verify_google_ads_mcc_link');
   });
 
   it('assertConnectionReady throws provisioning hint when identifiers missing', () => {

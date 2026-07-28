@@ -27,6 +27,15 @@ const {
   parseGtmSelectionBody,
   parseGoogleAdsSelectionBody,
 } = require('../../services/integrations/providerResourceSelection');
+const {
+  GoogleAdsMccLinkError,
+  refreshMccLinkStatus,
+  ensureMccLinkInvited,
+  acceptMccLinkIfAllowed,
+  getMccLinkManualAcceptInstructions,
+} = require('../../services/capabilities/googleAdsMccLinkService');
+const { GoogleAdsAccountError } = require('../../services/integrations/googleAdsApiConfig');
+const IntegrationConnection = mongoose.model('IntegrationConnection');
 
 const router = express.Router();
 
@@ -48,6 +57,47 @@ function mapSelectionError(err, res) {
     });
   }
   return null;
+}
+
+function mapMccLinkError(err, res) {
+  if (err instanceof GoogleAdsMccLinkError) {
+    const statusByCode = {
+      ADS_CUSTOMER_NOT_SELECTED: 409,
+      ADS_MCC_LINK_NOT_PENDING: 409,
+      ADS_MCC_REFRESH_TOKEN_MISSING: 503,
+    };
+    return res.status(statusByCode[err.code] ?? 400).json({
+      error: err.code,
+      message: err.message,
+    });
+  }
+  if (err instanceof GoogleAdsAccountError) {
+    const statusByCode = {
+      ADS_MCC_REFRESH_TOKEN_MISSING: 503,
+      ADS_MCC_PERMISSION_DENIED: 403,
+      ADS_MCC_CONFIG_MISSING: 503,
+    };
+    const httpStatus =
+      statusByCode[err.code] ??
+      (err.details?.statusCode === 403
+        ? 403
+        : err.details?.statusCode === 401
+          ? 401
+          : 502);
+    return res.status(httpStatus).json({
+      error: err.code,
+      message: err.message,
+    });
+  }
+  return null;
+}
+
+function mccLinkResponse(mccLink, extra = {}) {
+  return {
+    mccLink: mccLink ?? null,
+    manualAccept: getMccLinkManualAcceptInstructions(),
+    ...extra,
+  };
 }
 
 router.get('/status', requireAuth, async (req, res, next) => {
@@ -215,6 +265,116 @@ router.put('/google_ads/selection', requireAuth, async (req, res, next) => {
     return res.status(200).json({ result });
   } catch (err) {
     const mapped = mapSelectionError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.get('/google_ads/mcc-link-status', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
+    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    if (req.query.refresh === 'true') {
+      const refreshed = await refreshMccLinkStatus(access.businessId);
+      return res.status(200).json(
+        mccLinkResponse(refreshed.mccLink, {
+          businessId: access.businessId.toString(),
+          refreshed: true,
+        })
+      );
+    }
+
+    const conn = await IntegrationConnection.findOne({
+      businessId: access.businessId,
+      provider: 'google_ads',
+    })
+      .select('providerIdentifiers.mccLink providerIdentifiers.customerId')
+      .lean();
+
+    return res.status(200).json(
+      mccLinkResponse(conn?.providerIdentifiers?.mccLink ?? null, {
+        businessId: access.businessId.toString(),
+        refreshed: false,
+        customerId: conn?.providerIdentifiers?.customerId ?? null,
+      })
+    );
+  } catch (err) {
+    const mapped = mapMccLinkError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/mcc-link/invite', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    const result = await ensureMccLinkInvited(access.businessId);
+    return res.status(200).json(
+      mccLinkResponse(result.mccLink, {
+        businessId: access.businessId.toString(),
+        outcome: result.outcome,
+      })
+    );
+  } catch (err) {
+    const mapped = mapMccLinkError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/mcc-link/accept', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    if (process.env.GOOGLE_ADS_MCC_AUTO_ACCEPT_ENABLED !== 'true') {
+      return res.status(409).json({
+        error: 'manual_accept_required',
+        message: 'Automatic MCC link acceptance is not enabled. Accept the invitation in Google Ads.',
+        ...mccLinkResponse(
+          (
+            await IntegrationConnection.findOne({
+              businessId: access.businessId,
+              provider: 'google_ads',
+            })
+              .select('providerIdentifiers.mccLink')
+              .lean()
+          )?.providerIdentifiers?.mccLink ?? null
+        ),
+      });
+    }
+
+    const result = await acceptMccLinkIfAllowed(access.businessId);
+    return res.status(200).json(
+      mccLinkResponse(result.mccLink, {
+        businessId: access.businessId.toString(),
+        outcome: result.outcome,
+        ...(result.message ? { message: result.message } : {}),
+      })
+    );
+  } catch (err) {
+    const mapped = mapMccLinkError(err, res);
     if (mapped) return mapped;
     next(err);
   }

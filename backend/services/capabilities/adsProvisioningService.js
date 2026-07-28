@@ -11,6 +11,7 @@ const {
 } = require('../integrations/googleAdsAccountClient');
 const { getFreshGoogleAccessToken } = require('../integrations/googleTokenService');
 const { hasRequiredIdentifiers } = require('../integrations/providerDiscoveryResult');
+const { buildNewlyCreatedUnderMccLink } = require('./googleAdsMccLinkService');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
@@ -218,6 +219,16 @@ async function provisionGoogleAdsCustomer(input) {
       ...(customerResult.loginCustomerId ? { loginCustomerId: customerResult.loginCustomerId } : {}),
       ...(customerResult.managerCustomerId ? { managerCustomerId: customerResult.managerCustomerId } : {}),
     };
+
+    if (customerResult.provisioningSource === 'mcc_create') {
+      const mccLink = buildNewlyCreatedUnderMccLink(
+        customerResult.customerId,
+        customerResult.managerCustomerId ?? customerResult.loginCustomerId
+      );
+      if (mccLink) {
+        providerIdentifiers.mccLink = mccLink;
+      }
+    }
 
     if (!hasRequiredIdentifiers('google_ads', providerIdentifiers)) {
       throw new AdsProvisioningError(

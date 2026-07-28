@@ -102,6 +102,8 @@ export function optionalIntegrationNudge(
 
 export function integrationStatusLabel(status: IntegrationConnectionStatusDto): string {
   if (status.ready) return 'Connected'
+  if (status.reason === 'mcc_link_required') return 'MCC link required'
+  if (status.reason === 'mcc_link_pending') return 'MCC link pending'
   if (status.reason === 'selection_required') return 'Account selection needed'
   if (status.reason === 'gtm_account_required') return 'GTM account needed'
   if (status.reason === 'ads_customer_not_found') return 'Google Ads account needed'

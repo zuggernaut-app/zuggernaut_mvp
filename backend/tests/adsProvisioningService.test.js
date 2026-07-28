@@ -120,6 +120,7 @@ describe('adsProvisioningService', () => {
     expect(result.connectionHealth).toBe('connected');
     expect(result.providerIdentifiers.customerId).toBe('1234567890');
     expect(result.providerIdentifiers.loginCustomerId).toBe('9999999999');
+    expect(result.providerIdentifiers.mccLink).toBeUndefined();
 
     const artifact = await mongoose.model('IntegrationArtifact').findOne({
       businessId: bc.businessId,
@@ -144,6 +145,14 @@ describe('adsProvisioningService', () => {
 
     expect(createCustomerClient).toHaveBeenCalledTimes(1);
     expect(result.providerIdentifiers.customerId).toBe('mock-provisioned-customer');
+    expect(result.providerIdentifiers.mccLink).toEqual(
+      expect.objectContaining({
+        status: 'ACTIVE',
+        managerCustomerId: '9999999999',
+        clientCustomerId: 'mockprovisionedcustomer',
+        provisioningSource: 'mcc_create',
+      })
+    );
 
     const conn = await mongoose.model('IntegrationConnection').findOne({ businessId: bc.businessId, provider: 'google_ads' }).lean();
     expect(conn.connectionHealth).toBe('connected');

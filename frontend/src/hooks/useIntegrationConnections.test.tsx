@@ -16,6 +16,7 @@ vi.mock('../hooks/useIntegrationConnections', () => ({
 vi.mock('../api/businessContexts', () => ({
   getBusinessContext: vi.fn().mockResolvedValue({
     businessContext: { businessId: '507f1f77bcf86cd799439011', confirmedAt: new Date().toISOString() },
+    adsReadiness: { ok: true },
   }),
 }))
 
@@ -25,6 +26,12 @@ vi.mock('../components/integrations/GtmResourceSelector', () => ({
 
 vi.mock('../components/integrations/GoogleAdsCustomerSelector', () => ({
   GoogleAdsCustomerSelector: () => <div>Ads selector panel</div>,
+}))
+
+vi.mock('../components/integrations/MccLinkPanel', () => ({
+  MccLinkPanel: ({ customerId }: { customerId: string }) => (
+    <div data-testid="mcc-link-panel">MCC panel for {customerId}</div>
+  ),
 }))
 
 const mockUseIntegrationConnections = vi.mocked(useIntegrationConnections)
@@ -232,5 +239,110 @@ describe('StartSetupPage integrations', () => {
     const user = userEvent.setup()
     await user.click((await screen.findAllByRole('button', { name: /connect google/i }))[0])
     expect(connectProvider).toHaveBeenCalled()
+  })
+
+  it('blocks start setup when MCC link is pending', async () => {
+    mockConnections({
+      connections: {
+        gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
+        gtm: { provider: 'gtm', ready: true, reason: 'ok' } as never,
+        google_ads: {
+          provider: 'google_ads',
+          ready: false,
+          reason: 'mcc_link_pending',
+          providerIdentifiers: { customerId: '1234567890' },
+        } as never,
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <OnboardingProvider>
+          <StartSetupPage />
+        </OnboardingProvider>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTestId('mcc-link-panel')).toHaveTextContent('1234567890')
+    expect(screen.getByRole('button', { name: /start setup/i })).toBeDisabled()
+    expect(
+      screen.getByText(/Link your selected Google Ads account to the Zuggernaut MCC/i),
+    ).toBeInTheDocument()
+  })
+
+  it('enables start setup when active MCC link matches selected customer', async () => {
+    mockConnections({
+      connections: {
+        gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
+        gtm: { provider: 'gtm', ready: true, reason: 'ok' } as never,
+        google_ads: {
+          provider: 'google_ads',
+          ready: true,
+          reason: 'ok',
+          providerIdentifiers: { customerId: '1234567890' },
+        } as never,
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <OnboardingProvider>
+          <StartSetupPage />
+        </OnboardingProvider>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /start setup/i })).toBeEnabled()
+    })
+    expect(screen.getByTestId('mcc-link-panel')).toHaveTextContent('1234567890')
+  })
+
+  it('updates MCC panel when selected customer changes', async () => {
+    mockConnections({
+      connections: {
+        gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
+        gtm: { provider: 'gtm', ready: true, reason: 'ok' } as never,
+        google_ads: {
+          provider: 'google_ads',
+          ready: false,
+          reason: 'mcc_link_required',
+          providerIdentifiers: { customerId: '1111111111' },
+        } as never,
+      },
+    })
+
+    const view = render(
+      <MemoryRouter initialEntries={['/setup']}>
+        <OnboardingProvider>
+          <StartSetupPage />
+        </OnboardingProvider>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTestId('mcc-link-panel')).toHaveTextContent('1111111111')
+
+    mockConnections({
+      connections: {
+        gbp: { provider: 'gbp', ready: false, reason: 'missing_connection' } as never,
+        gtm: { provider: 'gtm', ready: true, reason: 'ok' } as never,
+        google_ads: {
+          provider: 'google_ads',
+          ready: false,
+          reason: 'mcc_link_required',
+          providerIdentifiers: { customerId: '2222222222' },
+        } as never,
+      },
+    })
+
+    view.rerender(
+      <MemoryRouter initialEntries={['/setup']}>
+        <OnboardingProvider>
+          <StartSetupPage />
+        </OnboardingProvider>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTestId('mcc-link-panel')).toHaveTextContent('2222222222')
   })
 })

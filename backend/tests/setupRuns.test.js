@@ -14,6 +14,8 @@ const {
   SCRAPE_WORKFLOW_NAME,
   resolveTemporalTaskQueue,
 } = require('../constants/temporalDefaults');
+const { encryptToken } = require('../lib/crypto/tokenEncryption');
+const { allScopesForProvider } = require('../constants/googleOAuth');
 
 describe('setup-runs API', () => {
   const app = createApp();
@@ -24,6 +26,13 @@ describe('setup-runs API', () => {
         start: jest.fn().mockResolvedValue(undefined),
       },
     });
+  });
+
+  afterEach(() => {
+    delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    delete process.env.GOOGLE_ADS_API_MOCK;
+    delete process.env.GOOGLE_OAUTH_MOCK;
+    delete process.env.GOOGLE_ADS_MCC_REFRESH_TOKEN;
   });
 
   async function confirmedBusiness(email) {
@@ -91,6 +100,9 @@ describe('setup-runs API', () => {
   });
 
   it('201 starts workflow when Temporal is reachable', async () => {
+    const priorLogin = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+    delete process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+
     const workflowStart = jest.fn().mockResolvedValue(undefined);
     getTemporalClient.mockResolvedValue({
       workflow: { start: workflowStart },
@@ -110,6 +122,193 @@ describe('setup-runs API', () => {
         args: [{ setupRunId: res.body.setupRunId, message: 'setup-started' }],
       })
     );
+
+    if (priorLogin) process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = priorLogin;
+  });
+
+  it('409 mcc_link_required when MCC is configured but link is missing', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    process.env.GOOGLE_OAUTH_MOCK = 'true';
+
+    const { agent, bid } = await confirmedBusiness('sr-mcc-required@test.com');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    await IntegrationConnection.create({
+      businessId: bid,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: {
+        customerId: '1234567890',
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+      },
+    });
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    expect(res.body.error).toBe('mcc_link_required');
+  });
+
+  it('409 mcc_link_pending when MCC link invitation is pending', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    process.env.GOOGLE_OAUTH_MOCK = 'true';
+
+    const { agent, bid } = await confirmedBusiness('sr-mcc-pending@test.com');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    await IntegrationConnection.create({
+      businessId: bid,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: {
+        customerId: '1234567890',
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+        mccLink: {
+          status: 'PENDING',
+          managerCustomerId: '3462198684',
+          clientCustomerId: '1234567890',
+        },
+      },
+    });
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    expect(res.body.error).toBe('mcc_link_pending');
+  });
+
+  it('409 mcc_link_required when mccLink client does not match selected customer', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    process.env.GOOGLE_OAUTH_MOCK = 'true';
+
+    const { agent, bid } = await confirmedBusiness('sr-mcc-wrong-client@test.com');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    await IntegrationConnection.create({
+      businessId: bid,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: {
+        customerId: '1234567890',
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+        mccLink: {
+          status: 'ACTIVE',
+          managerCustomerId: '3462198684',
+          clientCustomerId: '9999999999',
+        },
+      },
+    });
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    expect(res.body.error).toBe('mcc_link_required');
+  });
+
+  it('409 mcc_link_required when mccLink manager does not match configured MCC', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    process.env.GOOGLE_OAUTH_MOCK = 'true';
+
+    const { agent, bid } = await confirmedBusiness('sr-mcc-wrong-manager@test.com');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    await IntegrationConnection.create({
+      businessId: bid,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: {
+        customerId: '1234567890',
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+        mccLink: {
+          status: 'ACTIVE',
+          managerCustomerId: '9999999999',
+          clientCustomerId: '1234567890',
+        },
+      },
+    });
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    expect(res.body.error).toBe('mcc_link_required');
+  });
+
+  it('201 when MCC is configured but no customer is selected yet', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    process.env.GOOGLE_OAUTH_MOCK = 'true';
+
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-mcc-no-customer@test.com');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    await IntegrationConnection.create({
+      businessId: bid,
+      provider: 'google_ads',
+      connectionHealth: 'provisioning_required',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: {
+        discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+        accessibleCustomerIds: [],
+      },
+    });
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+    expect(res.body.status).toBe('RUNNING');
+  });
+
+  it('201 when active MCC link matches selected customer', async () => {
+    process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = '3462198684';
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    process.env.GOOGLE_OAUTH_MOCK = 'true';
+
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-mcc-active@test.com');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    await IntegrationConnection.create({
+      businessId: bid,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('token'),
+      refreshTokenEnc: encryptToken('refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('google_ads'),
+      providerIdentifiers: {
+        customerId: '1234567890',
+        loginCustomerId: '3462198684',
+        managerCustomerId: '3462198684',
+        mccLink: {
+          status: 'ACTIVE',
+          managerCustomerId: '3462198684',
+          clientCustomerId: '1234567890',
+        },
+      },
+    });
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+    expect(res.body.status).toBe('RUNNING');
   });
 
   it('503 preserves setupRunId when Temporal workflow start fails', async () => {

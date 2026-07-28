@@ -268,6 +268,34 @@ describe('provider discovery', () => {
       expect(merged.providerIdentifiers.accessibleCustomerIds).toEqual(['1234567890', '7809414862']);
     });
 
+    it('preserves saved Google Ads mccLink when rediscovery merges saved selection', () => {
+      const discovery = buildSelectionRequiredResult(
+        'google_ads',
+        {
+          accessibleCustomerIds: ['8383537213'],
+          loginCustomerId: '2940178860',
+        },
+        defaultSelectionReason('google_ads')
+      );
+      const mccLink = {
+        status: 'ACTIVE',
+        managerCustomerId: '2940178860',
+        clientCustomerId: '8383537213',
+        checkedAt: '2026-06-10T12:00:00.000Z',
+        acceptedAt: '2026-06-10T12:00:00.000Z',
+      };
+      const prior = {
+        customerId: '8383537213',
+        loginCustomerId: '2940178860',
+        selectionRequired: false,
+        mccLink,
+      };
+
+      const merged = mergeRediscoveryWithSavedSelection('google_ads', prior, discovery);
+
+      expect(merged.providerIdentifiers.mccLink).toEqual(mccLink);
+    });
+
     it('does not preserve Google Ads selection when customer is no longer accessible', () => {
       const discovery = buildSelectionRequiredResult(
         'google_ads',

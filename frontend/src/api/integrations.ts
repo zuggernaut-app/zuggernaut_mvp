@@ -247,3 +247,56 @@ export async function saveGoogleAdsSelection(
 ): Promise<{ result: GoogleAdsResourceOptionsResult & { providerIdentifiers?: Record<string, unknown> } }> {
   return apiRequest(`/integrations/google_ads/selection`, { method: 'PUT', body })
 }
+
+export interface MccLinkState {
+  status: 'ACTIVE' | 'PENDING' | 'REQUIRED' | string | null
+  managerCustomerId?: string | null
+  clientCustomerId?: string | null
+  managerLinkId?: string | null
+  resourceName?: string | null
+  invitedAt?: string | null
+  acceptedAt?: string | null
+  checkedAt?: string | null
+  provisioningSource?: string | null
+}
+
+export interface MccLinkManualAcceptInstructions {
+  summary: string
+  steps: string[]
+  googleAdsUrl: string
+}
+
+export interface MccLinkStatusResponse {
+  businessId: string
+  mccLink: MccLinkState | null
+  manualAccept: MccLinkManualAcceptInstructions
+  refreshed?: boolean
+  customerId?: string | null
+  outcome?: string
+  message?: string
+}
+
+export async function getMccLinkStatus(
+  businessId: string,
+  options?: { refresh?: boolean },
+): Promise<MccLinkStatusResponse> {
+  const q = new URLSearchParams({ businessId })
+  if (options?.refresh) {
+    q.set('refresh', 'true')
+  }
+  return apiRequest<MccLinkStatusResponse>(`/integrations/google_ads/mcc-link-status?${q.toString()}`)
+}
+
+export async function sendMccLinkInvite(businessId: string): Promise<MccLinkStatusResponse> {
+  return apiRequest<MccLinkStatusResponse>(`/integrations/google_ads/mcc-link/invite`, {
+    method: 'POST',
+    body: { businessId },
+  })
+}
+
+export async function acceptMccLinkInvite(businessId: string): Promise<MccLinkStatusResponse> {
+  return apiRequest<MccLinkStatusResponse>(`/integrations/google_ads/mcc-link/accept`, {
+    method: 'POST',
+    body: { businessId },
+  })
+}

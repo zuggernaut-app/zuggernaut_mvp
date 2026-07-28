@@ -234,4 +234,59 @@ describe('googleAdsAccountClient', () => {
     expect(body.query).toContain("customers/2940178860");
     expect(config.headers['login-customer-id']).toBe('7809414862');
   });
+
+  it('resolveMccLinkStatus uses separate tokens for manager and client queries', async () => {
+    axios.post.mockImplementation(async (_url, body, config) => {
+      if (body.query.includes('customer_client_link')) {
+        return {
+          status: 200,
+          data: {
+            results: [
+              {
+                customerClientLink: {
+                  status: 'ACTIVE',
+                  managerLinkId: '1',
+                  resourceName: 'customers/2940178860/customerClientLinks/1',
+                  clientCustomer: 'customers/7809414862',
+                },
+              },
+            ],
+          },
+        };
+      }
+
+      return {
+        status: 200,
+        data: {
+          results: [
+            {
+              customerManagerLink: {
+                status: 'ACTIVE',
+                managerLinkId: '1',
+                resourceName: 'customers/7809414862/customerManagerLinks/2940178860~1',
+                managerCustomer: 'customers/2940178860',
+              },
+            },
+          ],
+        },
+      };
+    });
+
+    const resolved = await resolveMccLinkStatus(
+      'manager-token',
+      '2940178860',
+      '7809414862',
+      'customer-token'
+    );
+    expect(resolved.linkReady).toBe(true);
+
+    const managerCall = axios.post.mock.calls.find(([, body]) =>
+      body.query.includes('customer_client_link')
+    );
+    const clientCall = axios.post.mock.calls.find(([, body]) =>
+      body.query.includes('customer_manager_link')
+    );
+    expect(managerCall?.[2]?.headers?.Authorization).toBe('Bearer manager-token');
+    expect(clientCall?.[2]?.headers?.Authorization).toBe('Bearer customer-token');
+  });
 });
