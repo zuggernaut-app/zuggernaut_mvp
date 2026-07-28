@@ -35,6 +35,11 @@ async function main() {
     process.env.GOOGLE_CLIENT_SECRET ?? 'playwright-e2e-google-client-secret';
   process.env.FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN ?? 'http://127.0.0.1:5173';
   process.env.TEMPORAL_E2E_MOCK = process.env.TEMPORAL_E2E_MOCK ?? 'true';
+  process.env.TEMPORAL_E2E_EMBEDDED_WORKER = 'true';
+  process.env.E2E_FIXTURE_ROUTES = 'true';
+
+  const { startE2eTemporalStack } = require('../lib/e2eTemporalStack');
+  await startE2eTemporalStack();
 
   require(path.join(__dirname, '..', 'server.js'));
 }

@@ -19,9 +19,14 @@ router.get('/health', (_req, res) => {
       taskQueue: resolveTemporalTaskQueue(),
       setupWorkflow: SETUP_RUN_WORKFLOW_NAME,
       temporalE2eMock: process.env.TEMPORAL_E2E_MOCK === 'true',
+      temporalE2eEmbeddedWorker: process.env.TEMPORAL_E2E_EMBEDDED_WORKER === 'true',
     },
   });
 });
+
+if (process.env.E2E_FIXTURE_ROUTES === 'true') {
+  router.use('/e2e/fixtures', require('./e2eFixtures'));
+}
 
 router.use('/users', require('./users'));
 router.use('/auth', require('./auth'));

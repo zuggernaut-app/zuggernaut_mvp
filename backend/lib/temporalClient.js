@@ -2,8 +2,8 @@
 
 const { Connection, Client } = require('@temporalio/client');
 const { withRetry } = require('../scripts/temporal-connect-retry');
+const { resolveTemporalConnectOptions } = require('./temporalConnectionOptions');
 const {
-  resolveTemporalAddress,
   resolveTemporalNamespace,
   resolveTemporalTaskQueue,
 } = require('../constants/temporalDefaults');
@@ -36,6 +36,14 @@ function createE2eMockClient() {
  * Uses same env vars as worker/demo scripts.
  */
 function getTemporalClient() {
+  if (process.env.TEMPORAL_E2E_EMBEDDED_WORKER === 'true') {
+    if (!clientPromise) {
+      const { getE2eTemporalClient } = require('./e2eTemporalStack');
+      clientPromise = getE2eTemporalClient();
+    }
+    return clientPromise;
+  }
+
   if (process.env.TEMPORAL_E2E_MOCK === 'true') {
     if (!clientPromise) {
       clientPromise = Promise.resolve(createE2eMockClient());
@@ -45,10 +53,10 @@ function getTemporalClient() {
 
   if (!clientPromise) {
     clientPromise = (async () => {
-      const address = resolveTemporalAddress();
       const namespace = resolveTemporalNamespace();
+      const connectOptions = resolveTemporalConnectOptions();
       const connection = await withRetry('Temporal API client', () =>
-        Connection.connect({ address, tls: false })
+        Connection.connect(connectOptions)
       );
       return new Client({ connection, namespace });
     })();

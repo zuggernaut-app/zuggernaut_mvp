@@ -39,7 +39,13 @@ export async function seedConfirmedBusiness(page: Page): Promise<string> {
   const businessId = draftBody.businessId
 
   const confirm = await request.put(`${apiOrigin}/api/v1/business-contexts/${businessId}`, {
-    data: { businessName: 'Playwright E2E Co' },
+    data: {
+      businessName: 'Playwright E2E Co',
+      websiteUrl: `${apiOrigin}/api/v1/e2e/fixtures/site-with-gtm`,
+      services: ['Plumbing'],
+      serviceAreas: ['Springfield'],
+      goals: { primary: 'calls' },
+    },
   })
   if (!confirm.ok()) {
     throw new Error(
@@ -80,10 +86,46 @@ export async function connectMockGoogleIntegration(
   }
 }
 
+export async function selectMockGtmResources(
+  page: Page,
+  businessId: string,
+): Promise<void> {
+  const request = page.request
+  const res = await request.put(`${apiOrigin}/api/v1/integrations/gtm/selection`, {
+    data: {
+      businessId,
+      accountId: 'mock-account',
+      containerId: 'mock-container',
+      workspaceId: 'mock-workspace',
+    },
+  })
+  if (!res.ok()) {
+    throw new Error(`GTM selection failed: HTTP ${res.status()} ${await res.text()}`)
+  }
+}
+
+export async function selectMockGoogleAdsCustomer(
+  page: Page,
+  businessId: string,
+): Promise<void> {
+  const request = page.request
+  const res = await request.put(`${apiOrigin}/api/v1/integrations/google_ads/selection`, {
+    data: {
+      businessId,
+      customerId: '1234567890',
+    },
+  })
+  if (!res.ok()) {
+    throw new Error(`Google Ads selection failed: HTTP ${res.status()} ${await res.text()}`)
+  }
+}
+
 export async function seedSetupReadyBusiness(page: Page): Promise<string> {
   const businessId = await seedConfirmedBusiness(page)
   await connectMockGoogleIntegration(page, businessId, 'gtm')
+  await selectMockGtmResources(page, businessId)
   await connectMockGoogleIntegration(page, businessId, 'google_ads')
+  await selectMockGoogleAdsCustomer(page, businessId)
 
   await page.evaluate((id) => {
     localStorage.setItem('zuggernaut:businessId', id)

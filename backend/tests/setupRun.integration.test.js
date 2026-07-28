@@ -8,7 +8,12 @@ const { fetchAndPersistConversionCatalog } = require('../services/capabilities/a
 const { runGtmConversionSetup } = require('../services/capabilities/gtmConversionSetupService');
 const { runStructuralVerification } = require('../services/capabilities/structuralVerificationService');
 const { createAdsAutoCampaign } = require('../services/capabilities/adsAutoCampaignService');
+const { manageConversionActions } = require('../services/capabilities/adsConversionActionManagementService');
+const { provisionGtmResources } = require('../services/capabilities/gtmProvisioningService');
 const { buildSetupRunReport } = require('../services/reports/setupRunReportService');
+const { encryptToken } = require('../lib/crypto/tokenEncryption');
+const { allScopesForProvider } = require('../constants/googleOAuth');
+const { DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER } = require('../constants/provisioning');
 const {
   createConfirmedBusiness,
   connectGoogleIntegrations,
@@ -118,5 +123,124 @@ describe('setup run integration (mocked provider APIs)', () => {
     const second = await createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger });
     expect(second.summary.reusedArtifacts).toBeGreaterThanOrEqual(1);
     expect(second.summary.adCreated).toBe(true);
+  });
+
+  it('manageAdsConversionActions resolves required slots before catalog persistence', async () => {
+    const { bc, run } = await createConfirmedBusiness('int-manage-ca@test.com', {
+      goals: { primary: 'calls' },
+    });
+    await connectGoogleIntegrations(bc.businessId);
+
+    const manage = await manageConversionActions({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      logger,
+    });
+
+    expect(manage.outcome).toBe('ok');
+    expect(manage.slotsResolved).toBeGreaterThanOrEqual(1);
+
+    await fetchAndPersistConversionCatalog({ setupRunId: run._id, businessId: bc.businessId, logger });
+
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run._id,
+        artifactType: 'ads_conversion_action',
+      })
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('GTM provisioning branch creates workspace artifacts then continues setup', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const IntegrationProvisioningRequest = mongoose.model('IntegrationProvisioningRequest');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+
+    const user = await User.create({ email: `int-gtm-prov-${Date.now()}@test.com` });
+    const bc = await BusinessContext.create({
+      userId: user._id,
+      confirmedAt: new Date(),
+      businessName: 'Provision Co',
+      websiteUrl: 'https://provision.example',
+      services: ['Plumbing'],
+      serviceAreas: ['Springfield'],
+      goals: { primary: 'calls' },
+    });
+    const run = await mongoose.model('SetupRun').create({
+      businessId: bc.businessId,
+      status: 'RUNNING',
+    });
+
+    const token = encryptToken('test-access');
+    const refresh = encryptToken('test-refresh');
+    const expiry = new Date(Date.now() + 3600_000);
+
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'gtm',
+      connectionHealth: 'provisioning_required',
+      accessTokenEnc: token,
+      refreshTokenEnc: refresh,
+      tokenExpiryAt: expiry,
+      scopes: allScopesForProvider('gtm'),
+      providerIdentifiers: { discoveryReason: 'GTM_PROVISIONING_REQUIRED' },
+    });
+
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'connected',
+      accessTokenEnc: token,
+      refreshTokenEnc: refresh,
+      tokenExpiryAt: expiry,
+      scopes: ['https://www.googleapis.com/auth/adwords'],
+      providerIdentifiers: { customerId: '1234567890' },
+    });
+
+    const request = await IntegrationProvisioningRequest.create({
+      businessId: bc.businessId,
+      provider: 'gtm',
+      requestedResources: DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER.gtm,
+      status: 'approved',
+      approvedByUserId: user._id,
+      approvedAt: new Date(),
+      setupRunId: run._id,
+    });
+
+    const provisioned = await provisionGtmResources({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      provisioningRequestId: request._id,
+      logger,
+    });
+
+    expect(provisioned.connectionHealth).toBe('connected');
+    expect(provisioned.providerIdentifiers?.accountId).toBeTruthy();
+    expect(provisioned.providerIdentifiers?.containerId).toBeTruthy();
+    expect(provisioned.providerIdentifiers?.workspaceId).toBeTruthy();
+
+    const gtmArtifacts = await IntegrationArtifact.find({
+      businessId: bc.businessId,
+      setupRunId: run._id,
+      provider: 'gtm',
+    }).lean();
+    expect(gtmArtifacts.map((a) => a.artifactType).sort()).toEqual([
+      'gtm_account',
+      'gtm_container',
+      'gtm_workspace',
+    ]);
+
+    const manage = await manageConversionActions({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      logger,
+    });
+    expect(manage.outcome).toBe('ok');
+
+    await fetchAndPersistConversionCatalog({ setupRunId: run._id, businessId: bc.businessId, logger });
+    const gtmResult = await runGtmConversionSetup({ setupRunId: run._id, businessId: bc.businessId, logger });
+    expect(gtmResult.summary.tagsCreated).toBeGreaterThan(0);
   });
 });

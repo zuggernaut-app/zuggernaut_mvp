@@ -55,6 +55,7 @@
     "playwright": "^1.49.1"
   },
   "devDependencies": {
+    "@temporalio/testing": "^1.21.1",
     "@types/jsonwebtoken": "^9.0.10",
     "jest": "^30.3.0",
     "mongodb-memory-server": "^11.1.0",

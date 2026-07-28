@@ -43,7 +43,7 @@ test('start setup run navigates to progress when Temporal is E2E-mocked', async 
   await expect(page).toHaveURL(new RegExp(`/setup/progress/${body.setupRunId}$`), {
     timeout: 15_000,
   })
-  await expect(page.getByText('RUNNING')).toBeVisible()
+  await expect(page.locator('span.statusPill').first()).toBeVisible({ timeout: 15_000 })
 })
 
 test('setup page blocks start when integrations are missing', async ({ page, request }) => {

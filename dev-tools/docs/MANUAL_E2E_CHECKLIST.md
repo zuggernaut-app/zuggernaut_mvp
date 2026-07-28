@@ -35,14 +35,14 @@ Use these values (see `.env.example` mode matrix):
 - [x] **PASS (mock mode)** Connect Google Tag Manager and Google Ads (mock OAuth callback) — `integrations.api.test.js`, `googleOAuthService.test.js`
 - [x] **PASS (mock mode)** Start a setup run from `/setup` — `setupRuns.test.js` (`POST /api/v1/setup-runs`)
 - [x] **PASS (mock mode)** Progress page polls and advances through steps — `SetupProgressPage.test.tsx`; `useSetupRunStatus.test.tsx`
-- [x] **PASS (mock mode)** Run reaches `SUCCEEDED` — `setupRun.workflow.test.js`; `setupRunReport.test.js`
+- [x] **PASS (mock mode)** Run reaches `SUCCEEDED` — `setupRun.workflow.test.js`; `setupRunReport.test.js`; `frontend/e2e/setup-run-complete.e2e.ts` (embedded worker + real `/api/v1/setup-runs/:id` polling)
 - [x] **PASS (mock mode)** Open setup report at `/setup/report/:setupRunId` — `setupRuns.test.js` (report route); `SetupReportPage.test.tsx`
 - [x] **PASS (mock mode)** Report shows GBP, catalog, GTM, verification, and Ads campaign sections — `setupRunReport.test.js` (`aggregates normalized sections`)
 
 ## Provisioning consent paths
 
 - [x] **PASS (mock mode)** Seed/simulate GTM `provisioning_required` — `provisioning.api.test.js`; `setupRunActivities.test.js`
-- [x] **PASS (mock mode)** Start setup → `GTM_PROVISIONING_REQUIRED` — `setupRun.workflow.test.js`
+- [x] **PASS (mock mode)** Start setup → `GTM_PROVISIONING_REQUIRED` — `backend/tests/setupRun.workflow.test.js` (`stops with gtm_provisioning_required when GTM provisioning approval is pending`; `provisions GTM and continues when approval exists`)
 - [x] **PASS (mock mode)** Progress page provisioning consent card + GBP read-only note — `SetupProgressPage.test.tsx`; `provisioningUi.test.ts`
 - [x] **PASS (mock mode)** Approve GTM → continue setup → new run — `SetupProgressPage.test.tsx` (`approves provisioning and shows continue setup action`)
 - [x] **PASS (mock mode)** Ads `ADS_PROVISIONING_REQUIRED` — `setupRun.workflow.test.js`; `SetupProgressPage.test.tsx` (Ads card)
