@@ -1,6 +1,5 @@
 'use strict';
 
-const axios = require('axios');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
 const {
   buildDiscoveryResult,
@@ -14,6 +13,8 @@ const {
   createGoogleAdsApiErrorFromResponse,
   getGoogleAdsLoginCustomerId,
   getGoogleAdsRequestTimeoutMs,
+  googleAdsGet,
+  googleAdsPost,
   normalizeCustomerId,
   parseGoogleAdsApiError,
 } = require('./googleAdsApiConfig');
@@ -84,7 +85,7 @@ async function listAccessibleCustomers(accessToken) {
   });
 
   const url = buildGoogleAdsApiUrl('customers:listAccessibleCustomers');
-  const res = await axios.get(url, {
+  const res = await googleAdsGet(url, {
     headers,
     timeout: getGoogleAdsRequestTimeoutMs(),
     validateStatus: () => true,
@@ -146,7 +147,7 @@ async function createCustomerClient(accessToken, managerCustomerId, customerInpu
     customerClient.testAccount = true;
   }
 
-  const res = await axios.post(
+  const res = await googleAdsPost(
     url,
     { customerClient },
     {
@@ -233,7 +234,7 @@ async function searchGoogleAdsCustomerMetadata(accessToken, customerId) {
   let lastAuthorizationError = null;
 
   for (const headerOpts of headerVariants) {
-    const res = await axios.post(
+    const res = await googleAdsPost(
       url,
       { query: CUSTOMER_METADATA_QUERY },
       {
@@ -386,7 +387,7 @@ async function searchGoogleAds(accessToken, customerId, query, opts = {}) {
   }
 
   const url = buildGoogleAdsApiUrl(`customers/${normalizedId}/googleAds:search`);
-  const res = await axios.post(
+  const res = await googleAdsPost(
     url,
     { query },
     {
@@ -614,7 +615,7 @@ async function createCustomerClientLinkInvitation(accessToken, managerCustomerId
   }
 
   const url = buildGoogleAdsApiUrl(`customers/${managerId}/customerClientLinks:mutate`);
-  const res = await axios.post(
+  const res = await googleAdsPost(
     url,
     {
       operation: {
@@ -688,7 +689,7 @@ async function acceptCustomerManagerLink(accessToken, clientCustomerId, managerC
 
   const resourceName = `customers/${clientId}/customerManagerLinks/${managerId}~${linkId}`;
   const url = buildGoogleAdsApiUrl(`customers/${clientId}/customerManagerLinks:mutate`);
-  const res = await axios.post(
+  const res = await googleAdsPost(
     url,
     {
       operations: [

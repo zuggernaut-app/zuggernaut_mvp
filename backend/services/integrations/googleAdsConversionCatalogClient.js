@@ -1,6 +1,5 @@
 'use strict';
 
-const axios = require('axios');
 const mongoose = require('mongoose');
 const { getFreshGoogleAccessToken, getMccGoogleAdsAccessToken } = require('./googleTokenService');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
@@ -11,6 +10,7 @@ const {
   createGoogleAdsApiErrorFromResponse,
   getGoogleAdsLoginCustomerId,
   getGoogleAdsRequestTimeoutMs,
+  googleAdsPost,
   normalizeCustomerId,
 } = require('./googleAdsApiConfig');
 
@@ -137,7 +137,7 @@ async function fetchGoogleAdsConversionCatalogMock(businessId, customerIdOverrid
  */
 async function searchConversionActions(accessToken, customerId, headerOpts = {}) {
   const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
-  const res = await axios.post(
+  const res = await googleAdsPost(
     url,
     { query: CONVERSION_ACTION_QUERY },
     {

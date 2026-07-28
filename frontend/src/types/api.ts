@@ -128,7 +128,7 @@ export interface SetupRunDto {
   temporalWorkflowId: string | null
   status: string
   lastErrorSummary: string | null
-  meta: unknown
+  meta: SetupRunMeta | null
   createdAt?: string
   updatedAt?: string
 }
@@ -172,6 +172,12 @@ export interface SetupRunSupportState {
   errorCode?: string | null
   compensation?: SetupRunCompensation
   updatedAt?: string
+}
+
+export interface SetupRunMeta {
+  supportState?: SetupRunSupportState
+  compensation?: SetupRunCompensation
+  [key: string]: unknown
 }
 
 export interface SetupRunDetailResponse {

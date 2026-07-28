@@ -1,8 +1,76 @@
 'use strict';
 
+const axios = require('axios');
+const { createLogger } = require('../../lib/observability/logger');
+
+const googleAdsApiConfigLogger = createLogger({ name: 'googleAdsApiConfig' });
+
 const DEFAULT_GOOGLE_ADS_API_VERSION = 'v24';
 const GOOGLE_ADS_API_ORIGIN = 'https://googleads.googleapis.com';
 const DEFAULT_GOOGLE_ADS_REQUEST_TIMEOUT_MS = 30_000;
+
+const GOOGLE_ADS_RATE_LIMIT_MAX_ATTEMPTS_DEFAULT = 5;
+const GOOGLE_ADS_RATE_LIMIT_BASE_MS_DEFAULT = 2000;
+const GOOGLE_ADS_RATE_LIMIT_MAX_WAIT_MS_DEFAULT = 60_000;
+
+function getGoogleAdsRateLimitMaxAttempts() {
+  return Number(
+    process.env.GOOGLE_ADS_RATE_LIMIT_MAX_ATTEMPTS || GOOGLE_ADS_RATE_LIMIT_MAX_ATTEMPTS_DEFAULT
+  );
+}
+
+function getGoogleAdsRateLimitBaseMs() {
+  return Number(process.env.GOOGLE_ADS_RATE_LIMIT_BASE_MS || GOOGLE_ADS_RATE_LIMIT_BASE_MS_DEFAULT);
+}
+
+function getGoogleAdsRateLimitMaxWaitMs() {
+  return Number(
+    process.env.GOOGLE_ADS_RATE_LIMIT_MAX_WAIT_MS || GOOGLE_ADS_RATE_LIMIT_MAX_WAIT_MS_DEFAULT
+  );
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * @param {string | number | string[] | undefined} retryAfter
+ * @returns {number | null}
+ */
+function parseRetryAfterMs(retryAfter) {
+  const raw = Array.isArray(retryAfter) ? retryAfter[0] : retryAfter;
+  if (raw == null || raw === '') {
+    return null;
+  }
+
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1000);
+  }
+
+  const dateMs = Date.parse(String(raw));
+  if (Number.isFinite(dateMs)) {
+    const delta = dateMs - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+
+  return null;
+}
+
+/**
+ * @param {number} attempt — zero-based retry index after the first 429
+ * @param {string | number | string[] | undefined} retryAfterHeader
+ * @returns {number}
+ */
+function googleAdsRateLimitWaitMs(attempt, retryAfterHeader) {
+  const fromHeader = parseRetryAfterMs(retryAfterHeader);
+  if (fromHeader != null) {
+    return Math.min(fromHeader, getGoogleAdsRateLimitMaxWaitMs());
+  }
+
+  const jitterMs = Math.floor(Math.random() * 250);
+  return Math.min(getGoogleAdsRateLimitBaseMs() * 2 ** attempt + jitterMs, getGoogleAdsRateLimitMaxWaitMs());
+}
 
 class GoogleAdsApiError extends Error {
   /**
@@ -371,6 +439,82 @@ function createGoogleAdsApiErrorFromResponse(status, body, code, context = {}, E
 }
 
 /**
+ * Retries only confirmed HTTP 429 responses with no successful result.
+ * All other statuses return immediately for existing client error handling.
+ *
+ * @param {() => Promise<import('axios').AxiosResponse>} requestFn
+ * @param {{ operation?: string, action?: string, customerIds?: Array<string | number | null | undefined> }} [logContext]
+ * @returns {Promise<import('axios').AxiosResponse>}
+ */
+async function axiosWithGoogleAdsRateLimitRetry(requestFn, logContext = {}) {
+  const maxAttempts = getGoogleAdsRateLimitMaxAttempts();
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const res = await requestFn();
+    if (res.status !== 429) {
+      return res;
+    }
+
+    if (attempt >= maxAttempts - 1) {
+      throw createGoogleAdsApiErrorFromResponse(
+        res.status,
+        res.data,
+        'GOOGLE_ADS_RATE_LIMITED',
+        {
+          label: 'Google Ads API request',
+          action: logContext.action ?? logContext.operation ?? 'googleAds:request',
+          customerIds: logContext.customerIds,
+        }
+      );
+    }
+
+    const waitMs = googleAdsRateLimitWaitMs(attempt, res.headers?.['retry-after']);
+    googleAdsApiConfigLogger.warn(
+      {
+        operation: logContext.operation ?? 'google_ads_request',
+        action: logContext.action ?? null,
+        attempt: attempt + 1,
+        maxAttempts,
+        waitMs,
+        status: 429,
+      },
+      'Google Ads API rate limited; retrying'
+    );
+    await sleep(waitMs);
+  }
+
+  throw createGoogleAdsApiErrorFromResponse(
+    429,
+    null,
+    'GOOGLE_ADS_RATE_LIMITED',
+    {
+      label: 'Google Ads API request',
+      action: logContext.action ?? logContext.operation ?? 'googleAds:request',
+      customerIds: logContext.customerIds,
+    }
+  );
+}
+
+/**
+ * @param {string} url
+ * @param {unknown} body
+ * @param {import('axios').AxiosRequestConfig} config
+ * @param {{ operation?: string, action?: string, customerIds?: Array<string | number | null | undefined> }} [logContext]
+ */
+async function googleAdsPost(url, body, config, logContext = {}) {
+  return axiosWithGoogleAdsRateLimitRetry(() => axios.post(url, body, config), logContext);
+}
+
+/**
+ * @param {string} url
+ * @param {import('axios').AxiosRequestConfig} config
+ * @param {{ operation?: string, action?: string, customerIds?: Array<string | number | null | undefined> }} [logContext]
+ */
+async function googleAdsGet(url, config, logContext = {}) {
+  return axiosWithGoogleAdsRateLimitRetry(() => axios.get(url, config), logContext);
+}
+
+/**
  * Gates Google Ads conversion action creation (write path). Disabled by default.
  * @returns {boolean}
  */
@@ -399,4 +543,10 @@ module.exports = {
   summarizeGoogleAdsApiErrorDetails,
   createGoogleAdsApiErrorFromResponse,
   isConversionActionCreationEnabled,
+  parseRetryAfterMs,
+  googleAdsRateLimitWaitMs,
+  axiosWithGoogleAdsRateLimitRetry,
+  getGoogleAdsRateLimitMaxAttempts,
+  googleAdsPost,
+  googleAdsGet,
 };

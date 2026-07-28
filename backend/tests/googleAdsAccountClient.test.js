@@ -42,6 +42,24 @@ describe('googleAdsAccountClient', () => {
     expect(url).toContain('/v24/customers:listAccessibleCustomers');
   });
 
+  it('retries confirmed 429 responses before succeeding', async () => {
+    process.env.GOOGLE_ADS_RATE_LIMIT_MAX_ATTEMPTS = '3';
+    process.env.GOOGLE_ADS_RATE_LIMIT_BASE_MS = '1';
+    process.env.GOOGLE_ADS_RATE_LIMIT_MAX_WAIT_MS = '10';
+
+    axios.get
+      .mockResolvedValueOnce({ status: 429, headers: {}, data: {} })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { resourceNames: ['customers/1234567890'] },
+      });
+
+    const customers = await listAccessibleCustomers('token');
+
+    expect(customers).toEqual(['1234567890']);
+    expect(axios.get).toHaveBeenCalledTimes(2);
+  });
+
   it('createCustomerClient includes login-customer-id header', async () => {
     axios.post.mockResolvedValue({
       status: 200,

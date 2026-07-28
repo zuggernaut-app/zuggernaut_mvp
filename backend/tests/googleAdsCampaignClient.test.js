@@ -861,6 +861,37 @@ describe('googleAdsCampaignClient', () => {
       expect(config.headers.Authorization).toBe('Bearer test-access-token');
       expect(config.headers['login-customer-id']).toBe(managerId);
     });
+
+    it('retries confirmed 429 responses before succeeding', async () => {
+      const businessId = await seedAdsConnection({
+        customerId: clientId,
+        mccLink: {
+          status: 'ACTIVE',
+          managerCustomerId: managerId,
+          clientCustomerId: clientId,
+        },
+      });
+      process.env.GOOGLE_ADS_RATE_LIMIT_MAX_ATTEMPTS = '3';
+      process.env.GOOGLE_ADS_RATE_LIMIT_BASE_MS = '1';
+      process.env.GOOGLE_ADS_RATE_LIMIT_MAX_WAIT_MS = '10';
+
+      axios.post
+        .mockResolvedValueOnce({ status: 429, headers: {}, data: {} })
+        .mockResolvedValueOnce({
+          status: 200,
+          data: { results: [{ resourceName: `customers/${clientId}/campaignBudgets/99` }] },
+        });
+
+      const result = await createCampaignBudget({
+        businessId,
+        customerId: clientId,
+        setupRunId: 'run-budget',
+        intent: clientIntent(),
+      });
+
+      expect(result.resourceName).toBe(`customers/${clientId}/campaignBudgets/99`);
+      expect(axios.post).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('createCampaign auth', () => {

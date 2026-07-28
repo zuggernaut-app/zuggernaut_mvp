@@ -199,6 +199,47 @@ describe('googleAdsConversionActionClient', () => {
       expect(config.headers.Authorization).toBe('Bearer test-access-token');
       expect(config.headers['login-customer-id']).toBe(managerId);
     });
+
+    it('retries confirmed 429 responses before succeeding', async () => {
+      process.env.GOOGLE_ADS_API_MOCK = 'false';
+      process.env.GOOGLE_ADS_API_ENABLED = 'true';
+      process.env.GOOGLE_ADS_CONVERSION_ACTION_CREATION_ENABLED = 'true';
+      process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = managerId;
+      process.env.GOOGLE_ADS_RATE_LIMIT_MAX_ATTEMPTS = '3';
+      process.env.GOOGLE_ADS_RATE_LIMIT_BASE_MS = '1';
+      process.env.GOOGLE_ADS_RATE_LIMIT_MAX_WAIT_MS = '10';
+
+      const businessId = await seedAdsConnection({
+        customerId: clientId,
+        mccLink: {
+          status: 'ACTIVE',
+          managerCustomerId: managerId,
+          clientCustomerId: clientId,
+        },
+      });
+
+      axios.post
+        .mockResolvedValueOnce({ status: 429, headers: {}, data: {} })
+        .mockResolvedValueOnce({
+          status: 200,
+          data: {
+            results: [
+              {
+                resourceName: `customers/${clientId}/conversionActions/1001`,
+              },
+            ],
+          },
+        });
+
+      const result = await createConversionAction({
+        ...baseCtx,
+        businessId,
+        customerId: clientId,
+      });
+
+      expect(result.resourceName).toBe(`customers/${clientId}/conversionActions/1001`);
+      expect(axios.post).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('buildConversionActionCreatePayload omits valueSettings for types that do not support them', () => {

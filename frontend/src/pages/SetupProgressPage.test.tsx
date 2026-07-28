@@ -587,6 +587,56 @@ describe('SetupProgressPage', () => {
     ).toBeInTheDocument()
   })
 
+  it('shows support and compensation details when setup failed', async () => {
+    seedSession({ userId: TEST_IDS.user })
+
+    mockUseSetupRunStatus.mockReturnValue({
+      data: {
+        setupRun: {
+          id: TEST_IDS.setupRun,
+          businessId: TEST_IDS.business,
+          temporalWorkflowId: 'wf-z',
+          status: 'FAILED',
+          lastErrorSummary: 'Conversion action creation failed',
+          meta: {
+            supportState: {
+              failedStep: 'manage_ads_conversion_actions',
+              errorCode: 'CONVERSION_ACTION_CREATE_FAILED',
+            },
+            compensation: {
+              appliedAt: '2026-07-28T00:00:00.000Z',
+              failedStep: 'manage_ads_conversion_actions',
+              actions: [
+                {
+                  type: 'conversion_action_failure_guidance',
+                  outcome: 'recorded',
+                  message: 'Review Google Ads conversion actions and permissions.',
+                },
+              ],
+            },
+          },
+        },
+        steps: [],
+      },
+      loading: false,
+      error: null,
+      lastUpdatedAt: null,
+      refetch: vi.fn(),
+      appearsStuck: false,
+      pollingPaused: true,
+    })
+
+    renderProgress(`/setup/progress/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByText(/Support details/i)).toBeInTheDocument()
+    expect(screen.getByText(/manage ads conversion actions/i)).toBeInTheDocument()
+    expect(screen.getByText(/CONVERSION_ACTION_CREATE_FAILED/i)).toBeInTheDocument()
+    expect(screen.getByText(/Partial setup actions/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/Review Google Ads conversion actions and permissions\./i),
+    ).toBeInTheDocument()
+  })
+
   it('shows GTM snippet pending instructions', async () => {
     seedSession({ userId: TEST_IDS.user })
 

@@ -1,5 +1,9 @@
 'use strict';
 
+const axios = require('axios');
+
+jest.mock('axios');
+
 const {
   DEFAULT_GOOGLE_ADS_API_VERSION,
   getGoogleAdsApiVersion,
@@ -12,6 +16,9 @@ const {
   parseGoogleAdsApiError,
   createGoogleAdsApiErrorFromResponse,
   GoogleAdsApiError,
+  parseRetryAfterMs,
+  googleAdsRateLimitWaitMs,
+  googleAdsPost,
 } = require('../services/integrations/googleAdsApiConfig');
 
 describe('googleAdsApiConfig', () => {
@@ -178,5 +185,58 @@ describe('googleAdsApiConfig', () => {
 
     expect(err.message).toContain('operations[0].create.name: Too long.');
     expect(err.details?.fieldViolations).toHaveLength(1);
+  });
+
+  describe('rate limit helpers', () => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+      process.env.GOOGLE_ADS_RATE_LIMIT_MAX_ATTEMPTS = '3';
+      process.env.GOOGLE_ADS_RATE_LIMIT_BASE_MS = '10';
+      process.env.GOOGLE_ADS_RATE_LIMIT_MAX_WAIT_MS = '100';
+    });
+
+    it('parseRetryAfterMs parses seconds', () => {
+      expect(parseRetryAfterMs('2')).toBe(2000);
+    });
+
+    it('googleAdsRateLimitWaitMs uses exponential backoff when Retry-After is absent', () => {
+      jest.spyOn(Math, 'random').mockReturnValue(0);
+      expect(googleAdsRateLimitWaitMs(0, undefined)).toBe(10);
+      expect(googleAdsRateLimitWaitMs(1, undefined)).toBe(20);
+      Math.random.mockRestore();
+    });
+
+    it('googleAdsPost retries confirmed 429 responses then succeeds', async () => {
+      axios.post
+        .mockResolvedValueOnce({ status: 429, headers: {}, data: {} })
+        .mockResolvedValueOnce({ status: 200, data: { ok: true } });
+
+      const res = await googleAdsPost('https://example.com', {}, {}, { operation: 'test' });
+
+      expect(res.status).toBe(200);
+      expect(axios.post).toHaveBeenCalledTimes(2);
+    });
+
+    it('googleAdsPost does not retry non-429 responses', async () => {
+      axios.post.mockResolvedValue({
+        status: 403,
+        data: { error: { status: 'PERMISSION_DENIED', message: 'denied' } },
+      });
+
+      const res = await googleAdsPost('https://example.com', {}, {}, { operation: 'test' });
+
+      expect(res.status).toBe(403);
+      expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('googleAdsPost throws GOOGLE_ADS_RATE_LIMITED after exhausting client retries', async () => {
+      axios.post.mockResolvedValue({ status: 429, headers: {}, data: {} });
+
+      await expect(
+        googleAdsPost('https://example.com', {}, {}, { operation: 'test' })
+      ).rejects.toMatchObject({ code: 'GOOGLE_ADS_RATE_LIMITED' });
+
+      expect(axios.post).toHaveBeenCalledTimes(3);
+    });
   });
 });

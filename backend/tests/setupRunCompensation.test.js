@@ -115,6 +115,58 @@ describe('setupRunCompensationService', () => {
     expect(await IntegrationArtifact.countDocuments({ setupRunId: run._id, provider: 'gtm' })).toBe(1);
   });
 
+  it('records conversion action failure guidance without pausing when no campaign exists', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const SetupRun = mongoose.model('SetupRun');
+
+    const user = await User.create({ email: 'comp-ca-no-campaign@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    const run = await SetupRun.create({ businessId: bc.businessId, status: 'FAILED' });
+
+    const result = await runSetupRunCompensation({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      failedStep: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      logger,
+    });
+
+    expect(result.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'conversion_action_failure_guidance',
+          outcome: 'recorded',
+        }),
+      ])
+    );
+    expect(result.actions.some((action) => action.type === 'ads_campaign_pause')).toBe(false);
+  });
+
+  it('pauses setup-created campaign when conversion action failure follows campaign artifact', async () => {
+    process.env.GOOGLE_ADS_API_MOCK = 'true';
+    const { bc, run } = await seedCompensationRun();
+
+    const result = await runSetupRunCompensation({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      failedStep: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      logger,
+    });
+
+    expect(result.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'conversion_action_failure_guidance',
+          outcome: 'recorded',
+        }),
+        expect.objectContaining({
+          type: 'ads_campaign_pause',
+          outcome: 'paused',
+        }),
+      ])
+    );
+  });
+
   it('records GTM provisioning failure guidance', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');

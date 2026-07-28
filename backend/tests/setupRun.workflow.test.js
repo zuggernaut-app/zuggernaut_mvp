@@ -200,6 +200,74 @@ describe('setupRunWorkflow', () => {
     expect(out.terminal).toBe(T.SUCCEEDED);
   });
 
+  it('stops with gtm_provisioning_required when GTM provisioning approval is pending', async () => {
+    mocks.checkGtmPreconditionsActivity
+      .mockResolvedValueOnce({
+        outcome: 'gtm_provisioning_required',
+        ready: false,
+        reason: 'provisioning_required',
+      })
+      .mockResolvedValueOnce({
+        outcome: 'gtm_provisioning_required',
+        ready: false,
+        reason: 'provisioning_required',
+      });
+    mocks.checkProvisioningApprovalActivity.mockResolvedValue({
+      outcome: 'pending_approval',
+      provisioningRequestId: 'req-gtm-1',
+    });
+
+    const out = await setupRunWorkflow({ setupRunId: 'run1' });
+
+    expect(mocks.checkProvisioningApprovalActivity).toHaveBeenCalledWith({
+      setupRunId: 'run1',
+      businessId: 'biz1',
+      provider: 'gtm',
+    });
+    expect(mocks.provisionGtmResourcesActivity).not.toHaveBeenCalled();
+    expect(mocks.runGbpAuditActivity).not.toHaveBeenCalled();
+    expect(out.terminal).toBe(T.GTM_PROVISIONING_REQUIRED);
+    expect(out.approval).toEqual(
+      expect.objectContaining({
+        outcome: 'pending_approval',
+        provisioningRequestId: 'req-gtm-1',
+      })
+    );
+  });
+
+  it('provisions GTM and continues when approval exists', async () => {
+    mocks.checkGtmPreconditionsActivity
+      .mockResolvedValueOnce({
+        outcome: 'gtm_provisioning_required',
+        ready: false,
+        reason: 'provisioning_required',
+      })
+      .mockResolvedValueOnce({
+        outcome: 'gtm_provisioning_required',
+        ready: false,
+        reason: 'provisioning_required',
+      })
+      .mockResolvedValueOnce({
+        outcome: 'ok',
+        ready: true,
+      });
+    mocks.checkProvisioningApprovalActivity.mockResolvedValue({
+      outcome: 'approved',
+      provisioningRequestId: 'req-gtm-1',
+    });
+
+    const out = await setupRunWorkflow({ setupRunId: 'run1' });
+
+    expect(mocks.provisionGtmResourcesActivity).toHaveBeenCalledWith({
+      setupRunId: 'run1',
+      businessId: 'biz1',
+      provisioningRequestId: 'req-gtm-1',
+    });
+    expect(mocks.checkGtmPreconditionsActivity).toHaveBeenCalledTimes(3);
+    expect(mocks.runGtmConversionSetupActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
+  });
+
   it('stops with ads_provisioning_required when approval is pending', async () => {
     mocks.discoverGoogleAdsCustomersActivity.mockResolvedValue({
       outcome: 'ads_provisioning_required',

@@ -52,13 +52,72 @@ async function runSetupRunCompensation(ctx) {
   /** @type {Array<Record<string, unknown>>} */
   const actions = [];
 
-  if (failedStep === SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION) {
-    const campaignArtifact = await IntegrationArtifact.findOne({
-      setupRunId,
-      businessId,
-      provider: 'google_ads',
-      artifactType: 'ads_campaign',
-    }).lean();
+  const campaignArtifact =
+    failedStep === SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION ||
+    failedStep === SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS
+      ? await IntegrationArtifact.findOne({
+          setupRunId,
+          businessId,
+          provider: 'google_ads',
+          artifactType: 'ads_campaign',
+        }).lean()
+      : null;
+
+  if (failedStep === SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION && campaignArtifact?.externalId) {
+    try {
+      const paused = await pauseAdsCampaign({
+        businessId,
+        campaignResourceName: campaignArtifact.externalId,
+      });
+      actions.push({
+        type: 'ads_campaign_pause',
+        campaignResourceName: campaignArtifact.externalId,
+        outcome: paused.outcome,
+        source: paused.source,
+      });
+      logger.info(
+        {
+          setupRunId: setupRunId.toString(),
+          businessId: businessId.toString(),
+          campaignResourceName: campaignArtifact.externalId,
+          outcome: paused.outcome,
+        },
+        'compensation paused ads campaign'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Ads campaign pause failed';
+      actions.push({
+        type: 'ads_campaign_pause',
+        campaignResourceName: campaignArtifact.externalId,
+        outcome: 'failed',
+        error: msg,
+      });
+      logger.warn(
+        {
+          setupRunId: setupRunId.toString(),
+          businessId: businessId.toString(),
+          campaignResourceName: campaignArtifact.externalId,
+          error: msg,
+        },
+        'compensation ads campaign pause failed'
+      );
+    }
+  }
+
+  if (failedStep === SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS) {
+    actions.push({
+      type: 'conversion_action_failure_guidance',
+      outcome: 'recorded',
+      message:
+        'Conversion action setup failed. Review Google Ads conversion actions and permissions, then start a new setup run after fixing the issue.',
+    });
+    logger.info(
+      {
+        setupRunId: setupRunId.toString(),
+        businessId: businessId.toString(),
+      },
+      'compensation recorded conversion action failure guidance'
+    );
 
     if (campaignArtifact?.externalId) {
       try {
@@ -79,7 +138,7 @@ async function runSetupRunCompensation(ctx) {
             campaignResourceName: campaignArtifact.externalId,
             outcome: paused.outcome,
           },
-          'compensation paused ads campaign'
+          'compensation paused ads campaign after conversion action failure'
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Ads campaign pause failed';
@@ -96,7 +155,7 @@ async function runSetupRunCompensation(ctx) {
             campaignResourceName: campaignArtifact.externalId,
             error: msg,
           },
-          'compensation ads campaign pause failed'
+          'compensation ads campaign pause failed after conversion action failure'
         );
       }
     }

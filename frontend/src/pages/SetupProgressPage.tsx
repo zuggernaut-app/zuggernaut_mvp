@@ -19,7 +19,11 @@ import {
   conversionActionHeadline,
   parseConversionActionMeta,
 } from '../lib/conversionActionsUi'
-import type { SetupRunReportAdsCampaignFailure } from '../types/api'
+import type {
+  SetupRunCompensation,
+  SetupRunReportAdsCampaignFailure,
+  SetupRunSupportState,
+} from '../types/api'
 
 interface GbpAuditSummary {
   presentCount: number
@@ -367,6 +371,45 @@ function deriveStructuralVerificationStatus(
   return null
 }
 
+function parseSupportStateFromMeta(meta: unknown): SetupRunSupportState | null {
+  if (!meta || typeof meta !== 'object') return null
+  const supportState = (meta as Record<string, unknown>).supportState
+  if (!supportState || typeof supportState !== 'object') return null
+  const row = supportState as Record<string, unknown>
+  return {
+    failedStep: typeof row.failedStep === 'string' ? row.failedStep : undefined,
+    errorCode:
+      row.errorCode === null || typeof row.errorCode === 'string' ? row.errorCode : undefined,
+    updatedAt: typeof row.updatedAt === 'string' ? row.updatedAt : undefined,
+  }
+}
+
+function parseCompensationFromMeta(meta: unknown): SetupRunCompensation | null {
+  if (!meta || typeof meta !== 'object') return null
+  const compensation = (meta as Record<string, unknown>).compensation
+  if (!compensation || typeof compensation !== 'object') return null
+  const row = compensation as Record<string, unknown>
+  if (typeof row.appliedAt !== 'string' || typeof row.failedStep !== 'string') return null
+  const actions = Array.isArray(row.actions) ? row.actions : []
+  return {
+    appliedAt: row.appliedAt,
+    failedStep: row.failedStep,
+    actions: actions
+      .filter((action) => action && typeof action === 'object')
+      .map((action) => {
+        const a = action as Record<string, unknown>
+        return {
+          type: typeof a.type === 'string' ? a.type : 'unknown',
+          outcome: typeof a.outcome === 'string' ? a.outcome : undefined,
+          message: typeof a.message === 'string' ? a.message : undefined,
+          campaignResourceName:
+            typeof a.campaignResourceName === 'string' ? a.campaignResourceName : undefined,
+          artifactCount: typeof a.artifactCount === 'number' ? a.artifactCount : undefined,
+        }
+      }),
+  }
+}
+
 function parseStructuralVerificationMeta(meta: unknown): StructuralVerificationEvidence | null {
   if (!meta || typeof meta !== 'object') return null
   const m = meta as Record<string, unknown>
@@ -448,6 +491,10 @@ export function SetupProgressPage(): ReactElement {
     manageStep?.status === 'failed' && manageStep.lastErrorSummary
       ? manageStep.lastErrorSummary
       : null
+  const supportState =
+    run?.status === 'FAILED' ? parseSupportStateFromMeta(run.meta) : null
+  const compensation =
+    run?.status === 'FAILED' ? parseCompensationFromMeta(run.meta) : null
 
   const catalog = parseCatalogMeta(run?.meta ?? null)
   const catalogStep = (data?.steps ?? []).find((step) => step.stepName === 'ads_conversion_catalog')
@@ -865,6 +912,39 @@ export function SetupProgressPage(): ReactElement {
                 </button>
               </div>
             </div>
+          ) : null}
+          {run.status === 'FAILED' && supportState?.failedStep ? (
+            <section style={{ marginTop: '1rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Support details</h2>
+              <ul className="stepsList">
+                <li>
+                  <strong>Failed step</strong> · {supportState.failedStep.replace(/_/g, ' ')}
+                </li>
+                {supportState.errorCode ? (
+                  <li>
+                    <strong>Error code</strong> · {supportState.errorCode}
+                  </li>
+                ) : null}
+              </ul>
+            </section>
+          ) : null}
+          {run.status === 'FAILED' &&
+          compensation?.actions &&
+          compensation.actions.length > 0 ? (
+            <section style={{ marginTop: '1rem' }}>
+              <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Partial setup actions</h2>
+              <ul className="stepsList">
+                {compensation.actions.map((action) => (
+                  <li key={`${action.type}-${action.campaignResourceName ?? action.message ?? action.outcome}`}>
+                    <strong>{action.type.replace(/_/g, ' ')}</strong>
+                    {action.outcome ? <> · {action.outcome}</> : null}
+                    {action.message ? (
+                      <div style={{ fontSize: '0.875rem', marginTop: '0.35rem' }}>{action.message}</div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </section>
           ) : null}
           {typeof lastUpdatedAt === 'number' ? (
             <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', marginTop: '1rem' }}>

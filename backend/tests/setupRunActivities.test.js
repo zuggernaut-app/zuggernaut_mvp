@@ -111,6 +111,7 @@ jest.mock('../services/capabilities', () => {
 const mongoose = require('mongoose');
 const { ApplicationFailure } = require('@temporalio/activity');
 const capabilities = require('../services/capabilities');
+const conversionActionManagement = require('../services/capabilities/adsConversionActionManagementService');
 const { SETUP_STEP_NAMES } = require('../constants/setupWorkflow');
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { allScopesForProvider } = require('../constants/googleOAuth');
@@ -954,6 +955,70 @@ describe('setupRun activities (with mocked capabilities)', () => {
           artifactType: 'ads_conversion_action_created',
         })
       ).toBe(1);
+    });
+
+    it('records supportState when conversion action creation fails', async () => {
+      const SetupRun = mongoose.model('SetupRun');
+      const { bc, run } = await seedAdsRun('act-manage-create-failed@test.com');
+
+      const manageSpy = jest.spyOn(conversionActionManagement, 'manageConversionActions').mockResolvedValue({
+        outcome: 'creation_failed',
+        message: 'Google Ads conversion action mutate failed (403)',
+        errorCode: 'CONVERSION_ACTION_CREATE_FAILED',
+        created: 0,
+        reused: 1,
+      });
+
+      const out = await manageAdsConversionActionsActivity({
+        setupRunId: run._id.toString(),
+        businessId: bc.businessId.toString(),
+      });
+
+      expect(out.outcome).toBe('creation_failed');
+      expect(out.errorCode).toBe('CONVERSION_ACTION_CREATE_FAILED');
+
+      const updated = await SetupRun.findById(run._id).lean();
+      expect(updated.status).toBe('FAILED');
+      expect(updated.meta?.supportState?.failedStep).toBe(SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS);
+      expect(updated.meta?.supportState?.errorCode).toBe('CONVERSION_ACTION_CREATE_FAILED');
+      expect(updated.meta?.supportState?.compensation?.actions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'conversion_action_failure_guidance',
+            outcome: 'recorded',
+          }),
+        ])
+      );
+      expect(
+        updated.meta?.supportState?.compensation?.actions?.some(
+          (action) => action.type === 'ads_campaign_pause'
+        )
+      ).toBe(false);
+
+      manageSpy.mockRestore();
+    });
+
+    it('records supportState when conversion action management throws', async () => {
+      const SetupRun = mongoose.model('SetupRun');
+      const { bc, run } = await seedAdsRun('act-manage-throw@test.com');
+
+      const manageSpy = jest
+        .spyOn(conversionActionManagement, 'manageConversionActions')
+        .mockRejectedValue(new Error('Unexpected conversion action failure'));
+
+      await expect(
+        manageAdsConversionActionsActivity({
+          setupRunId: run._id.toString(),
+          businessId: bc.businessId.toString(),
+        })
+      ).rejects.toThrow(ApplicationFailure);
+
+      const updated = await SetupRun.findById(run._id).lean();
+      expect(updated.status).toBe('FAILED');
+      expect(updated.meta?.supportState?.failedStep).toBe(SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS);
+      expect(updated.meta?.supportState?.errorCode).toBe('ConversionActionManagementError');
+
+      manageSpy.mockRestore();
     });
   });
 

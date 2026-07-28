@@ -1785,6 +1785,13 @@ async function manageAdsConversionActionsActivity(input) {
         details: { code, created: result.created ?? 0, reused: result.reused ?? 0 },
         logger,
       });
+      await recordSetupFailureSupport({
+        setupRunId,
+        businessId,
+        failedStep: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+        errorCode: code,
+        logger,
+      });
       await patchSetupRun(setupRunId, { status: S.FAILED, lastErrorSummary: msg }, logger);
       return {
         outcome: 'creation_failed',
@@ -1824,6 +1831,13 @@ async function manageAdsConversionActionsActivity(input) {
       stepName: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
       provider: 'google_ads',
       summary: msg,
+      logger,
+    });
+    await recordSetupFailureSupport({
+      setupRunId,
+      businessId,
+      failedStep: SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS,
+      errorCode: 'ConversionActionManagementError',
       logger,
     });
     await patchSetupRun(setupRunId, { status: S.FAILED, lastErrorSummary: msg }, logger);
