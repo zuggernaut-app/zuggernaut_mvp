@@ -7,6 +7,104 @@ const { getFreshGoogleAccessToken } = require('./googleTokenService');
 
 const gtmClientLogger = createLogger({ name: 'googleTagManagerClient' });
 
+const GTM_RATE_LIMIT_MAX_ATTEMPTS_DEFAULT = 5;
+const GTM_RATE_LIMIT_BASE_MS_DEFAULT = 2000;
+const GTM_RATE_LIMIT_MAX_WAIT_MS_DEFAULT = 60_000;
+
+function getGtmRateLimitMaxAttempts() {
+  return Number(process.env.GTM_RATE_LIMIT_MAX_ATTEMPTS || GTM_RATE_LIMIT_MAX_ATTEMPTS_DEFAULT);
+}
+
+function getGtmRateLimitBaseMs() {
+  return Number(process.env.GTM_RATE_LIMIT_BASE_MS || GTM_RATE_LIMIT_BASE_MS_DEFAULT);
+}
+
+function getGtmRateLimitMaxWaitMs() {
+  return Number(process.env.GTM_RATE_LIMIT_MAX_WAIT_MS || GTM_RATE_LIMIT_MAX_WAIT_MS_DEFAULT);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * @param {string | number | string[] | undefined} retryAfter
+ * @returns {number | null}
+ */
+function parseRetryAfterMs(retryAfter) {
+  const raw = Array.isArray(retryAfter) ? retryAfter[0] : retryAfter;
+  if (raw == null || raw === '') {
+    return null;
+  }
+
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1000);
+  }
+
+  const dateMs = Date.parse(String(raw));
+  if (Number.isFinite(dateMs)) {
+    const delta = dateMs - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+
+  return null;
+}
+
+/**
+ * @param {number} attempt — zero-based retry index after the first 429
+ * @param {string | number | string[] | undefined} retryAfterHeader
+ */
+function gtmRateLimitWaitMs(attempt, retryAfterHeader) {
+  const fromHeader = parseRetryAfterMs(retryAfterHeader);
+  if (fromHeader != null) {
+    return Math.min(fromHeader, getGtmRateLimitMaxWaitMs());
+  }
+
+  const jitterMs = Math.floor(Math.random() * 250);
+  return Math.min(getGtmRateLimitBaseMs() * 2 ** attempt + jitterMs, getGtmRateLimitMaxWaitMs());
+}
+
+/**
+ * @param {string} url
+ * @param {object} body
+ * @param {import('axios').AxiosRequestConfig} axiosConfig
+ * @param {{ collection: string, operation?: string }} logContext
+ */
+async function axiosPostWithGtmRateLimitRetry(url, body, axiosConfig, logContext) {
+  const maxAttempts = getGtmRateLimitMaxAttempts();
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const res = await axios.post(url, body, axiosConfig);
+    if (res.status !== 429) {
+      return res;
+    }
+
+    if (attempt >= maxAttempts - 1) {
+      throw new GtmApiError(
+        `GTM ${logContext.collection} create failed (429)`,
+        'GTM_RATE_LIMITED'
+      );
+    }
+
+    const waitMs = gtmRateLimitWaitMs(attempt, res.headers?.['retry-after']);
+    gtmClientLogger.warn(
+      {
+        operation: logContext.operation ?? 'workspace_resource_create',
+        collection: logContext.collection,
+        attempt: attempt + 1,
+        maxAttempts,
+        waitMs,
+        status: 429,
+        url,
+      },
+      'GTM API rate limited; retrying'
+    );
+    await sleep(waitMs);
+  }
+
+  throw new GtmApiError(`GTM ${logContext.collection} create failed (429)`, 'GTM_RATE_LIMITED');
+}
+
 const GTM_API_BASE = 'https://tagmanager.googleapis.com/tagmanager/v2';
 const {
   buildDiscoveryResult,
@@ -35,6 +133,24 @@ function formatGtmApiErrorSuffix(res) {
     return `: ${res.data.message}`;
   }
   return '';
+}
+
+/**
+ * @param {{ status?: number, data?: object }} res
+ */
+function isGtmWorkspaceAlreadySubmittedResponse(res) {
+  const message = String(res?.data?.error?.message ?? '').toLowerCase();
+  return res?.status === 400 && message.includes('workspace is already submitted');
+}
+
+/**
+ * @param {unknown} err
+ */
+function isGtmWorkspaceAlreadySubmittedError(err) {
+  if (!(err instanceof GtmApiError)) {
+    return false;
+  }
+  return String(err.message).toLowerCase().includes('workspace is already submitted');
 }
 
 /**
@@ -138,18 +254,19 @@ async function createGtmWorkspaceResource(ctx) {
     return { resourcePath: reusablePath, source: 'gtm_api_reused' };
   }
 
-  const res = await axios.post(url, payload, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+  const res = await axiosPostWithGtmRateLimitRetry(
+    url,
+    payload,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 30000,
+      validateStatus: () => true,
     },
-    timeout: 30000,
-    validateStatus: () => true,
-  });
-
-  if (res.status === 429) {
-    throw new GtmApiError(`GTM ${collection} create failed (429)`, 'GTM_RATE_LIMITED');
-  }
+    { collection, operation: 'workspace_resource_create' }
+  );
 
   if (res.status === 400) {
     try {
@@ -240,7 +357,7 @@ async function createGtmContainerVersion(ctx) {
       'GTM container version create failed'
     );
     throw new GtmApiError(
-      `GTM container version create failed (${createRes.status})`,
+      `GTM container version create failed (${createRes.status})${formatGtmApiErrorSuffix(createRes)}`,
       'GTM_VERSION_CREATE_FAILED'
     );
   }
@@ -800,6 +917,10 @@ async function discoverGtmProviderIdentifiers(accessToken) {
 
 module.exports = {
   GtmApiError,
+  isGtmWorkspaceAlreadySubmittedResponse,
+  isGtmWorkspaceAlreadySubmittedError,
+  parseRetryAfterMs,
+  gtmRateLimitWaitMs,
   workspaceBasePath,
   mockResourcePath,
   gtmGet,

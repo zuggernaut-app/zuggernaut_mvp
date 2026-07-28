@@ -4,6 +4,7 @@ const {
   validateBusinessContextAdsReadiness,
   buildMinimalAdsReadyBusinessContext,
   formatAdsReadinessSummary,
+  normalizeBusinessNameForAds,
 } = require('../services/capabilities/businessContextAdsReadinessService');
 const { ADS_READINESS_CODES } = require('../constants/businessContextAdsReadiness');
 
@@ -134,5 +135,51 @@ describe('businessContextAdsReadinessService', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(formatAdsReadinessSummary(result)).toBe(result.issues[0].message);
+  });
+
+  describe('normalizeBusinessNameForAds', () => {
+    it('uses first comma-separated segment and strips special characters', () => {
+      expect(
+        normalizeBusinessNameForAds(
+          'Medha Hari,Classical Bharathanatyam Dancer,Choreographer,Home,Chennai,Tamil Nadu,India'
+        )
+      ).toBe('Medha Hari');
+    });
+
+    it('preserves hyphen and apostrophe in names', () => {
+      expect(normalizeBusinessNameForAds("O'Brien-Smith")).toBe("O'Brien-Smith");
+    });
+
+    it('returns empty string when only special characters remain', () => {
+      expect(normalizeBusinessNameForAds('!!!,###')).toBe('');
+    });
+  });
+
+  it('normalizes comma-stuffed business name in ad copy and keywords', () => {
+    const result = validateBusinessContextAdsReadiness(
+      buildMinimalAdsReadyBusinessContext({
+        businessName:
+          'Medha Hari,Classical Bharathanatyam Dancer,Choreographer,Home,Chennai,Tamil Nadu,India',
+        serviceAreas: ['Chennai'],
+        services: ['Dance classes'],
+      })
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.normalized.businessName).toBe('Medha Hari');
+    expect(result.normalized.adCopySeeds.headlines[0]).toBe('Medha Hari');
+    expect(result.normalized.adCopySeeds.descriptions[0]).toContain('Contact Medha Hari today');
+    expect(result.normalized.keywordSeeds[1]).toBe('Medha Hari Chennai');
+  });
+
+  it('fails when business name has no readable characters after normalization', () => {
+    const result = validateBusinessContextAdsReadiness(
+      buildMinimalAdsReadyBusinessContext({ businessName: '!!!' })
+    );
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.issues[0].code).toBe(ADS_READINESS_CODES.MISSING_BUSINESS_NAME);
   });
 });

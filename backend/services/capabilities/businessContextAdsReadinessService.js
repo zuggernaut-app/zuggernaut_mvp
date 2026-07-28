@@ -5,6 +5,37 @@ const { ADS_READINESS_CODES } = require('../../constants/businessContextAdsReadi
 const { resolvePrimaryGoal } = require('./adsConversionCatalogService');
 const { truncateRsaText } = require('../integrations/googleAdsCampaignClient');
 
+/** Max length for business name used in Ads copy (before RSA field limits). */
+const BUSINESS_NAME_FOR_ADS_MAX_CHARS = 50;
+
+/**
+ * Cleans scraped/structured business names for Ads copy and keywords.
+ * Takes the first comma-separated segment, strips special characters, caps length.
+ *
+ * @param {string | null | undefined} businessName
+ * @returns {string}
+ */
+function normalizeBusinessNameForAds(businessName) {
+  const raw = String(businessName ?? '').trim();
+  if (!raw) {
+    return '';
+  }
+
+  const primarySegment = raw.includes(',') ? raw.split(',')[0].trim() : raw;
+  const cleaned = primarySegment
+    .replace(/[^a-zA-Z0-9\s'-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) {
+    return '';
+  }
+
+  return cleaned.length <= BUSINESS_NAME_FOR_ADS_MAX_CHARS
+    ? cleaned
+    : cleaned.slice(0, BUSINESS_NAME_FOR_ADS_MAX_CHARS).trim();
+}
+
 /**
  * @typedef {object} AdsReadinessIssue
  * @property {string} code
@@ -116,9 +147,10 @@ function normalizeServiceAreaForGeoSuggest(label) {
  * @param {string} area
  */
 function buildKeywordSeeds(businessName, primaryService, area) {
+  const cleanName = normalizeBusinessNameForAds(businessName);
   return [
     `${primaryService} ${area}`.trim(),
-    `${businessName} ${area}`.trim(),
+    `${cleanName} ${area}`.trim(),
     `${primaryService} near me`,
   ];
 }
@@ -129,14 +161,15 @@ function buildKeywordSeeds(businessName, primaryService, area) {
  * @param {string} area
  */
 function buildAdCopySeeds(businessName, primaryService, area) {
+  const cleanName = normalizeBusinessNameForAds(businessName);
   return {
     headlines: [
-      truncateRsaText(businessName, 30),
+      truncateRsaText(cleanName, 30),
       truncateRsaText(`${primaryService} in ${area}`, 30),
       'Get a Free Quote Today',
     ],
     descriptions: [
-      truncateRsaText(`Trusted ${primaryService} serving ${area}. Contact ${businessName} today.`, 90),
+      truncateRsaText(`Trusted ${primaryService} serving ${area}. Contact ${cleanName} today.`, 90),
       truncateRsaText(`Professional ${primaryService}. Visit our website to learn more.`, 90),
     ],
   };
@@ -245,13 +278,27 @@ function validateBusinessContextAdsReadiness(businessContext) {
 
   const primaryServiceArea = normalizeServiceAreaForGeoSuggest(rawPrimaryServiceArea);
   const resolvedPrimaryGoal = resolvePrimaryGoal(bc.goals);
-  const keywordSeeds = buildKeywordSeeds(businessName, primaryService, primaryServiceArea);
-  const adCopySeeds = buildAdCopySeeds(businessName, primaryService, primaryServiceArea);
+  const adsBusinessName = normalizeBusinessNameForAds(businessName);
+  if (!adsBusinessName) {
+    return {
+      ok: false,
+      issues: [
+        issue(
+          ADS_READINESS_CODES.MISSING_BUSINESS_NAME,
+          'businessName',
+          'Business name must contain readable characters for Google Ads copy.'
+        ),
+      ],
+    };
+  }
+
+  const keywordSeeds = buildKeywordSeeds(adsBusinessName, primaryService, primaryServiceArea);
+  const adCopySeeds = buildAdCopySeeds(adsBusinessName, primaryService, primaryServiceArea);
 
   return {
     ok: true,
     normalized: {
-      businessName,
+      businessName: adsBusinessName,
       websiteUrl,
       primaryService,
       primaryServiceArea,
@@ -279,4 +326,7 @@ module.exports = {
   validateBusinessContextAdsReadiness,
   formatAdsReadinessSummary,
   normalizeServiceAreaForGeoSuggest,
+  normalizeBusinessNameForAds,
+  buildAdCopySeeds,
+  buildKeywordSeeds,
 };

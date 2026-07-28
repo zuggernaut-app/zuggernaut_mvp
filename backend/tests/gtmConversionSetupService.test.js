@@ -302,3 +302,42 @@ describe('GtmProviderPreconditionError', () => {
     expect(err.code).toBe('GTM_MISSING_CONNECTION');
   });
 });
+
+describe('googleTagManagerClient submitted workspace helpers', () => {
+  const {
+    GtmApiError,
+    isGtmWorkspaceAlreadySubmittedError,
+    isGtmWorkspaceAlreadySubmittedResponse,
+  } = require('../services/integrations/googleTagManagerClient');
+
+  it('detects submitted workspace API response', () => {
+    expect(
+      isGtmWorkspaceAlreadySubmittedResponse({
+        status: 400,
+        data: { error: { message: 'Workspace is already submitted.' } },
+      })
+    ).toBe(true);
+    expect(isGtmWorkspaceAlreadySubmittedResponse({ status: 400, data: { error: { message: 'Other' } } })).toBe(
+      false
+    );
+  });
+
+  it('detects submitted workspace error from thrown GtmApiError', () => {
+    const versionErr = new GtmApiError(
+      'GTM container version create failed (400): Workspace is already submitted.',
+      'GTM_VERSION_CREATE_FAILED'
+    );
+    expect(isGtmWorkspaceAlreadySubmittedError(versionErr)).toBe(true);
+
+    const variablesErr = new GtmApiError(
+      'GTM variables create failed (400): Workspace is already submitted.',
+      'GTM_CREATE_FAILED'
+    );
+    expect(isGtmWorkspaceAlreadySubmittedError(variablesErr)).toBe(true);
+
+    expect(isGtmWorkspaceAlreadySubmittedError(new GtmApiError('other', 'GTM_VERSION_CREATE_FAILED'))).toBe(
+      false
+    );
+    expect(isGtmWorkspaceAlreadySubmittedError(new GtmApiError('other', 'GTM_CREATE_FAILED'))).toBe(false);
+  });
+});

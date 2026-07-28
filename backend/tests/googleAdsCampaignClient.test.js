@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const mongoose = require('mongoose');
 const {
   buildCustomConversionGoalCreatePayload,
   buildConversionGoalCampaignConfigUpdateOperation,
@@ -17,12 +18,14 @@ const {
   createAdGroupKeyword,
   createCampaignGeoTarget,
   createCampaign,
+  createCampaignBudget,
   createCustomConversionGoal,
   createResponsiveSearchAd,
   escapeGaqlLiteral,
   linkCampaignToCustomConversionGoal,
 } = require('../services/integrations/googleAdsCampaignClient');
 const { buildMinimalCampaignIntent } = require('../services/capabilities/adsCampaignIntentService');
+const { resetProviderRateLimitsForTests } = require('../lib/providerRateLimit');
 
 function clientIntent(overrides = {}) {
   return buildMinimalCampaignIntent({
@@ -48,7 +51,13 @@ function clientIntent(overrides = {}) {
 jest.mock('axios');
 jest.mock('../services/integrations/googleTokenService', () => ({
   getFreshGoogleAccessToken: jest.fn().mockResolvedValue('test-access-token'),
+  getMccGoogleAdsAccessToken: jest.fn().mockResolvedValue('mcc-admin-token'),
 }));
+
+const {
+  getFreshGoogleAccessToken,
+  getMccGoogleAdsAccessToken,
+} = require('../services/integrations/googleTokenService');
 
 describe('googleAdsCampaignClient', () => {
   beforeEach(() => {
@@ -763,5 +772,187 @@ describe('googleAdsCampaignClient', () => {
       updateMask: 'custom_conversion_goal',
     });
     expect(body.operations[0].create).toBeUndefined();
+  });
+
+  describe('createCampaignBudget auth', () => {
+    const managerId = '2940178860';
+    const clientId = '8383537213';
+
+    beforeEach(() => {
+      resetProviderRateLimitsForTests();
+      process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = managerId;
+      process.env.GOOGLE_ADS_MCC_REFRESH_TOKEN = 'mcc-refresh-token';
+      axios.post.mockResolvedValue({
+        status: 200,
+        data: { results: [{ resourceName: `customers/${clientId}/campaignBudgets/99` }] },
+      });
+    });
+
+    async function seedAdsConnection(providerIdentifiers) {
+      const User = mongoose.model('User');
+      const BusinessContext = mongoose.model('BusinessContext');
+      const IntegrationConnection = mongoose.model('IntegrationConnection');
+
+      const user = await User.create({ email: `budget-auth-${Date.now()}@test.com` });
+      const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+      await IntegrationConnection.create({
+        businessId: bc.businessId,
+        provider: 'google_ads',
+        connectionHealth: 'connected',
+        accessTokenEnc: 'x',
+        refreshTokenEnc: 'y',
+        tokenExpiryAt: new Date(Date.now() + 3600_000),
+        scopes: ['https://www.googleapis.com/auth/adwords'],
+        providerIdentifiers,
+      });
+
+      return bc.businessId;
+    }
+
+    it('uses MCC admin token and login-customer-id when mccLink is active', async () => {
+      const businessId = await seedAdsConnection({
+        customerId: clientId,
+        mccLink: {
+          status: 'ACTIVE',
+          managerCustomerId: managerId,
+          clientCustomerId: clientId,
+        },
+      });
+
+      await createCampaignBudget({
+        businessId,
+        customerId: clientId,
+        setupRunId: 'run-budget',
+        intent: clientIntent(),
+      });
+
+      expect(getMccGoogleAdsAccessToken).toHaveBeenCalled();
+      expect(getFreshGoogleAccessToken).not.toHaveBeenCalled();
+
+      const [, , config] = axios.post.mock.calls[0];
+      expect(config.headers.Authorization).toBe('Bearer mcc-admin-token');
+      expect(config.headers['login-customer-id']).toBe(managerId);
+    });
+
+    it('uses customer OAuth token when mccLink is not active', async () => {
+      const businessId = await seedAdsConnection({
+        customerId: clientId,
+        mccLink: {
+          status: 'REQUIRED',
+          managerCustomerId: managerId,
+          clientCustomerId: clientId,
+        },
+      });
+
+      await createCampaignBudget({
+        businessId,
+        customerId: clientId,
+        setupRunId: 'run-budget',
+        intent: clientIntent(),
+      });
+
+      expect(getFreshGoogleAccessToken).toHaveBeenCalledWith({
+        businessId,
+        provider: 'google_ads',
+      });
+      expect(getMccGoogleAdsAccessToken).not.toHaveBeenCalled();
+
+      const [, , config] = axios.post.mock.calls[0];
+      expect(config.headers.Authorization).toBe('Bearer test-access-token');
+      expect(config.headers['login-customer-id']).toBe(managerId);
+    });
+  });
+
+  describe('createCampaign auth', () => {
+    const managerId = '2940178860';
+    const clientId = '8383537213';
+
+    beforeEach(() => {
+      resetProviderRateLimitsForTests();
+      process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID = managerId;
+      process.env.GOOGLE_ADS_MCC_REFRESH_TOKEN = 'mcc-refresh-token';
+      axios.post
+        .mockResolvedValueOnce({ status: 200, data: { results: [] } })
+        .mockResolvedValueOnce({
+          status: 200,
+          data: { results: [{ resourceName: `customers/${clientId}/campaigns/456` }] },
+        });
+    });
+
+    async function seedAdsConnection(providerIdentifiers) {
+      const User = mongoose.model('User');
+      const BusinessContext = mongoose.model('BusinessContext');
+      const IntegrationConnection = mongoose.model('IntegrationConnection');
+
+      const user = await User.create({ email: `campaign-auth-${Date.now()}@test.com` });
+      const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+      await IntegrationConnection.create({
+        businessId: bc.businessId,
+        provider: 'google_ads',
+        connectionHealth: 'connected',
+        accessTokenEnc: 'x',
+        refreshTokenEnc: 'y',
+        tokenExpiryAt: new Date(Date.now() + 3600_000),
+        scopes: ['https://www.googleapis.com/auth/adwords'],
+        providerIdentifiers,
+      });
+
+      return bc.businessId;
+    }
+
+    it('uses MCC admin token and login-customer-id for campaign search and mutate when mccLink is active', async () => {
+      const businessId = await seedAdsConnection({
+        customerId: clientId,
+        mccLink: {
+          status: 'ACTIVE',
+          managerCustomerId: managerId,
+          clientCustomerId: clientId,
+        },
+      });
+
+      await createCampaign({
+        businessId,
+        customerId: clientId,
+        setupRunId: 'run-campaign',
+        budgetResourceName: `customers/${clientId}/campaignBudgets/99`,
+        intent: clientIntent(),
+      });
+
+      expect(getMccGoogleAdsAccessToken).toHaveBeenCalledTimes(2);
+      expect(getFreshGoogleAccessToken).not.toHaveBeenCalled();
+
+      const searchConfig = axios.post.mock.calls[0][2];
+      const mutateConfig = axios.post.mock.calls[1][2];
+      expect(searchConfig.headers.Authorization).toBe('Bearer mcc-admin-token');
+      expect(searchConfig.headers['login-customer-id']).toBe(managerId);
+      expect(mutateConfig.headers.Authorization).toBe('Bearer mcc-admin-token');
+      expect(mutateConfig.headers['login-customer-id']).toBe(managerId);
+    });
+
+    it('uses customer OAuth token for campaign search when mccLink is not active', async () => {
+      const businessId = await seedAdsConnection({
+        customerId: clientId,
+        mccLink: {
+          status: 'REQUIRED',
+          managerCustomerId: managerId,
+          clientCustomerId: clientId,
+        },
+      });
+
+      await createCampaign({
+        businessId,
+        customerId: clientId,
+        setupRunId: 'run-campaign',
+        budgetResourceName: `customers/${clientId}/campaignBudgets/99`,
+        intent: clientIntent(),
+      });
+
+      expect(getFreshGoogleAccessToken).toHaveBeenCalledTimes(2);
+      expect(getMccGoogleAdsAccessToken).not.toHaveBeenCalled();
+
+      const searchConfig = axios.post.mock.calls[0][2];
+      expect(searchConfig.headers.Authorization).toBe('Bearer test-access-token');
+      expect(searchConfig.headers['login-customer-id']).toBe(managerId);
+    });
   });
 });

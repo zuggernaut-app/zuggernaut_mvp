@@ -2,13 +2,14 @@
 
 const axios = require('axios');
 const mongoose = require('mongoose');
-const { getFreshGoogleAccessToken } = require('./googleTokenService');
+const { getFreshGoogleAccessToken, getMccGoogleAdsAccessToken } = require('./googleTokenService');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
 const {
   GoogleAdsApiError,
   buildGoogleAdsApiUrl,
   buildGoogleAdsHeaders,
   createGoogleAdsApiErrorFromResponse,
+  getGoogleAdsLoginCustomerId,
   getGoogleAdsRequestTimeoutMs,
   normalizeCustomerId,
 } = require('./googleAdsApiConfig');
@@ -132,14 +133,15 @@ async function fetchGoogleAdsConversionCatalogMock(businessId, customerIdOverrid
 /**
  * @param {string} accessToken
  * @param {string} customerId — digits only
+ * @param {{ loginCustomerId?: string | null, includeLoginCustomerId?: boolean }} [headerOpts]
  */
-async function searchConversionActions(accessToken, customerId) {
+async function searchConversionActions(accessToken, customerId, headerOpts = {}) {
   const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
   const res = await axios.post(
     url,
     { query: CONVERSION_ACTION_QUERY },
     {
-      headers: buildGoogleAdsHeaders(accessToken),
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
       timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
@@ -194,10 +196,22 @@ async function fetchGoogleAdsConversionCatalog(ctx) {
     );
   }
 
-  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const conn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
+    .select('providerIdentifiers.mccLink')
+    .lean();
+  const loginCustomerId = getGoogleAdsLoginCustomerId();
+  const mccLink = conn?.providerIdentifiers?.mccLink ?? null;
+  const { isMccLinkActiveForSetup } = require('../capabilities/googleAdsMccLinkService');
+  const useMccAuth =
+    loginCustomerId != null && isMccLinkActiveForSetup(mccLink, customerId, loginCustomerId);
+
+  const accessToken = useMccAuth
+    ? await getMccGoogleAdsAccessToken()
+    : await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const headerOpts = useMccAuth ? { loginCustomerId } : {};
 
   const conversionActions = await withProviderRateLimit('google_ads', () =>
-    searchConversionActions(accessToken, customerId)
+    searchConversionActions(accessToken, customerId, headerOpts)
   );
 
   if (conversionActions.length === 0) {

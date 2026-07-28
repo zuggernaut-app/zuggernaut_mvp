@@ -6,12 +6,15 @@ const { gtmConversionIdempotencyKey } = require('../../constants/idempotency');
 const { buildGtmSetupPlan } = require('./gtmTemplates/v1');
 const { requireSetupReadyConnection, validateGtmIdentifiers } = require('./setupReadyConnectionService');
 const {
+  createGtmWorkspace,
   createGtmWorkspaceResource,
   createAndPublishContainerVersion,
   enableGtmBuiltinVariables,
   getGtmAccessToken,
+  isGtmWorkspaceAlreadySubmittedError,
 } = require('../integrations/googleTagManagerClient');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+const IntegrationConnection = mongoose.model('IntegrationConnection');
 const ProviderSnapshot = mongoose.model('ProviderSnapshot');
 const BusinessContext = mongoose.model('BusinessContext');
 
@@ -91,6 +94,39 @@ async function persistGtmArtifact(ctx) {
 
 /**
  * @param {object} ctx
+ * @param {string} ctx.accessToken
+ * @param {object} ctx.gtmIds
+ * @param {import('mongoose').Types.ObjectId} ctx.setupRunId
+ * @param {import('mongoose').Types.ObjectId} ctx.businessId
+ * @param {import('pino').Logger} ctx.logger
+ */
+async function rotateToFreshGtmWorkspace(ctx) {
+  const { accessToken, gtmIds, setupRunId, businessId, logger } = ctx;
+  const workspaceName = `Zuggernaut setup ${setupRunId.toString().slice(-8)}`;
+  const workspace = await createGtmWorkspace(
+    accessToken,
+    gtmIds.accountId,
+    gtmIds.containerId,
+    workspaceName
+  );
+  await IntegrationConnection.findOneAndUpdate(
+    { businessId, provider: 'gtm' },
+    { $set: { 'providerIdentifiers.workspaceId': workspace.workspaceId } }
+  );
+  logger?.info?.(
+    {
+      setupRunId: setupRunId.toString(),
+      businessId: businessId.toString(),
+      previousWorkspaceId: gtmIds.workspaceId,
+      workspaceId: workspace.workspaceId,
+    },
+    'gtm workspace rotated after submitted workspace'
+  );
+  return { ...gtmIds, workspaceId: workspace.workspaceId };
+}
+
+/**
+ * @param {object} ctx
  * @param {import('mongoose').Types.ObjectId} ctx.setupRunId
  * @param {import('mongoose').Types.ObjectId} ctx.businessId
  * @param {import('pino').Logger} ctx.logger
@@ -141,209 +177,244 @@ async function runGtmConversionSetup(ctx) {
 
   const accessToken = await getGtmAccessToken({ businessId });
 
-  let variablesCreated = 0;
-  let triggersCreated = 0;
-  let tagsCreated = 0;
-  let reusedArtifacts = 0;
-
-  /** @type {Map<string, string>} logicalKey -> GTM resource path */
-  const resourcePaths = new Map();
-
   const nonTagResources = plan.resources.filter((r) => r.kind !== 'tag');
   const tagResources = plan.resources.filter((r) => r.kind === 'tag');
 
-  for (const spec of nonTagResources) {
-    const collection = spec.kind === 'variable' ? 'variables' : 'triggers';
-    const existing = await findExistingGtmArtifact({ setupRunId, businessId, logicalKey: spec.logicalKey });
+  let activeGtmIds = { ...gtmIds };
 
-    let resourcePath;
-    if (existing) {
-      resourcePath = existing.externalId;
-      reusedArtifacts += 1;
-    } else {
-      const created = await createGtmWorkspaceResource({
-        gtmIds,
+  for (let workspaceAttempt = 0; workspaceAttempt < 2; workspaceAttempt += 1) {
+    if (workspaceAttempt > 0) {
+      activeGtmIds = await rotateToFreshGtmWorkspace({
         accessToken,
-        collection,
-        payload: spec.gtmPayload,
-        logicalKey: spec.logicalKey,
-      });
-      resourcePath = created.resourcePath;
-      if (spec.kind === 'variable') variablesCreated += 1;
-      if (spec.kind === 'trigger') triggersCreated += 1;
-
-      await persistGtmArtifact({
+        gtmIds: activeGtmIds,
         setupRunId,
         businessId,
-        artifactType: spec.artifactType,
-        logicalKey: spec.logicalKey,
-        externalId: resourcePath,
-        metadata: {
-          role: spec.kind,
-          template: spec.template,
-          templateVersion: plan.templateVersion,
-          displayName: spec.displayName,
-          bindsToAdsConversionId: spec.bindsToAdsConversionId ?? null,
-          createdBy: 'gtm_conversion_setup_v1',
-          source: process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api',
-        },
+        logger,
       });
+      await IntegrationArtifact.deleteMany({ setupRunId, businessId, provider: 'gtm' });
     }
 
-    if (spec.kind === 'trigger') {
-      resourcePaths.set(spec.logicalKey, gtmTriggerIdFromPath(resourcePath) ?? resourcePath);
-    } else {
-      resourcePaths.set(spec.logicalKey, resourcePath);
-    }
-  }
+    let variablesCreated = 0;
+    let triggersCreated = 0;
+    let tagsCreated = 0;
+    let reusedArtifacts = 0;
 
-  for (const spec of tagResources) {
-    const existing = await findExistingGtmArtifact({ setupRunId, businessId, logicalKey: spec.logicalKey });
+    /** @type {Map<string, string>} logicalKey -> GTM resource path */
+    const resourcePaths = new Map();
 
-    let resourcePath;
-    if (existing) {
-      resourcePath = existing.externalId;
-      reusedArtifacts += 1;
-    } else {
-      const firingTriggerIds = (spec.firingTriggerLogicalKeys ?? [])
-        .map((key) => resourcePaths.get(key))
-        .filter(Boolean);
+    try {
+      for (const spec of nonTagResources) {
+        const collection = spec.kind === 'variable' ? 'variables' : 'triggers';
+        const existing = await findExistingGtmArtifact({ setupRunId, businessId, logicalKey: spec.logicalKey });
 
-      if (firingTriggerIds.length === 0) {
-        throw new GtmProviderPreconditionError(
-          `GTM tag ${spec.logicalKey} has no firing triggers available.`,
-          'GTM_CREATE_FAILED'
-        );
+        let resourcePath;
+        if (existing) {
+          resourcePath = existing.externalId;
+          reusedArtifacts += 1;
+        } else {
+          const created = await createGtmWorkspaceResource({
+            gtmIds: activeGtmIds,
+            accessToken,
+            collection,
+            payload: spec.gtmPayload,
+            logicalKey: spec.logicalKey,
+          });
+          resourcePath = created.resourcePath;
+          if (spec.kind === 'variable') variablesCreated += 1;
+          if (spec.kind === 'trigger') triggersCreated += 1;
+
+          await persistGtmArtifact({
+            setupRunId,
+            businessId,
+            artifactType: spec.artifactType,
+            logicalKey: spec.logicalKey,
+            externalId: resourcePath,
+            metadata: {
+              role: spec.kind,
+              template: spec.template,
+              templateVersion: plan.templateVersion,
+              displayName: spec.displayName,
+              bindsToAdsConversionId: spec.bindsToAdsConversionId ?? null,
+              createdBy: 'gtm_conversion_setup_v1',
+              source: process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api',
+            },
+          });
+        }
+
+        if (spec.kind === 'trigger') {
+          resourcePaths.set(spec.logicalKey, gtmTriggerIdFromPath(resourcePath) ?? resourcePath);
+        } else {
+          resourcePaths.set(spec.logicalKey, resourcePath);
+        }
       }
 
-      const tagPayload = {
-        ...spec.gtmPayload,
-        firingTriggerId: firingTriggerIds,
-      };
+      for (const spec of tagResources) {
+        const existing = await findExistingGtmArtifact({ setupRunId, businessId, logicalKey: spec.logicalKey });
 
-      const created = await createGtmWorkspaceResource({
-        gtmIds,
-        accessToken,
-        collection: 'tags',
-        payload: tagPayload,
-        logicalKey: spec.logicalKey,
-      });
-      resourcePath = created.resourcePath;
-      tagsCreated += 1;
+        let resourcePath;
+        if (existing) {
+          resourcePath = existing.externalId;
+          reusedArtifacts += 1;
+        } else {
+          const firingTriggerIds = (spec.firingTriggerLogicalKeys ?? [])
+            .map((key) => resourcePaths.get(key))
+            .filter(Boolean);
 
-      await persistGtmArtifact({
+          if (firingTriggerIds.length === 0) {
+            throw new GtmProviderPreconditionError(
+              `GTM tag ${spec.logicalKey} has no firing triggers available.`,
+              'GTM_CREATE_FAILED'
+            );
+          }
+
+          const tagPayload = {
+            ...spec.gtmPayload,
+            firingTriggerId: firingTriggerIds,
+          };
+
+          const created = await createGtmWorkspaceResource({
+            gtmIds: activeGtmIds,
+            accessToken,
+            collection: 'tags',
+            payload: tagPayload,
+            logicalKey: spec.logicalKey,
+          });
+          resourcePath = created.resourcePath;
+          tagsCreated += 1;
+
+          await persistGtmArtifact({
+            setupRunId,
+            businessId,
+            artifactType: spec.artifactType,
+            logicalKey: spec.logicalKey,
+            externalId: resourcePath,
+            metadata: {
+              role: 'conversion_tag',
+              template: spec.template,
+              templateVersion: plan.templateVersion,
+              displayName: spec.displayName,
+              bindsToAdsConversionId: spec.bindsToAdsConversionId ?? null,
+              firingTriggerLogicalKeys: spec.firingTriggerLogicalKeys ?? [],
+              firingTriggerIds,
+              createdBy: 'gtm_conversion_setup_v1',
+              source: process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api',
+            },
+          });
+        }
+
+        resourcePaths.set(spec.logicalKey, resourcePath);
+      }
+
+      const versionLogicalKey = 'container_version';
+      let publishedVersionPath;
+      const existingVersion = await findExistingGtmArtifact({
         setupRunId,
         businessId,
-        artifactType: spec.artifactType,
-        logicalKey: spec.logicalKey,
-        externalId: resourcePath,
-        metadata: {
-          role: 'conversion_tag',
-          template: spec.template,
-          templateVersion: plan.templateVersion,
-          displayName: spec.displayName,
-          bindsToAdsConversionId: spec.bindsToAdsConversionId ?? null,
-          firingTriggerLogicalKeys: spec.firingTriggerLogicalKeys ?? [],
-          firingTriggerIds,
-          createdBy: 'gtm_conversion_setup_v1',
-          source: process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api',
-        },
+        logicalKey: versionLogicalKey,
       });
-    }
 
-    resourcePaths.set(spec.logicalKey, resourcePath);
-  }
+      if (existingVersion) {
+        publishedVersionPath = existingVersion.externalId;
+        reusedArtifacts += 1;
+      } else {
+        const clickBuiltinTypes = requiredClickBuiltinTypes(plan);
+        if (clickBuiltinTypes.length > 0) {
+          await enableGtmBuiltinVariables(accessToken, activeGtmIds, clickBuiltinTypes);
+        }
 
-  const versionLogicalKey = 'container_version';
-  let publishedVersionPath;
-  const existingVersion = await findExistingGtmArtifact({
-    setupRunId,
-    businessId,
-    logicalKey: versionLogicalKey,
-  });
+        const published = await createAndPublishContainerVersion({
+          gtmIds: activeGtmIds,
+          accessToken,
+          setupRunId: setupRunId.toString(),
+        });
+        publishedVersionPath = published.publishedVersionPath;
 
-  if (existingVersion) {
-    publishedVersionPath = existingVersion.externalId;
-    reusedArtifacts += 1;
-  } else {
-    const clickBuiltinTypes = requiredClickBuiltinTypes(plan);
-    if (clickBuiltinTypes.length > 0) {
-      await enableGtmBuiltinVariables(accessToken, gtmIds, clickBuiltinTypes);
-    }
+        await persistGtmArtifact({
+          setupRunId,
+          businessId,
+          artifactType: 'gtm_container',
+          logicalKey: versionLogicalKey,
+          externalId: publishedVersionPath,
+          metadata: {
+            role: 'container_version',
+            templateVersion: plan.templateVersion,
+            containerId: activeGtmIds.containerId,
+            workspaceId: activeGtmIds.workspaceId,
+            accountId: activeGtmIds.accountId,
+            createdBy: 'gtm_conversion_setup_v1',
+            source: process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api',
+          },
+        });
+      }
 
-    const published = await createAndPublishContainerVersion({
-      gtmIds,
-      accessToken,
-      setupRunId: setupRunId.toString(),
-    });
-    publishedVersionPath = published.publishedVersionPath;
-
-    await persistGtmArtifact({
-      setupRunId,
-      businessId,
-      artifactType: 'gtm_container',
-      logicalKey: versionLogicalKey,
-      externalId: publishedVersionPath,
-      metadata: {
-        role: 'container_version',
-        templateVersion: plan.templateVersion,
-        containerId: gtmIds.containerId,
-        workspaceId: gtmIds.workspaceId,
-        accountId: gtmIds.accountId,
-        createdBy: 'gtm_conversion_setup_v1',
-        source: process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api',
-      },
-    });
-  }
-
-  const snapshotSource = process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api';
-  await ProviderSnapshot.findOneAndUpdate(
-    {
-      setupRunId,
-      businessId,
-      provider: 'gtm',
-      snapshotType: 'gtm_container_version',
-    },
-    {
-      $set: {
-        payload: {
-          source: snapshotSource,
-          accountId: gtmIds.accountId,
-          containerId: gtmIds.containerId,
-          workspaceId: gtmIds.workspaceId,
-          publicContainerId: gtmIds.publicContainerId,
-          publishedVersionPath,
-          templateVersion: plan.templateVersion,
-          recordedAt: new Date().toISOString(),
+      const snapshotSource = process.env.GTM_API_MOCK === 'true' ? 'gtm_api_mock' : 'gtm_api';
+      await ProviderSnapshot.findOneAndUpdate(
+        {
+          setupRunId,
+          businessId,
+          provider: 'gtm',
+          snapshotType: 'gtm_container_version',
         },
-      },
-      $setOnInsert: { immutable: false, snapshotVersion: 1 },
-    },
-    { upsert: true, setDefaultsOnInsert: true }
+        {
+          $set: {
+            payload: {
+              source: snapshotSource,
+              accountId: activeGtmIds.accountId,
+              containerId: activeGtmIds.containerId,
+              workspaceId: activeGtmIds.workspaceId,
+              publicContainerId: activeGtmIds.publicContainerId,
+              publishedVersionPath,
+              templateVersion: plan.templateVersion,
+              recordedAt: new Date().toISOString(),
+            },
+          },
+          $setOnInsert: { immutable: false, snapshotVersion: 1 },
+        },
+        { upsert: true, setDefaultsOnInsert: true }
+      );
+
+      const summary = {
+        templateVersion: plan.templateVersion,
+        tagsCreated,
+        triggersCreated,
+        variablesCreated,
+        reusedArtifacts,
+        publishedVersion: publishedVersionPath,
+        source: snapshotSource,
+      };
+
+      logger.info(
+        {
+          setupRunId: setupRunId.toString(),
+          businessId: businessId.toString(),
+          stepName: SETUP_STEP_NAMES.GTM_CONVERSION_SETUP,
+          provider: 'gtm',
+          ...summary,
+        },
+        'gtm conversion setup persisted artifacts'
+      );
+
+      return { summary, source: snapshotSource };
+    } catch (err) {
+      if (workspaceAttempt === 0 && isGtmWorkspaceAlreadySubmittedError(err)) {
+        logger?.info?.(
+          {
+            setupRunId: setupRunId.toString(),
+            businessId: businessId.toString(),
+            workspaceId: activeGtmIds.workspaceId,
+          },
+          'gtm setup retrying on fresh workspace after submitted workspace'
+        );
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new GtmProviderPreconditionError(
+    'GTM container version create failed after workspace rotation.',
+    'GTM_CREATE_FAILED'
   );
-
-  const summary = {
-    templateVersion: plan.templateVersion,
-    tagsCreated,
-    triggersCreated,
-    variablesCreated,
-    reusedArtifacts,
-    publishedVersion: publishedVersionPath,
-    source: snapshotSource,
-  };
-
-  logger.info(
-    {
-      setupRunId: setupRunId.toString(),
-      businessId: businessId.toString(),
-      stepName: SETUP_STEP_NAMES.GTM_CONVERSION_SETUP,
-      provider: 'gtm',
-      ...summary,
-    },
-    'gtm conversion setup persisted artifacts'
-  );
-
-  return { summary, source: snapshotSource };
 }
 
 module.exports = {

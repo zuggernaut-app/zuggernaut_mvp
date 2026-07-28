@@ -10,7 +10,7 @@
 const crypto = require('crypto');
 const axios = require('axios');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
-const { getFreshGoogleAccessToken } = require('./googleTokenService');
+const { resolveGoogleAdsCustomerAuth } = require('./googleAdsCustomerAuth');
 const { mockResourceName } = require('./googleAdsCampaignClient');
 const {
   GoogleAdsApiError,
@@ -177,7 +177,7 @@ async function createConversionAction(ctx) {
     );
   }
 
-  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, normalizedCustomerId);
   const url = buildGoogleAdsApiUrl(`customers/${normalizedCustomerId}/conversionActions:mutate`);
   const res = await axios.post(
     url,
@@ -189,7 +189,7 @@ async function createConversionAction(ctx) {
       ],
     },
     {
-      headers: buildGoogleAdsHeaders(accessToken),
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
       timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
