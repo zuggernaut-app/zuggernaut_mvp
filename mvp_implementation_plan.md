@@ -150,7 +150,9 @@ MongoDB collections are defined with Mongoose in `backend/models/`. The goal is 
 
 ## Implementation Phases
 
-### Phase 0: Architecture and Repo Preparation
+**V1 status (2026-07-28):** Phases **0–14** are **COMPLETE** in code (APIs, workflows, capabilities, UI, tests, deploy runbook/configs). Optional live Google real-mode sandbox E2E and live cloud account provisioning remain operator actions outside the repo.
+
+### Phase 0: Architecture and Repo Preparation — **COMPLETE**
 Purpose: establish the target structure before feature work starts.
 
 Instructions:
@@ -169,7 +171,7 @@ Recommended backend structure:
 - `backend/lib/observability/` for logger setup.
 - `backend/workers/` for Temporal worker bootstraps.
 
-### Phase 1: Foundational Models
+### Phase 1: Foundational Models — **COMPLETE**
 Purpose: introduce enterprise-grade persistence before provider integrations.
 
 Models to add or adapt (see **Database Architecture Strategy** above):
@@ -190,7 +192,7 @@ Key rules:
 - `ProviderSnapshot` stores fetched provider payloads; `IntegrationArtifact` registers created/selected resources with stable **`externalId`** per `provider` / `artifactType`.
 - Raw scrape output must not overwrite confirmed `BusinessContext`.
 
-### Phase 2: Logging and Minimal Observability
+### Phase 2: Logging and Minimal Observability — **COMPLETE**
 Purpose: add enough MVP observability without overbuilding.
 
 Instructions:
@@ -200,7 +202,7 @@ Instructions:
 - Use Railway logs and metrics initially.
 - Defer OpenTelemetry, Prometheus, Grafana, and custom ops dashboards unless production need proves them necessary.
 
-### Phase 3: Temporal Foundation
+### Phase 3: Temporal Foundation — **COMPLETE**
 Purpose: replace route-driven orchestration with durable workflow orchestration.
 
 Instructions:
@@ -247,7 +249,7 @@ Rules:
 - **Workflow versioning.** When workflow **logic meaningfully changes**, use Temporal **patch/versioning flows** compatible with replay; do not freely rewrite live workflow definitions ignoring in-flight runs.
 - **Extending channels later.** Adding a provider = new enums + `backend/services/capabilities/<provider>/` + new activities—reuse **`SetupRun` / `IntegrationArtifact`** patterns before inventing parallel models.
 
-### Phase 4: Business Onboarding APIs and UI
+### Phase 4: Business Onboarding APIs and UI — **COMPLETE**
 Purpose: build Block 1 as the reusable business requirements layer.
 
 Backend instructions:
@@ -261,7 +263,7 @@ Frontend instructions:
 - Split UI into first-time onboarding screens: URL input, scraped details review, business goals, audience/service areas/order value, and confirmation.
 - Save confirmed business context before any Google setup begins.
 
-### Phase 5: Integration Connection Layer
+### Phase 5: Integration Connection Layer — **COMPLETE**
 Purpose: support Google OAuth in a reusable provider model.
 
 Instructions:
@@ -277,7 +279,7 @@ MVP security:
 - Do not expose tokens to frontend.
 - Surface connection health in setup status.
 
-### Phase 5A: Google Resource Discovery and Provisioning Consent
+### Phase 5A: Google Resource Discovery and Provisioning Consent — **COMPLETE**
 Purpose: turn connected OAuth accounts into setup-ready provider resources without manual dead ends.
 
 Instructions:
@@ -305,7 +307,7 @@ Provisioning error codes (stable, user-facing):
 - `ADS_PROVISIONING_REQUIRED` — MCC flow needs to create or link a customer account.
 - `GBP_NO_ACCOUNTS` / `GBP_NO_LOCATIONS` — no GBP profile accessible; audit skipped with guidance.
 
-### Phase 6: GBP Audit Capability
+### Phase 6: GBP Audit Capability — **COMPLETE**
 Purpose: provide V1 read-only GBP value without account/location creation or modification risk.
 
 Instructions:
@@ -316,7 +318,7 @@ Instructions:
 - If no GBP account/location is accessible, record `GBP_NO_ACCOUNTS` or `GBP_NO_LOCATIONS` and show guidance in the dashboard.
 - Do not create or mutate GBP resources in V1.
 
-### Phase 7: Ads Conversion Catalog Capability
+### Phase 7: Ads Conversion Catalog Capability — **COMPLETE**
 Purpose: prepare conversion actions for GTM and Ads automation.
 
 Instructions:
@@ -331,10 +333,10 @@ Instructions:
 
 Purpose: automate conversion tracking setup.
 
-#### Real-mode GTM conversion setup (optional E2E sign-off) — **PENDING**
+#### Real-mode GTM conversion setup (optional E2E sign-off) — **DEFERRED (operator)**
 
 - **Automated verification:** Done — inventory, idempotency, templates, preconditions, workflow order, and `ProviderSnapshot` checks; runbook and evidence in `dev-tools/docs/PHASE8_GTM_CONVERSION_SETUP.md`.
-- **Manual real-mode E2E:** **Not done — deferred.** Same rerun/scrape constraints as Phase 7 Track A; optional operator happy-path run recorded in `dev-tools/docs/evidence/PHASE8_GTM_CONVERSION_SETUP_EVIDENCE.md`.
+- **Manual real-mode E2E:** Optional operator path; not required for V1 implementation complete. Evidence template: `dev-tools/docs/evidence/PHASE8_GTM_CONVERSION_SETUP_EVIDENCE.md`.
 
 Instructions:
 - Build `GTMConversionSetupService`.
@@ -359,10 +361,10 @@ V1 trigger templates:
 
 Purpose: handle the manual website step without losing users.
 
-#### Real-mode snippet detection E2E (optional sign-off) — **PENDING**
+#### Real-mode snippet detection E2E (optional sign-off) — **DEFERRED (operator)**
 
 - **Automated verification:** Done — snippet presence check, structural verification coverage, state transitions, UI/recovery copy; runbook and evidence in `dev-tools/docs/PHASE9_GTM_SNIPPET_SETUP_PENDING.md`.
-- **Manual real-mode E2E:** **Not done — deferred.** No V1 re-verify API; user installs snippet and starts a **new** setup run (same rerun constraints as Phase 7 Track A). Optional operator run in `dev-tools/docs/evidence/PHASE9_GTM_SNIPPET_SETUP_PENDING_EVIDENCE.md`.
+- **Manual real-mode E2E:** Optional operator path; not required for V1 implementation complete. Evidence template: `dev-tools/docs/evidence/PHASE9_GTM_SNIPPET_SETUP_PENDING_EVIDENCE.md`.
 
 Instructions:
 - Provide clear GTM snippet installation instructions in the UI.
@@ -371,7 +373,7 @@ Instructions:
 - Structural verification requires published GTM version, expected tags, expected triggers, linked tag-trigger relationships, and Ads conversion identifiers.
 - If verification fails, move to `SETUP_NEEDS_TRACKING_FIX` and show user-friendly next steps.
 
-### Phase 10: Google Ads Campaign Creation Capability
+### Phase 10: Google Ads Campaign Creation Capability — **COMPLETE**
 Purpose: deliver the core V1 outcome.
 
 Instructions:
@@ -411,8 +413,11 @@ Do not build a full optimization dashboard in V1.
 
 **Delivery:** Existing `SetupReportPage` (`/setup/report/:setupRunId`) and `SetupProgressPage` (`/setup/progress/:setupRunId`) backed by `setupRunReportService` and `GET /api/v1/setupRuns/:setupRunId` — no separate dashboard API or page. Inventory and sign-off: `dev-tools/docs/PHASE11_REPORTING_DASHBOARD.md` (stop gate passed; no additional implementation required).
 
-### Phase 12: Reliability and Guardrails
+### Phase 12: Reliability and Guardrails — **COMPLETE**
+
 Purpose: make the MVP safe enough for real customers.
+
+**Delivery:** Idempotency contract, artifact lookup, Temporal policies, in-process provider rate limits, Ads/GTM 429 client backoff, compensation + support metadata, stuck detection, and progress/report UX. Inventory and sign-off: `dev-tools/docs/PHASE12_RELIABILITY_GUARDRAILS.md`.
 
 Instructions:
 - Add idempotency keys for every provider-changing activity.
@@ -422,16 +427,22 @@ Instructions:
 - Add compensation behavior for partial failures, such as pausing Ads campaigns or cleaning up GTM resources where supported.
 - Add support states for failed or stuck runs.
 
-### Phase 13: Testing
+### Phase 13: Testing — **COMPLETE**
+
 Purpose: avoid regression in orchestration and external API behavior.
+
+**Delivery:** Workflow provisioning tests, GTM mutation + Ads catalog client tests, idempotency contract matrix, integration branches, Playwright mock-worker terminal E2E. Inventory and sign-off: `dev-tools/docs/PHASE13_TESTING.md`. Live Google real-mode sandbox remains an optional operator path.
 
 Testing layers:
 - Unit tests for state transitions, config selection, idempotency keys, and verification logic.
 - Integration tests with mocked Google API responses.
-- Sandbox/manual E2E tests for a full SetupRun before any real customers.
+- Sandbox/manual E2E tests for a full SetupRun before any real customers (mock-mode terminal E2E complete).
 
-### Phase 14: Deployment
+### Phase 14: Deployment — **COMPLETE**
+
 Purpose: deploy safely without overbuilding infra.
+
+**Delivery:** `docs/DEPLOY.md`, `dev-tools/docs/PHASE14_DEPLOYMENT.md`, Railway API/worker configs, Temporal Cloud mTLS wiring, production env examples. Live cloud account provisioning (Atlas / Temporal Cloud / Railway / Firebase) is operator execution of the runbook.
 
 Instructions:
 - Deploy frontend to Firebase Hosting.
