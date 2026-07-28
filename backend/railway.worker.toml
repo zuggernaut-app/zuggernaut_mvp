@@ -1,0 +1,10 @@
+# Railway service: Zuggernaut Temporal worker
+# In Railway: add a second service, root directory = backend/, config file = railway.worker.toml
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "npm run temporal:worker"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

@@ -38,6 +38,18 @@ describe('assertAuthEnvironment', () => {
       '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
     expect(() => assertAuthEnvironment()).not.toThrow();
   });
+
+  it('requires JWT and encryption key when NODE_ENV=production', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.JWT_SECRET;
+    process.env.TOKEN_ENCRYPTION_KEY =
+      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+    expect(() => assertAuthEnvironment()).toThrow(/JWT_SECRET must be set/);
+
+    process.env.JWT_SECRET = 'x'.repeat(32);
+    delete process.env.TOKEN_ENCRYPTION_KEY;
+    expect(() => assertAuthEnvironment()).toThrow(/TOKEN_ENCRYPTION_KEY must be set/);
+  });
 });
 
 describe('assertWorkerEnvironment', () => {

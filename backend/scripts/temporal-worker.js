@@ -11,8 +11,8 @@ const { assertWorkerEnvironment } = require('../lib/auth/assertAuthEnvironment')
 const { SETUP_RUN_WORKFLOW_ACTIVITIES } = require('../constants/setupWorkflow');
 const { Worker, NativeConnection } = require('@temporalio/worker');
 const { withRetry } = require('./temporal-connect-retry');
+const { resolveTemporalConnectOptions } = require('../lib/temporalConnectionOptions');
 const {
-  resolveTemporalAddress,
   resolveTemporalNamespace,
   resolveTemporalTaskQueue,
 } = require('../constants/temporalDefaults');
@@ -35,15 +35,12 @@ async function main() {
     })
   );
 
-  const address = resolveTemporalAddress();
   const namespace = resolveTemporalNamespace();
   const taskQueue = resolveTemporalTaskQueue();
+  const connectOptions = resolveTemporalConnectOptions();
 
   const connection = await withRetry('Temporal worker', () =>
-    NativeConnection.connect({
-      address,
-      tls: false,
-    })
+    NativeConnection.connect(connectOptions)
   );
 
   const workflowsPath = path.resolve(path.join(__dirname, '..', 'workflows'));
@@ -67,7 +64,7 @@ async function main() {
     JSON.stringify({
       msg: 'Temporal worker ready — polling for tasks',
       status: 'listening',
-      address,
+      address: connectOptions.address,
       namespace,
       taskQueue,
       registeredActivities: SETUP_RUN_WORKFLOW_ACTIVITIES.length,
