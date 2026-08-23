@@ -117,7 +117,6 @@ async function getFreshGoogleAccessToken({ businessId, provider }) {
   const expiresIn = Number(refreshed.expires_in) || 3600;
   row.accessTokenEnc = encryptToken(refreshed.access_token);
   row.tokenExpiryAt = new Date(Date.now() + expiresIn * 1000);
-  row.connectionHealth = 'connected';
   await row.save();
 
   return refreshed.access_token;

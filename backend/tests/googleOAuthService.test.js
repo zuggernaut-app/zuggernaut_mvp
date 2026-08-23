@@ -74,6 +74,44 @@ describe('googleOAuthService', () => {
     expect(check.missing).toEqual([]);
   });
 
+  it('completeGoogleOAuthCallback preserves GBP locationName on token refresh', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const { encryptToken } = require('../lib/crypto/tokenEncryption');
+
+    const user = await User.create({ email: 'oauth-gbp-lock@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'gbp',
+      connectionHealth: 'connected',
+      accessTokenEnc: encryptToken('old'),
+      refreshTokenEnc: encryptToken('old-refresh'),
+      tokenExpiryAt: new Date(Date.now() + 3600_000),
+      scopes: allScopesForProvider('gbp'),
+      providerIdentifiers: {
+        accountName: 'accounts/mock',
+        locationName: 'accounts/mock/locations/locked-location',
+      },
+    });
+
+    await completeGoogleOAuthCallback({
+      businessId: bc.businessId.toString(),
+      provider: 'gbp',
+      userId: user._id.toString(),
+      code: 'mock-auth-code',
+    });
+
+    const row = await IntegrationConnection.findOne({ businessId: bc.businessId, provider: 'gbp' })
+      .select('+accessTokenEnc providerIdentifiers')
+      .lean();
+
+    expect(row.providerIdentifiers.locationName).toBe('accounts/mock/locations/locked-location');
+    expect(decryptToken(row.accessTokenEnc)).toBe('mock-access-token');
+  });
+
   it('completeGoogleOAuthCallback persists encrypted tokens', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');

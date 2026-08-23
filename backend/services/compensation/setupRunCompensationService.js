@@ -169,6 +169,18 @@ async function runSetupRunCompensation(ctx) {
     });
 
     if (gtmArtifactCount > 0) {
+      const deleted = await IntegrationArtifact.deleteMany({
+        setupRunId,
+        businessId,
+        provider: 'gtm',
+      });
+      actions.push({
+        type: 'gtm_db_artifact_cleanup',
+        outcome: 'deleted',
+        artifactCount: deleted.deletedCount ?? 0,
+        message:
+          'Removed GTM integration artifact records for this failed run from Zuggernaut (remote GTM resources were not deleted).',
+      });
       actions.push({
         type: 'gtm_manual_review_guidance',
         outcome: 'recorded',
@@ -217,6 +229,22 @@ async function runSetupRunCompensation(ctx) {
       },
       'compensation recorded ads provisioning failure guidance'
     );
+  }
+
+  const adsPauseFailed = actions.some(
+    (action) => action.type === 'ads_campaign_pause' && action.outcome === 'failed'
+  );
+
+  if (adsPauseFailed) {
+    logger.warn(
+      {
+        setupRunId: setupRunId.toString(),
+        businessId: businessId.toString(),
+        failedStep,
+      },
+      'compensation ads campaign pause failed; not marking applied (will retry)'
+    );
+    return { failedStep, actions };
   }
 
   const result = {

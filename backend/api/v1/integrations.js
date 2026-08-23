@@ -4,6 +4,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const { requireAuth } = require('./middleware/requireAuth');
 const { assertBusinessAccess } = require('./lib/assertBusinessAccess');
+const { assertProviderSelectionNotLocked } = require('./lib/assertProviderSelectionLocked');
 const { isGoogleOAuthProvider } = require('../../constants/googleOAuth');
 const {
   buildGoogleConnectUrl,
@@ -15,12 +16,15 @@ const {
 const { getAllConnectionStatuses } = require('../../services/capabilities/integrationConnectionService');
 const {
   listGtmResourceOptions,
+  listGtmAccountsOnly,
   saveGtmSelection,
+  saveGtmAccountOnlySelection,
   GtmResourceSelectionError,
 } = require('../../services/integrations/gtmResourceSelectionService');
 const {
   listGoogleAdsResourceOptions,
   saveGoogleAdsSelection,
+  saveGoogleAdsProvisioningIntent,
   GoogleAdsResourceSelectionError,
 } = require('../../services/integrations/googleAdsResourceSelectionService');
 const {
@@ -34,12 +38,43 @@ const {
   acceptMccLinkIfAllowed,
   getMccLinkManualAcceptInstructions,
 } = require('../../services/capabilities/googleAdsMccLinkService');
-const { GoogleAdsAccountError } = require('../../services/integrations/googleAdsApiConfig');
+const { GoogleAdsAccountError, GoogleAdsApiError } = require('../../services/integrations/googleAdsApiConfig');
+const {
+  AdsCampaignManagementError,
+  getCampaignForBusiness,
+  enableCampaignForBusiness,
+  pauseCampaignForBusiness,
+  updateBudgetForBusiness,
+  mapManagementError,
+} = require('../../services/capabilities/adsCampaignManagementService');
+const {
+  getCampaignPerformanceForBusiness,
+  mapPerformanceRouteError,
+} = require('../../services/reports/adsPerformanceService');
+const { executeGbpWrite, GbpWriteError } = require('../../services/capabilities/gbpWriteService');
+const {
+  buildMetaConnectUrl,
+  getMetaAdsStatus,
+} = require('../../services/integrations/metaOAuthClient');
+const { runMetaSetup } = require('../../services/capabilities/metaSetupService');
+const {
+  assertActivePlan,
+  SubscriptionGateError,
+} = require('../../services/billing/subscriptionGate');
 const IntegrationConnection = mongoose.model('IntegrationConnection');
+const {
+  ProviderResourceExclusiveError,
+} = require('../../lib/providerResourceExclusivity');
 
 const router = express.Router();
 
 function mapSelectionError(err, res) {
+  if (err instanceof ProviderResourceExclusiveError) {
+    return res.status(409).json({
+      error: err.code,
+      message: err.message,
+    });
+  }
   if (err instanceof GtmResourceSelectionError || err instanceof GoogleAdsResourceSelectionError) {
     const statusByCode = {
       GTM_NOT_CONNECTED: 409,
@@ -204,11 +239,73 @@ router.put('/gtm/selection', requireAuth, async (req, res, next) => {
       });
     }
 
+    if (!(await assertProviderSelectionNotLocked(res, access.businessId))) {
+      return;
+    }
+
     const result = await saveGtmSelection(access.businessId, {
       accountId,
       containerId,
       workspaceId,
     });
+    return res.status(200).json({ result });
+  } catch (err) {
+    const mapped = mapSelectionError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.get('/gtm/accounts', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
+    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    const result = await listGtmAccountsOnly(access.businessId);
+    return res.status(200).json({ result });
+  } catch (err) {
+    const mapped = mapSelectionError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.put('/gtm/account-selection', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const accountId = typeof req.body?.accountId === 'string' ? req.body.accountId.trim() : '';
+    if (!bidRaw || !mongoose.Types.ObjectId.isValid(bidRaw)) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'businessId is required and must be a valid ObjectId',
+      });
+    }
+    if (!accountId) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'accountId is required',
+      });
+    }
+
+    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    if (!(await assertProviderSelectionNotLocked(res, access.businessId))) {
+      return;
+    }
+
+    const result = await saveGtmAccountOnlySelection(access.businessId, accountId);
     return res.status(200).json({ result });
   } catch (err) {
     const mapped = mapSelectionError(err, res);
@@ -261,7 +358,47 @@ router.put('/google_ads/selection', requireAuth, async (req, res, next) => {
       });
     }
 
+    if (!(await assertProviderSelectionNotLocked(res, access.businessId))) {
+      return;
+    }
+
     const result = await saveGoogleAdsSelection(access.businessId, { customerId });
+    return res.status(200).json({ result });
+  } catch (err) {
+    const mapped = mapSelectionError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.put('/google_ads/provisioning-intent', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const intent =
+      typeof req.body?.provisioningIntent === 'string' ? req.body.provisioningIntent.trim() : '';
+
+    if (!bidRaw || !mongoose.Types.ObjectId.isValid(bidRaw)) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'businessId is required and must be a valid ObjectId',
+      });
+    }
+    if (intent !== 'mcc_create') {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'provisioningIntent must be mcc_create',
+      });
+    }
+
+    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    const result = await saveGoogleAdsProvisioningIntent(access.businessId);
     return res.status(200).json({ result });
   } catch (err) {
     const mapped = mapSelectionError(err, res);
@@ -377,6 +514,147 @@ router.post('/google_ads/mcc-link/accept', requireAuth, async (req, res, next) =
     const mapped = mapMccLinkError(err, res);
     if (mapped) return mapped;
     next(err);
+  }
+});
+
+function mapManagementRouteError(err, res) {
+  if (err instanceof AdsCampaignManagementError || err instanceof GoogleAdsApiError) {
+    const statusByCode = {
+      validation_error: 400,
+      ADS_CAMPAIGN_BUDGET_TOO_LOW: 400,
+      ADS_CAMPAIGN_BUDGET_MAX_EXCEEDED: 400,
+      ADS_CAMPAIGN_NOT_FOUND: 404,
+      ADS_CAMPAIGN_BUDGET_NOT_FOUND: 404,
+      ADS_CAMPAIGN_BUSINESS_NOT_FOUND: 404,
+      GOOGLE_ADS_API_NOT_ENABLED: 503,
+    };
+    const mapped = mapManagementError(err);
+    return res.status(statusByCode[mapped.code] ?? 502).json({
+      error: mapped.code,
+      message: mapped.message,
+    });
+  }
+  return null;
+}
+
+router.get('/google_ads/campaign', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
+    const campaign = await getCampaignForBusiness(req.user.id, bidRaw);
+    return res.status(200).json({ campaign });
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.get('/google_ads/campaign/performance', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
+    const performance = await getCampaignPerformanceForBusiness(req.user.id, bidRaw);
+    return res.status(200).json({ performance });
+  } catch (err) {
+    const mapped = mapPerformanceRouteError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/campaign/enable', requireAuth, async (req, res, next) => {
+  try {
+    try {
+      await assertActivePlan(req.user.id, 'campaign_enable');
+    } catch (err) {
+      if (err instanceof SubscriptionGateError) {
+        return res.status(403).json({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const result = await enableCampaignForBusiness(req.user.id, bidRaw);
+    return res.status(200).json(result);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    const providerMapped = mapMccLinkError(err, res);
+    if (providerMapped) return providerMapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/campaign/pause', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const result = await pauseCampaignForBusiness(req.user.id, bidRaw);
+    return res.status(200).json(result);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    const providerMapped = mapMccLinkError(err, res);
+    if (providerMapped) return providerMapped;
+    next(err);
+  }
+});
+
+router.patch('/google_ads/campaign/budget', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const amountMicros = req.body?.amountMicros;
+    const result = await updateBudgetForBusiness(req.user.id, bidRaw, amountMicros);
+    return res.status(200).json(result);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    const providerMapped = mapMccLinkError(err, res);
+    if (providerMapped) return providerMapped;
+    next(err);
+  }
+});
+
+router.post('/gbp/:locationId/write', requireAuth, async (req, res, next) => {
+  try {
+    const consentGranted =
+      req.headers['x-gbp-write-consent'] === 'true' || req.body?.consent === true;
+    const businessIdRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const result = await executeGbpWrite(req.user.id, businessIdRaw, req.body ?? {}, consentGranted);
+    return res.status(200).json({ result });
+  } catch (err) {
+    if (err instanceof GbpWriteError) {
+      const status = err.code === 'consent_required' ? 400 : 403;
+      return res.status(status).json({ error: err.code, message: err.message });
+    }
+    return next(err);
+  }
+});
+
+router.get('/meta/connect-url', requireAuth, async (_req, res) => {
+  const data = await buildMetaConnectUrl();
+  res.status(200).json(data);
+});
+
+router.get('/meta/status', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
+    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({ error: 'not_found', message: 'Business context not found' });
+    }
+    const status = await getMetaAdsStatus({ businessId: bidRaw });
+    return res.status(200).json({ status });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.post('/meta/setup', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const result = await runMetaSetup(req.user.id, bidRaw);
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
   }
 });
 

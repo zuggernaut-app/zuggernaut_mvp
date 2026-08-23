@@ -2,7 +2,8 @@
 
 const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('../../constants/setupWorkflow');
-const { adsCampaignIdempotencyKey } = require('../../constants/idempotency');
+const { adsCampaignIdempotencyKey, findReusableArtifact, businessScopedIdempotencyKey } = require('../../constants/idempotency');
+const { computeBusinessIntentFingerprint } = require('../../lib/idempotency/businessIntentFingerprint');
 const {
   createCampaignBudget,
   createCampaign,
@@ -216,7 +217,7 @@ async function prepareCompliantCampaignPlan(ctx) {
  * @param {{ businessId?: import('mongoose').Types.ObjectId | string, customerId?: string }} [resolveCtx]
  */
 async function buildCampaignIntent(bc, conversionArtifacts, resolveCtx = {}) {
-  const readiness = validateBusinessContextAdsReadiness(bc);
+  const readiness = await validateBusinessContextAdsReadiness(bc);
   if (!readiness.ok) {
     throw new AdsProviderPreconditionError(
       formatAdsReadinessSummary(readiness),
@@ -252,20 +253,36 @@ function adsIdempotencyKey(setupRunId, logicalKey) {
  * @param {object} ctx
  */
 async function findExistingAdsArtifact(ctx) {
-  const { setupRunId, businessId, logicalKey } = ctx;
-  return IntegrationArtifact.findOne({
+  const { setupRunId, businessId, logicalKey, intentFingerprint } = ctx;
+  const currentRun = await IntegrationArtifact.findOne({
     setupRunId,
     businessId,
     provider: 'google_ads',
     idempotencyKey: adsIdempotencyKey(setupRunId, logicalKey),
   }).lean();
+  if (currentRun) return currentRun;
+
+  if (intentFingerprint) {
+    return findReusableArtifact({
+      businessId,
+      provider: 'google_ads',
+      logicalKey,
+      fingerprint: intentFingerprint,
+    });
+  }
+  return null;
 }
 
 /**
  * @param {object} ctx
  */
 async function persistAdsArtifact(ctx) {
-  const { setupRunId, businessId, artifactType, logicalKey, externalId, metadata } = ctx;
+  const { setupRunId, businessId, artifactType, logicalKey, externalId, metadata, intentFingerprint } =
+    ctx;
+  const idempotencyKey =
+    intentFingerprint
+      ? businessScopedIdempotencyKey(businessId, 'google_ads', logicalKey, intentFingerprint)
+      : adsIdempotencyKey(setupRunId, logicalKey);
   await IntegrationArtifact.findOneAndUpdate(
     {
       setupRunId,
@@ -275,8 +292,14 @@ async function persistAdsArtifact(ctx) {
       externalId,
     },
     {
-      $setOnInsert: { idempotencyKey: adsIdempotencyKey(setupRunId, logicalKey) },
-      $set: { metadata },
+      $setOnInsert: { idempotencyKey },
+      $set: {
+        metadata: {
+          ...metadata,
+          logicalKey,
+          ...(intentFingerprint ? { intentFingerprint } : {}),
+        },
+      },
     },
     { upsert: true, setDefaultsOnInsert: true }
   );
@@ -299,7 +322,7 @@ async function createAdsAutoCampaign(ctx) {
     );
   }
 
-  const readiness = validateBusinessContextAdsReadiness(bc);
+  const readiness = await validateBusinessContextAdsReadiness(bc);
   if (!readiness.ok) {
     throw new AdsProviderPreconditionError(
       formatAdsReadinessSummary(readiness),
@@ -346,6 +369,8 @@ async function createAdsAutoCampaign(ctx) {
     throw new AdsProviderPreconditionError('Campaign plan not persisted.', 'ADS_PLAN_PERSIST_FAILED');
   }
 
+  const intentFingerprint = computeBusinessIntentFingerprint(bc);
+
   let newArtifacts = 0;
   let reusedArtifacts = 0;
   let source = process.env.GOOGLE_ADS_API_MOCK === 'true' ? 'google_ads_api_mock' : 'google_ads_api';
@@ -353,7 +378,12 @@ async function createAdsAutoCampaign(ctx) {
   const clientCtx = { businessId, customerId, setupRunId: setupRunId.toString(), intent };
 
   async function ensureResource(logicalKey, artifactType, createFn, metadataBuilder) {
-    const existing = await findExistingAdsArtifact({ setupRunId, businessId, logicalKey });
+    const existing = await findExistingAdsArtifact({
+      setupRunId,
+      businessId,
+      logicalKey,
+      intentFingerprint,
+    });
     if (existing) {
       reusedArtifacts += 1;
       logger.info(
@@ -400,6 +430,7 @@ async function createAdsAutoCampaign(ctx) {
       artifactType,
       logicalKey,
       externalId: created.resourceName,
+      intentFingerprint,
       metadata: metadataBuilder(created.resourceName),
     });
     return created.resourceName;

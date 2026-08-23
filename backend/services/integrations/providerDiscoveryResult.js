@@ -164,6 +164,21 @@ function pickSavedSelectionFields(provider, priorIdentifiers) {
  */
 function mergeRediscoveryWithSavedSelection(provider, priorIdentifiers, discovery) {
   if (!hasExplicitProductSelection(provider, priorIdentifiers)) {
+    if (provider === 'gtm' && priorIdentifiers?.accountId) {
+      const accountId = String(priorIdentifiers.accountId).trim();
+      if (accountId) {
+        return {
+          ...discovery,
+          providerIdentifiers: {
+            ...discovery.providerIdentifiers,
+            accountId,
+            ...(priorIdentifiers.accountName != null
+              ? { accountName: priorIdentifiers.accountName }
+              : {}),
+          },
+        };
+      }
+    }
     return discovery;
   }
 

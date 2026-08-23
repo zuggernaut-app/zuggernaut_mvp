@@ -11,6 +11,7 @@ const {
   GtmApiError,
 } = require('../integrations/googleTagManagerClient');
 const { hasRequiredIdentifiers } = require('../integrations/providerDiscoveryResult');
+const { maybeInjectFailure } = require('../../lib/qaFailureInjection');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
@@ -124,6 +125,8 @@ async function provisionGtmResources(input) {
     logger,
   } = input;
 
+  maybeInjectFailure('gtm_provisioning');
+
   const request = await IntegrationProvisioningRequest.findById(provisioningRequestId);
   assertApprovedGtmProvisioningRequest(request);
 
@@ -144,31 +147,57 @@ async function provisionGtmResources(input) {
       accountId = accountArtifact.externalId;
       logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), accountId }, 'gtm account artifact reused');
     } else {
-      const accounts = await listGtmAccounts(accessToken);
-      const account =
-        accounts
-          .filter((row) => row.accountId)
-          .sort((a, b) =>
-            String(a.accountId).localeCompare(String(b.accountId), undefined, { numeric: true })
-          )[0] ?? null;
+      const conn = await IntegrationConnection.findOne({ businessId, provider: 'gtm' })
+        .select('providerIdentifiers')
+        .lean();
+      const selectedAccountId = conn?.providerIdentifiers?.accountId
+        ? String(conn.providerIdentifiers.accountId)
+        : null;
 
-      if (!account?.accountId) {
+      const accounts = await listGtmAccounts(accessToken);
+      const selectable = accounts.filter((row) => row.accountId);
+
+      if (selectedAccountId) {
+        const match = selectable.find((row) => String(row.accountId) === selectedAccountId);
+        if (!match) {
+          throw new GtmProvisioningError(
+            'Selected GTM account is no longer accessible for this OAuth grant.',
+            'GTM_SELECTION_NOT_ACCESSIBLE'
+          );
+        }
+        accountId = selectedAccountId;
+        await persistProvisioningArtifact({
+          businessId,
+          setupRunId,
+          artifactType: 'gtm_account',
+          resource: 'account',
+          externalId: accountId,
+          metadata: match,
+        });
+        logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), accountId }, 'gtm account linked from saved selection');
+      } else if (selectable.length === 1) {
+        const account = selectable[0];
+        accountId = String(account.accountId);
+        await persistProvisioningArtifact({
+          businessId,
+          setupRunId,
+          artifactType: 'gtm_account',
+          resource: 'account',
+          externalId: accountId,
+          metadata: account,
+        });
+        logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), accountId }, 'gtm account auto-linked (single account)');
+      } else if (selectable.length > 1) {
+        throw new GtmProvisioningError(
+          'Multiple GTM accounts are available. Select one before provisioning.',
+          'GTM_SELECTION_REQUIRED'
+        );
+      } else {
         throw new GtmProvisioningError(
           'No GTM account available. Create a GTM account at https://tagmanager.google.com, refresh integrations, then approve provisioning again.',
           'GTM_ACCOUNT_NOT_FOUND'
         );
       }
-
-      accountId = String(account.accountId);
-      await persistProvisioningArtifact({
-        businessId,
-        setupRunId,
-        artifactType: 'gtm_account',
-        resource: 'account',
-        externalId: accountId,
-        metadata: account,
-      });
-      logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), accountId }, 'gtm account linked');
     }
 
     let containerId;
@@ -179,21 +208,43 @@ async function provisionGtmResources(input) {
       publicContainerId = containerArtifact.metadata?.publicContainerId ?? null;
       logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), containerId }, 'gtm container artifact reused');
     } else {
-      const container = await createGtmContainer(accessToken, accountId, {
-        name: containerName,
-        usageContext: ['web'],
-      });
-      containerId = container.containerId;
-      publicContainerId = container.publicContainerId ?? null;
-      await persistProvisioningArtifact({
+      const priorContainer = await IntegrationArtifact.findOne({
         businessId,
-        setupRunId,
+        provider: 'gtm',
         artifactType: 'gtm_container',
-        resource: 'container',
-        externalId: containerId,
-        metadata: container,
-      });
-      logger?.info?.({ businessId: String(businessId), setupRunId: String(setupRunId), containerId }, 'gtm container provisioned');
+        'metadata.role': { $ne: 'container_version' },
+        'metadata.path': { $regex: `^accounts/${accountId}/` },
+      })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      if (priorContainer?.externalId) {
+        containerId = String(priorContainer.externalId);
+        publicContainerId = priorContainer.metadata?.publicContainerId ?? null;
+        logger?.info?.(
+          { businessId: String(businessId), setupRunId: String(setupRunId), containerId },
+          'gtm container reused from prior integration artifact'
+        );
+      } else {
+        const container = await createGtmContainer(accessToken, accountId, {
+          name: containerName,
+          usageContext: ['web'],
+        });
+        containerId = container.containerId;
+        publicContainerId = container.publicContainerId ?? null;
+        await persistProvisioningArtifact({
+          businessId,
+          setupRunId,
+          artifactType: 'gtm_container',
+          resource: 'container',
+          externalId: containerId,
+          metadata: container,
+        });
+        logger?.info?.(
+          { businessId: String(businessId), setupRunId: String(setupRunId), containerId },
+          'gtm container provisioned'
+        );
+      }
     }
 
     let workspaceId;

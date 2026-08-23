@@ -339,6 +339,31 @@ describe('provider discovery', () => {
       expect(merged.providerIdentifiers.containerId).toBe('ctr-1');
       expect(merged.providerIdentifiers.workspaceId).toBe('ws-1');
     });
+
+    it('preserves GTM accountId when prior selection is account-only (provisioning required)', () => {
+      const discovery = buildSelectionRequiredResult(
+        'gtm',
+        {
+          discoveredAccountCount: 1,
+          discoveredContainerCount: 0,
+          discoveredWorkspaceCount: 0,
+        },
+        defaultSelectionReason('gtm')
+      );
+      const prior = {
+        accountId: 'acc-only',
+        accountName: 'Account Only',
+        selectionRequired: false,
+        discoveryReason: 'GTM_PROVISIONING_REQUIRED',
+        selectedAt: '2026-06-10T12:00:00.000Z',
+      };
+
+      const merged = mergeRediscoveryWithSavedSelection('gtm', prior, discovery);
+
+      expect(merged.providerIdentifiers.accountId).toBe('acc-only');
+      expect(merged.providerIdentifiers.accountName).toBe('Account Only');
+      expect(merged.connectionHealth).toBe('selection_required');
+    });
   });
 
   describe('mock OAuth discovery path', () => {

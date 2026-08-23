@@ -60,12 +60,12 @@ describe('gtmConversionSetupService', () => {
 
     const convArtifacts =
       goalPrimary === 'calls'
-        ? [{ externalId: '1001', logicalCategory: 'call', name: 'Call conv' }]
+        ? [{ externalId: '1001', logicalCategory: 'call', name: 'Call conv', conversionId: 'AW-1234567890', conversionLabel: 'call_label_mock' }]
         : goalPrimary === 'forms'
-          ? [{ externalId: '1002', logicalCategory: 'form', name: 'Form conv' }]
+          ? [{ externalId: '1002', logicalCategory: 'form', name: 'Form conv', conversionId: 'AW-1234567890', conversionLabel: 'form_label_mock' }]
           : [
-              { externalId: '1001', logicalCategory: 'call', name: 'Call conv' },
-              { externalId: '1002', logicalCategory: 'form', name: 'Form conv' },
+              { externalId: '1001', logicalCategory: 'call', name: 'Call conv', conversionId: 'AW-1234567890', conversionLabel: 'call_label_mock' },
+              { externalId: '1002', logicalCategory: 'form', name: 'Form conv', conversionId: 'AW-1234567890', conversionLabel: 'form_label_mock' },
             ];
 
     for (const row of convArtifacts) {
@@ -76,18 +76,47 @@ describe('gtmConversionSetupService', () => {
         artifactType: 'ads_conversion_action',
         externalId: row.externalId,
         idempotencyKey: `ads-ca-${run._id}-${row.logicalCategory}`,
-        metadata: { logicalCategory: row.logicalCategory, name: row.name },
+        metadata: {
+          logicalCategory: row.logicalCategory,
+          name: row.name,
+          conversionId: row.conversionId,
+          conversionLabel: row.conversionLabel,
+        },
       });
     }
 
     return { bc, run };
   }
 
+  it('buildGtmSetupPlan uses nameKey labels when provided', () => {
+    const plan = buildGtmSetupPlan({
+      conversionArtifacts: [
+        {
+          externalId: '1002',
+          metadata: { logicalCategory: 'form', conversionId: 'AW-123', conversionLabel: 'form_lbl' },
+        },
+      ],
+      adsCustomerId: '1234567890',
+      websiteUrl: 'https://acme.example',
+      nameKey: 'acme-123456',
+    });
+
+    const tag = plan.resources.find((r) => r.logicalKey === 'tag_form_conversion');
+    expect(tag?.displayName).toBe('ZUG · acme-123456 · Form Conversion');
+    expect(tag?.gtmPayload?.name).toBe('ZUG · acme-123456 · Form Conversion');
+  });
+
   it('buildGtmSetupPlan includes form and call resources for both goal', () => {
     const plan = buildGtmSetupPlan({
       conversionArtifacts: [
-        { externalId: '1001', metadata: { logicalCategory: 'call' } },
-        { externalId: '1002', metadata: { logicalCategory: 'form' } },
+        {
+          externalId: '1001',
+          metadata: { logicalCategory: 'call', conversionId: 'AW-123', conversionLabel: 'call_lbl' },
+        },
+        {
+          externalId: '1002',
+          metadata: { logicalCategory: 'form', conversionId: 'AW-123', conversionLabel: 'form_lbl' },
+        },
       ],
       adsCustomerId: '1234567890',
       websiteUrl: 'https://acme.example',
@@ -98,9 +127,8 @@ describe('gtmConversionSetupService', () => {
     expect(keys).toEqual(
       expect.arrayContaining([
         'trig_form_confirmation_url',
-        'trig_form_submit_click',
+        'trig_form_submit',
         'trig_call_tel_click',
-        'trig_call_element_hint_click',
         'tag_form_conversion',
         'tag_call_conversion',
       ])
@@ -109,7 +137,12 @@ describe('gtmConversionSetupService', () => {
 
   it('buildGtmSetupPlan includes only call resources for calls goal', () => {
     const plan = buildGtmSetupPlan({
-      conversionArtifacts: [{ externalId: '1001', metadata: { logicalCategory: 'call' } }],
+      conversionArtifacts: [
+        {
+          externalId: '1001',
+          metadata: { logicalCategory: 'call', conversionId: 'AW-123', conversionLabel: 'call_lbl' },
+        },
+      ],
       adsCustomerId: '1234567890',
       websiteUrl: 'https://acme.example',
     });
@@ -119,6 +152,27 @@ describe('gtmConversionSetupService', () => {
       expect.arrayContaining(['trig_call_tel_click', 'tag_call_conversion'])
     );
     expect(keys).not.toEqual(expect.arrayContaining(['tag_form_conversion']));
+  });
+
+  it('buildGtmSetupPlan uses user-confirmed thank-you URL paths', () => {
+    const plan = buildGtmSetupPlan({
+      conversionArtifacts: [
+        {
+          externalId: '1002',
+          metadata: { logicalCategory: 'form', conversionId: 'AW-123', conversionLabel: 'form_lbl' },
+        },
+      ],
+      adsCustomerId: '1234567890',
+      websiteUrl: 'https://acme.example',
+      thankYouUrls: ['/contact/thanks', '/booked'],
+    });
+
+    const confirmationTriggers = plan.resources.filter(
+      (r) => r.template === 'form_confirmation_page_url'
+    );
+    expect(confirmationTriggers).toHaveLength(2);
+    expect(plan.resources.map((r) => r.logicalKey)).toContain('trig_form_submit');
+    expect(plan.resources.map((r) => r.logicalKey)).not.toContain('trig_call_element_hint_click');
   });
 
   it('fails when no Ads conversion artifacts exist', async () => {
@@ -176,8 +230,14 @@ describe('gtmConversionSetupService', () => {
   it('requiredClickBuiltinTypes maps click trigger filters to built-in variable types', () => {
     const plan = buildGtmSetupPlan({
       conversionArtifacts: [
-        { externalId: '1001', metadata: { logicalCategory: 'call' } },
-        { externalId: '1002', metadata: { logicalCategory: 'form' } },
+        {
+          externalId: '1001',
+          metadata: { logicalCategory: 'call', conversionId: 'AW-123', conversionLabel: 'call_lbl' },
+        },
+        {
+          externalId: '1002',
+          metadata: { logicalCategory: 'form', conversionId: 'AW-123', conversionLabel: 'form_lbl' },
+        },
       ],
       adsCustomerId: '1234567890',
       websiteUrl: 'https://acme.example',
@@ -200,7 +260,7 @@ describe('gtmConversionSetupService', () => {
     });
 
     expect(result.summary.tagsCreated).toBe(1);
-    expect(result.summary.triggersCreated).toBe(2);
+    expect(result.summary.triggersCreated).toBe(1);
     expect(result.summary.source).toBe('gtm_api_mock');
 
     const tags = await IntegrationArtifact.find({
@@ -238,7 +298,7 @@ describe('gtmConversionSetupService', () => {
     });
 
     expect(result.summary.tagsCreated).toBe(2);
-    expect(result.summary.triggersCreated).toBe(4);
+    expect(result.summary.triggersCreated).toBe(3);
 
     const tags = await IntegrationArtifact.find({
       setupRunId: run._id,

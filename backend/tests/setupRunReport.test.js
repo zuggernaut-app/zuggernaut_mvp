@@ -452,7 +452,8 @@ describe('setupRunReportService', () => {
 
     const report = await buildSetupRunReport(run._id);
     expect(report.conversionActions.status).toBe('failed');
-    expect(report.conversionActions.message).toMatch(/mutate failed/i);
+    expect(report.conversionActions.message).toMatch(/could not apply the requested changes/i);
+    expect(report.conversionActions.message).not.toMatch(/Google Ads API/i);
     expect(report.outcome.recovery?.title).toMatch(/creation failed/i);
   });
 

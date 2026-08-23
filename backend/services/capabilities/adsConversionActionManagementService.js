@@ -18,6 +18,16 @@ const { adsConversionActionCreationIdempotencyKey } = require('../../constants/i
 const { isConversionActionCreationEnabled } = require('../integrations/googleAdsApiConfig');
 const { createConversionAction } = require('../integrations/googleAdsConversionActionClient');
 const { resolvePrimaryGoal, sortForSelection } = require('./adsConversionCatalogService');
+const {
+  claimConversionActionCreation,
+  finalizeConversionActionCreation,
+  markConversionActionCreationFailed,
+  findCreatedConversionArtifact,
+  recoverOwnedConversionAction,
+  isOwnedNameRecoverableError,
+  ConversionActionClaimError,
+} = require('./conversionActionCreationClaim');
+const { zugConversionActionName } = require('../../lib/businessNameKey');
 
 const { requireSetupReadyConnection } = require('./setupReadyConnectionService');
 const BusinessContext = mongoose.model('BusinessContext');
@@ -199,43 +209,25 @@ function resolveStrategyWithCatalog(businessContext, classifiedCatalog) {
  */
 async function findExistingCreatedConversionArtifact(ctx) {
   const { setupRunId, businessId, slot } = ctx;
-  return IntegrationArtifact.findOne({
-    setupRunId,
-    businessId,
-    provider: 'google_ads',
-    idempotencyKey: adsConversionActionCreationIdempotencyKey(setupRunId, slot.slot),
-  }).lean();
+  const idempotencyKey = adsConversionActionCreationIdempotencyKey(setupRunId, slot.slot);
+  return findCreatedConversionArtifact({ setupRunId, businessId, idempotencyKey });
 }
 
 /**
  * @param {object} ctx
  */
 async function persistCreatedConversionArtifact(ctx) {
-  const { setupRunId, businessId, slot, externalId, resourceName, source, template } = ctx;
-  await IntegrationArtifact.findOneAndUpdate(
-    {
-      setupRunId,
-      businessId,
-      provider: 'google_ads',
-      artifactType: 'ads_conversion_action_created',
-      externalId,
-    },
-    {
-      $setOnInsert: {
-        idempotencyKey: adsConversionActionCreationIdempotencyKey(setupRunId, slot.slot),
-      },
-      $set: {
-        metadata: {
-          slot: slot.slot,
-          logicalCategory: slot.logicalCategory,
-          resourceName,
-          template,
-          source,
-        },
-      },
-    },
-    { upsert: true, setDefaultsOnInsert: true }
-  );
+  const { setupRunId, businessId, slot, externalId, resourceName, source, template, measurement } = ctx;
+  await finalizeConversionActionCreation({
+    setupRunId,
+    businessId,
+    slot,
+    externalId,
+    resourceName,
+    source,
+    template,
+    measurement,
+  });
 }
 
 /**
@@ -252,6 +244,21 @@ async function persistCreatedConversionArtifact(ctx) {
 async function createConversionActionForSlot(ctx) {
   const { setupRunId, businessId, customerId, slot, logger } = ctx;
 
+  const baseTemplate = DEFAULT_CONVERSION_ACTION_TEMPLATES[slot.logicalCategory];
+  if (!baseTemplate) {
+    throw new ConversionActionTemplateError(
+      `No conversion action template for logicalCategory "${slot.logicalCategory}".`
+    );
+  }
+
+  const bc = await BusinessContext.findOne({ businessId }).select('nameKey').lean();
+  const customName = zugConversionActionName(bc?.nameKey, slot.logicalCategory);
+  const template = {
+    ...baseTemplate,
+    ...(customName ? { name: customName } : {}),
+  };
+
+  const idempotencyKey = adsConversionActionCreationIdempotencyKey(setupRunId, slot.slot);
   const existing = await findExistingCreatedConversionArtifact(ctx);
   if (existing) {
     logger?.info?.(
@@ -272,20 +279,86 @@ async function createConversionActionForSlot(ctx) {
     };
   }
 
-  const template = DEFAULT_CONVERSION_ACTION_TEMPLATES[slot.logicalCategory];
-  if (!template) {
-    throw new ConversionActionTemplateError(
-      `No conversion action template for logicalCategory "${slot.logicalCategory}".`
-    );
+  const claim = await claimConversionActionCreation({
+    setupRunId,
+    businessId,
+    slot,
+    idempotencyKey,
+    template,
+  });
+  if (!claim.claimed && claim.idempotent && claim.artifact) {
+    return {
+      externalId: claim.artifact.externalId,
+      resourceName: claim.artifact.metadata?.resourceName ?? null,
+      source: claim.artifact.metadata?.source ?? 'google_ads_api',
+      resolution: 'create',
+      idempotent: true,
+    };
   }
 
-  const idempotencyKey = adsConversionActionCreationIdempotencyKey(setupRunId, slot.slot);
-  const created = await createConversionAction({
-    businessId,
-    customerId,
-    conversionActionConfig: template,
-    idempotencyKey,
-  });
+  let created;
+  try {
+    created = await createConversionAction({
+      businessId,
+      customerId,
+      conversionActionConfig: template,
+      idempotencyKey,
+    });
+  } catch (err) {
+    if (
+      err instanceof ConversionActionClaimError &&
+      err.code === 'CONVERSION_ACTION_CLAIM_IN_PROGRESS'
+    ) {
+      throw err;
+    }
+
+    await markConversionActionCreationFailed({
+      setupRunId,
+      businessId,
+      slot,
+      errorCode: err instanceof Error && err.code ? err.code : 'CONVERSION_ACTION_CREATE_FAILED',
+      errorMessage: err instanceof Error ? err.message : 'conversion action creation failed',
+    });
+
+    if (isOwnedNameRecoverableError(err)) {
+      const { fetchGoogleAdsConversionCatalog } = require('../integrations/googleAdsConversionCatalogClient');
+      try {
+        const catalog = await fetchGoogleAdsConversionCatalog({ businessId, customerId, logger });
+        const owned = recoverOwnedConversionAction(
+          catalog.conversionActions,
+          slot.logicalCategory,
+          template.name
+        );
+        if (owned) {
+          created = {
+            externalId: owned.externalId,
+            resourceName: owned.resourceName,
+            source: 'google_ads_api_owned_name_reconcile',
+            idempotencyKey,
+            conversionId: owned.conversionId,
+            conversionLabel: owned.conversionLabel,
+            tagSnippets: owned.tagSnippets,
+          };
+        } else {
+          throw err;
+        }
+      } catch (reconcileErr) {
+        if (reconcileErr === err) throw err;
+        throw err;
+      }
+    } else {
+      throw err;
+    }
+  }
+
+  const measurement =
+    created.conversionId && created.conversionLabel
+      ? {
+          conversionId: created.conversionId,
+          conversionLabel: created.conversionLabel,
+          ...(created.tagSnippets ? { tagSnippets: created.tagSnippets } : {}),
+        }
+      : null;
 
   await persistCreatedConversionArtifact({
     setupRunId,
@@ -295,6 +368,7 @@ async function createConversionActionForSlot(ctx) {
     resourceName: created.resourceName,
     source: created.source,
     template,
+    measurement,
   });
 
   logger?.info?.(
@@ -309,8 +383,11 @@ async function createConversionActionForSlot(ctx) {
   );
 
   return {
-    ...created,
+    externalId: created.externalId,
+    resourceName: created.resourceName,
+    source: created.source,
     resolution: 'create',
+    ...(created.idempotent ? { idempotent: true } : {}),
   };
 }
 
@@ -349,6 +426,13 @@ async function fillUnmatchedSlots(ctx) {
         ...result,
       });
     } catch (err) {
+      if (
+        err instanceof ConversionActionClaimError &&
+        err.code === 'CONVERSION_ACTION_CLAIM_IN_PROGRESS'
+      ) {
+        throw err;
+      }
+
       const message = err instanceof Error ? err.message : 'conversion action creation failed';
       const errorCode = err instanceof Error && err.code ? err.code : 'CONVERSION_ACTION_CREATE_FAILED';
       logger?.warn?.(

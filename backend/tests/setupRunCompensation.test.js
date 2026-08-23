@@ -1,5 +1,6 @@
 'use strict';
 
+const axios = require('axios');
 const mongoose = require('mongoose');
 const {
   runSetupRunCompensation,
@@ -8,8 +9,14 @@ const {
 const { SETUP_STEP_NAMES } = require('../constants/setupWorkflow');
 const { createLogger } = require('../lib/observability/logger');
 
+jest.mock('axios');
+
 describe('setupRunCompensationService', () => {
   const logger = createLogger({ level: 'silent' });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
 
   async function seedCompensationRun() {
     const User = mongoose.model('User');
@@ -77,7 +84,7 @@ describe('setupRunCompensationService', () => {
     expect(second.appliedAt).toBe(first.appliedAt);
   });
 
-  it('records GTM manual review guidance without deleting artifacts', async () => {
+  it('records GTM manual review guidance and deletes DB artifacts on conversion setup failure', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
     const SetupRun = mongoose.model('SetupRun');
@@ -106,13 +113,18 @@ describe('setupRunCompensationService', () => {
     expect(result.actions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          type: 'gtm_db_artifact_cleanup',
+          outcome: 'deleted',
+          artifactCount: 1,
+        }),
+        expect.objectContaining({
           type: 'gtm_manual_review_guidance',
           outcome: 'recorded',
         }),
       ])
     );
 
-    expect(await IntegrationArtifact.countDocuments({ setupRunId: run._id, provider: 'gtm' })).toBe(1);
+    expect(await IntegrationArtifact.countDocuments({ setupRunId: run._id, provider: 'gtm' })).toBe(0);
   });
 
   it('records conversion action failure guidance without pausing when no campaign exists', async () => {
@@ -191,6 +203,39 @@ describe('setupRunCompensationService', () => {
         }),
       ])
     );
+  });
+
+  it('does not mark compensation applied when ads campaign pause fails', async () => {
+    const SetupRun = mongoose.model('SetupRun');
+    const { bc, run } = await seedCompensationRun();
+
+    process.env.GOOGLE_ADS_API_MOCK = 'false';
+    process.env.GOOGLE_ADS_API_ENABLED = 'true';
+    process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'test-dev-token';
+    axios.post.mockResolvedValueOnce({
+      status: 403,
+      data: { error: { status: 'PERMISSION_DENIED', message: 'pause denied' } },
+    });
+
+    const result = await runSetupRunCompensation({
+      setupRunId: run._id,
+      businessId: bc.businessId,
+      failedStep: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
+      logger,
+    });
+
+    expect(result.appliedAt).toBeUndefined();
+    expect(result.actions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'ads_campaign_pause',
+          outcome: 'failed',
+        }),
+      ])
+    );
+
+    const updated = await SetupRun.findById(run._id).lean();
+    expect(updated.meta?.compensation).toBeUndefined();
   });
 
   it('existingCompensation reads applied compensation from meta', () => {

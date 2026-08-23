@@ -2,6 +2,7 @@
 
 const {
   validateBusinessContextAdsReadiness,
+  validateBusinessContextAdsReadinessSync,
   buildMinimalAdsReadyBusinessContext,
   formatAdsReadinessSummary,
   normalizeBusinessNameForAds,
@@ -10,14 +11,14 @@ const { ADS_READINESS_CODES } = require('../constants/businessContextAdsReadines
 
 describe('businessContextAdsReadinessService', () => {
   it('passes when required Ads inputs are present', () => {
-    const result = validateBusinessContextAdsReadiness(buildMinimalAdsReadyBusinessContext());
+    const result = validateBusinessContextAdsReadinessSync(buildMinimalAdsReadyBusinessContext());
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.normalized.businessName).toBe('Test Business');
     expect(result.normalized.websiteUrl).toBe('https://example.com');
     expect(result.normalized.primaryService).toBe('Example service');
-    expect(result.normalized.primaryServiceArea).toBe('Mountain View');
+    expect(result.normalized.primaryServiceArea).toBe('San Francisco');
     expect(result.normalized.resolvedPrimaryGoal).toBe('both');
     expect(result.normalized.keywordSeeds).toHaveLength(3);
     expect(result.normalized.adCopySeeds.headlines).toHaveLength(3);
@@ -25,7 +26,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('accepts industry when services are empty', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({
         services: [],
         industry: 'Plumbing',
@@ -38,7 +39,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when website URL is missing', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ websiteUrl: '' })
     );
 
@@ -48,7 +49,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when website URL is invalid', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ websiteUrl: 'not-a-url' })
     );
 
@@ -58,7 +59,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when business name is missing', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ businessName: '' })
     );
 
@@ -68,7 +69,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when services and industry are missing', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ services: [], industry: '' })
     );
 
@@ -78,7 +79,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when service areas are missing', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ serviceAreas: [] })
     );
 
@@ -88,7 +89,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when goals primary is missing', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ goals: {} })
     );
 
@@ -98,7 +99,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when goals primary is unsupported', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ goals: { primary: 'traffic' } })
     );
 
@@ -107,31 +108,37 @@ describe('businessContextAdsReadinessService', () => {
     expect(result.issues[0].code).toBe(ADS_READINESS_CODES.UNSUPPORTED_GOAL);
   });
 
-  it('normalizes placeholder service areas for geo suggest', () => {
-    const tbd = validateBusinessContextAdsReadiness(
-      buildMinimalAdsReadyBusinessContext({ serviceAreas: ['Service area TBD'] })
-    );
-    expect(tbd.ok).toBe(true);
-    if (!tbd.ok) return;
-    expect(tbd.normalized.primaryServiceArea).toBe('Mountain View');
+  it('fails when service area is a placeholder label', () => {
+    const placeholderCases = [
+      'Service area TBD',
+      'Local services',
+      'miosalon.com area',
+    ];
 
-    const localServices = validateBusinessContextAdsReadiness(
-      buildMinimalAdsReadyBusinessContext({ serviceAreas: ['Local services'] })
-    );
-    expect(localServices.ok).toBe(true);
-    if (!localServices.ok) return;
-    expect(localServices.normalized.primaryServiceArea).toBe('Mountain View');
+    for (const serviceArea of placeholderCases) {
+      const result = validateBusinessContextAdsReadinessSync(
+        buildMinimalAdsReadyBusinessContext({ serviceAreas: [serviceArea] })
+      );
 
-    const hostArea = validateBusinessContextAdsReadiness(
-      buildMinimalAdsReadyBusinessContext({ serviceAreas: ['miosalon.com area'] })
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.issues[0].code).toBe(ADS_READINESS_CODES.PLACEHOLDER_SERVICE_AREA);
+      expect(result.issues[0].message).toMatch(/confirm a real city or region/i);
+    }
+  });
+
+  it('accepts real service area labels without spoofing geo targets', () => {
+    const result = validateBusinessContextAdsReadinessSync(
+      buildMinimalAdsReadyBusinessContext({ serviceAreas: ['Bay Area'] })
     );
-    expect(hostArea.ok).toBe(true);
-    if (!hostArea.ok) return;
-    expect(hostArea.normalized.primaryServiceArea).toBe('Mountain View');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.normalized.primaryServiceArea).toBe('Bay Area');
   });
 
   it('formatAdsReadinessSummary returns first issue message', () => {
-    const result = validateBusinessContextAdsReadiness({ businessName: 'Acme' });
+    const result = validateBusinessContextAdsReadinessSync({ businessName: 'Acme' });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(formatAdsReadinessSummary(result)).toBe(result.issues[0].message);
@@ -156,7 +163,7 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('normalizes comma-stuffed business name in ad copy and keywords', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({
         businessName:
           'Medha Hari,Classical Bharathanatyam Dancer,Choreographer,Home,Chennai,Tamil Nadu,India',
@@ -174,12 +181,48 @@ describe('businessContextAdsReadinessService', () => {
   });
 
   it('fails when business name has no readable characters after normalization', () => {
-    const result = validateBusinessContextAdsReadiness(
+    const result = validateBusinessContextAdsReadinessSync(
       buildMinimalAdsReadyBusinessContext({ businessName: '!!!' })
     );
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.issues[0].code).toBe(ADS_READINESS_CODES.MISSING_BUSINESS_NAME);
+  });
+
+  it('attaches non-blocking scrape warning when latest ScrapeRun has headless disabled', async () => {
+    const mongoose = require('mongoose');
+    require('../models');
+    const ScrapeRun = mongoose.model('ScrapeRun');
+    const businessId = new mongoose.Types.ObjectId();
+    const userId = new mongoose.Types.ObjectId();
+
+    await ScrapeRun.create({
+      businessId,
+      userId,
+      websiteUrl: 'https://acme.example',
+      status: 'SUCCEEDED',
+      resultSuggested: {
+        headlessStatus: 'disabled_ssrf',
+        warnings: ['headless_disabled_ssrf'],
+      },
+    });
+
+    const result = await validateBusinessContextAdsReadiness(
+      buildMinimalAdsReadyBusinessContext({ businessId })
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: ADS_READINESS_CODES.HEADLESS_DISABLED_SSRF,
+          field: 'scrape',
+        }),
+      ])
+    );
+
+    await ScrapeRun.deleteMany({ businessId });
   });
 });

@@ -13,6 +13,7 @@ const {
   markStepSkipped,
   patchSetupRun,
   mergeSetupRunMeta,
+  assertCurrentSetupRunOrFail,
 } = require('./lib/setupLifecycle');
 const { parseSetupActivityIds, safeErrorMessage } = require('./lib/setupActivityInput');
 const { recordSetupFailureSupport, recordSetupRecoveryState } = require('./lib/setupFailureSupport');
@@ -44,6 +45,9 @@ const {
   GoogleAdsSetupError,
 } = require('../services/capabilities');
 const conversionActionManagement = require('../services/capabilities/adsConversionActionManagementService');
+const {
+  ConversionActionClaimError,
+} = require('../services/capabilities/conversionActionCreationClaim');
 const {
   validateBusinessContextAdsReadiness,
   formatAdsReadinessSummary,
@@ -227,7 +231,7 @@ async function loadSetupContextActivity(input) {
     return { outcome: 'failed', reason: msg, setupRunId: rawId, businessId: businessId.toString() };
   }
 
-  const adsReadiness = validateBusinessContextAdsReadiness(bc);
+  const adsReadiness = await validateBusinessContextAdsReadiness(bc);
   if (!adsReadiness.ok) {
     const msg = formatAdsReadinessSummary(adsReadiness);
     await markStepFailed({
@@ -1107,6 +1111,7 @@ async function runGtmConversionSetupActivity(input) {
   }
 
   try {
+    await assertCurrentSetupRunOrFail(setupRunId, businessId);
     const result = await runGtmConversionSetup({ setupRunId, businessId, logger });
     await markStepSuccess({
       setupRunId,
@@ -1332,6 +1337,7 @@ async function createAdsCampaignActivity(input) {
   });
 
   try {
+    await assertCurrentSetupRunOrFail(setupRunId, businessId);
     const result = await createAdsAutoCampaign({ setupRunId, businessId, logger });
     await markStepSuccess({
       setupRunId,
@@ -1549,6 +1555,7 @@ async function provisionGtmResourcesActivity(input) {
   });
 
   try {
+    await assertCurrentSetupRunOrFail(setupRunId, businessId);
     const result = await executeProvisioningRequest({
       requestId: provisioningRequestId,
       businessId,
@@ -1628,6 +1635,7 @@ async function provisionGoogleAdsCustomerActivity(input) {
   });
 
   try {
+    await assertCurrentSetupRunOrFail(setupRunId, businessId);
     const result = await executeProvisioningRequest({
       requestId: provisioningRequestId,
       businessId,
@@ -1708,6 +1716,7 @@ async function manageAdsConversionActionsActivity(input) {
   });
 
   try {
+    await assertCurrentSetupRunOrFail(setupRunId, businessId);
     const result = await conversionActionManagement.manageConversionActions({
       setupRunId,
       businessId,
@@ -1824,6 +1833,17 @@ async function manageAdsConversionActionsActivity(input) {
       businessId: rawBiz,
     };
   } catch (err) {
+    if (
+      err instanceof ConversionActionClaimError &&
+      err.code === 'CONVERSION_ACTION_CLAIM_IN_PROGRESS'
+    ) {
+      const msg = safeErrorMessage(
+        err,
+        'Conversion action creation is already in progress for this slot.'
+      );
+      throw ApplicationFailure.retryable(msg, 'CONVERSION_ACTION_CLAIM_IN_PROGRESS');
+    }
+
     const msg = safeErrorMessage(err, 'Conversion action management failed');
     await markStepFailed({
       setupRunId,

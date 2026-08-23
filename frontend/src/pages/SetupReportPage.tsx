@@ -7,6 +7,11 @@ import { PageLayout } from '../components/layout/PageLayout'
 import { useSetupRunReport } from '../hooks/useSetupRunReport'
 import { useOnboardingState } from '../hooks/useOnboardingState'
 import { conversionActionHeadline } from '../lib/conversionActionsUi'
+import { RecoveryPlaybook } from '../components/setup/RecoveryPlaybook'
+import { EnableCampaignCard } from '../components/setup/EnableCampaignCard'
+import { CampaignPerformanceCard } from '../components/setup/CampaignPerformanceCard'
+import { GbpWritePanel } from '../components/integrations/GbpWritePanel'
+import { MetaConnectPanel } from '../components/integrations/MetaConnectPanel'
 
 function adsCampaignFailureHeadline(failure: {
   bucketLabel: string | null
@@ -71,6 +76,15 @@ export function SetupReportPage(): ReactElement {
 
       {report ? (
         <>
+          {report.outcome.kind === 'succeeded' && report.setupRun.businessId ? (
+            <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+              Setup finished successfully. You can{' '}
+              <Link to={`/business-context/${report.setupRun.businessId}/edit`}>
+                edit your business profile
+              </Link>{' '}
+              in Zuggernaut — changes do not update Google Ads or GTM automatically.
+            </div>
+          ) : null}
           <section style={{ marginTop: '0.75rem' }}>
             <span className={`statusPill ${statusTone(report.setupRun.status)}`}>
               {report.setupRun.status}
@@ -91,18 +105,7 @@ export function SetupReportPage(): ReactElement {
                 {report.setupRun.lastErrorSummary}
               </div>
             ) : null}
-            {report.outcome.recovery ? (
-              <div className="alert alert-info" style={{ marginTop: '0.75rem' }}>
-                <strong>{report.outcome.recovery.title}</strong>
-                <ol style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', fontSize: '0.875rem' }}>
-                  {report.outcome.recovery.steps.map((step) => (
-                    <li key={step} style={{ marginBottom: '0.35rem' }}>
-                      {step}
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            ) : null}
+            {report.outcome.recovery ? <RecoveryPlaybook recovery={report.outcome.recovery} /> : null}
           </section>
 
           {report.supportState?.failedStep ? (
@@ -289,12 +292,46 @@ export function SetupReportPage(): ReactElement {
             </section>
           ) : null}
 
+          {report.outcome.kind === 'succeeded' && report.gtmSetup.status === 'not_run' ? (
+            <div className="alert alert-info" style={{ marginTop: '1.5rem' }}>
+              <strong>GTM skipped</strong> — conversion tracking is not configured on your website yet.
+            </div>
+          ) : null}
+
+          {report.gtmSetup.status === 'setup_complete' ||
+          report.structuralVerification.evidence?.publicContainerId ? (
+            <div className="alert alert-info" style={{ marginTop: '1.5rem' }}>
+              <strong>Install your GTM snippet</strong>
+              <p style={{ fontSize: '0.875rem', margin: '0.5rem 0' }}>
+                Your GTM container is connected. Add the container snippet to your website so tags can
+                fire.
+                {report.structuralVerification.evidence?.publicContainerId ? (
+                  <>
+                    {' '}
+                    Container ID:{' '}
+                    <code style={{ fontSize: '0.8rem' }}>
+                      {report.structuralVerification.evidence.publicContainerId}
+                    </code>
+                    .
+                  </>
+                ) : null}
+              </p>
+              <a
+                className="btn btn-primary"
+                href="https://tagmanager.google.com/"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open Google Tag Manager
+              </a>
+            </div>
+          ) : null}
+
           {report.recommendations.length > 0 ? (
             <section style={{ marginTop: '1.5rem' }}>
               <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Recommendations</h2>
               <p style={{ fontSize: '0.875rem', color: 'var(--color-muted)', marginTop: 0 }}>
-                Your Google Ads campaign is running. Complete these optional steps when you are ready
-                to improve conversion tracking.
+                Complete these optional steps when you are ready to improve conversion tracking.
               </p>
               {report.recommendations.map((item) => (
                 <div
@@ -360,7 +397,7 @@ export function SetupReportPage(): ReactElement {
               <ul className="stepsList">
                 <li>
                   <strong>Campaign</strong> ·{' '}
-                  {report.adsCampaign.summary.campaignCreated ? 'created' : 'skipped'}
+                  {report.adsCampaign.summary.campaignCreated ? 'created paused' : 'skipped'}
                 </li>
                 <li>
                   <strong>Ad group</strong> ·{' '}
@@ -380,6 +417,25 @@ export function SetupReportPage(): ReactElement {
                 </li>
               </ul>
             </section>
+          ) : null}
+
+          {report.setupRun.status === 'SUCCEEDED' &&
+          report.adsCampaign.summary?.campaignCreated &&
+          report.setupRun.businessId ? (
+            <EnableCampaignCard businessId={report.setupRun.businessId} />
+          ) : null}
+
+          {report.setupRun.status === 'SUCCEEDED' &&
+          report.adsCampaign.summary?.campaignCreated &&
+          report.setupRun.businessId ? (
+            <CampaignPerformanceCard businessId={report.setupRun.businessId} />
+          ) : null}
+
+          {report.setupRun.businessId ? (
+            <>
+              <GbpWritePanel businessId={report.setupRun.businessId} />
+              <MetaConnectPanel businessId={report.setupRun.businessId} />
+            </>
           ) : null}
 
           {Object.values(report.artifactCounts).some((count) => count > 0) ? (

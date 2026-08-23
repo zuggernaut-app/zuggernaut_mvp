@@ -1,12 +1,19 @@
 import type { ReactElement } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { RequireAuth } from './RequireAuth'
+import { RequirePlatformAdmin } from './RequirePlatformAdmin'
 import { HomePage } from '../pages/HomePage'
 import { RegisterPage } from '../pages/RegisterPage'
 import { LoginPage } from '../pages/LoginPage'
+import { RequestPasswordResetPage } from '../pages/RequestPasswordResetPage'
+import { PasswordResetPage } from '../pages/PasswordResetPage'
+import { BillingPage } from '../pages/BillingPage'
+import { TeamPage } from '../pages/TeamPage'
+import { AdminConsolePage } from '../pages/admin/AdminConsolePage'
 import { BusinessStartPage } from '../pages/BusinessStartPage'
 import { WebsiteUrlPage } from '../pages/WebsiteUrlPage'
 import { BusinessReviewPage } from '../pages/BusinessReviewPage'
+import { BusinessContextEditPage } from '../pages/BusinessContextEditPage'
 import { StartSetupPage } from '../pages/StartSetupPage'
 import { SetupProgressPage } from '../pages/SetupProgressPage'
 import { SetupReportPage } from '../pages/SetupReportPage'
@@ -22,6 +29,42 @@ export function AppRoutes(): ReactElement {
       <Route path="/" element={<HomePage />} />
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/password-reset/request" element={<RequestPasswordResetPage />} />
+      <Route path="/password-reset" element={<PasswordResetPage />} />
+      <Route
+        path="/billing"
+        element={
+          <RequireAuth>
+            <BillingPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/team/accept-invite"
+        element={
+          <RequireAuth>
+            <TeamPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/team"
+        element={
+          <RequireAuth>
+            <TeamPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin"
+        element={
+          <RequireAuth>
+            <RequirePlatformAdmin>
+              <AdminConsolePage />
+            </RequirePlatformAdmin>
+          </RequireAuth>
+        }
+      />
       <Route
         path="/onboarding/business"
         element={
@@ -43,6 +86,14 @@ export function AppRoutes(): ReactElement {
         element={
           <RequireAuth>
             <BusinessReviewPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/business-context/:businessId/edit"
+        element={
+          <RequireAuth>
+            <BusinessContextEditPage />
           </RequireAuth>
         }
       />

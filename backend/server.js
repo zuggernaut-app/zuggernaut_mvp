@@ -10,6 +10,9 @@ assertAuthEnvironment();
 require('./models');
 
 const { createLogger } = require('./lib/observability/logger');
+const { initOtel } = require('./lib/observability/otel');
+
+initOtel('zuggernaut-api');
 const { createApp } = require('./app');
 
 const logger = createLogger();

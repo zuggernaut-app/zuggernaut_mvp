@@ -65,6 +65,7 @@ describe('scrapeWorkflow', () => {
     const out = await scrapeWorkflow({
       ...id,
       websiteUrl: 'https://example.com',
+      startedAt: '2026-08-02T12:00:00.000Z',
     });
 
     expect(mockScrapeActivities.checkRobotsActivity).toHaveBeenCalledWith({ websiteUrl: 'https://example.com' });
@@ -123,6 +124,7 @@ describe('scrapeWorkflow', () => {
     await scrapeWorkflow({
       ...ids(),
       websiteUrl: 'https://example.com',
+      startedAt: '2026-08-02T12:00:00.000Z',
     });
 
     expect(mockScrapeActivities.scrapeHeadlessActivity).toHaveBeenCalled();
@@ -137,11 +139,25 @@ describe('scrapeWorkflow', () => {
     });
 
     const id = ids();
-    await scrapeWorkflow({ ...id, websiteUrl: 'https://example.com' });
+    await scrapeWorkflow({
+      ...id,
+      websiteUrl: 'https://example.com',
+      startedAt: '2026-08-02T12:00:00.000Z',
+    });
 
     expect(mockScrapeActivities.scrapeStaticActivity).not.toHaveBeenCalled();
     expect(mockScrapeActivities.scrapeHeadlessActivity).not.toHaveBeenCalled();
     expect(mockScrapeActivities.normalizeScrapeActivity).toHaveBeenCalled();
+  });
+
+  it('returns FAILED when startedAt is missing', async () => {
+    const id = ids();
+    const out = await scrapeWorkflow({
+      ...id,
+      websiteUrl: 'https://example.com',
+    });
+    expect(out.status).toBe('FAILED');
+    expect(mockScrapeActivities.checkRobotsActivity).not.toHaveBeenCalled();
   });
 
   it('returns FAILED when required fields missing', async () => {

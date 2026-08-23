@@ -2,7 +2,8 @@
 
 const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('../../constants/setupWorkflow');
-const { gtmConversionIdempotencyKey } = require('../../constants/idempotency');
+const { gtmConversionIdempotencyKey, findReusableArtifact, businessScopedIdempotencyKey } = require('../../constants/idempotency');
+const { computeBusinessIntentFingerprint } = require('../../lib/idempotency/businessIntentFingerprint');
 const { buildGtmSetupPlan } = require('./gtmTemplates/v1');
 const { requireSetupReadyConnection, validateGtmIdentifiers } = require('./setupReadyConnectionService');
 const {
@@ -12,6 +13,7 @@ const {
   enableGtmBuiltinVariables,
   getGtmAccessToken,
   isGtmWorkspaceAlreadySubmittedError,
+  isGtmWorkspaceResourceCollisionError,
 } = require('../integrations/googleTagManagerClient');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 const IntegrationConnection = mongoose.model('IntegrationConnection');
@@ -50,6 +52,58 @@ function requiredClickBuiltinTypes(_plan) {
 }
 
 /**
+ * Fail closed on GTM workspace name collisions. Ownership is checked for messaging only;
+ * mismatched same-name resources are never updated in place.
+ *
+ * @param {object} collision
+ * @param {import('mongoose').Types.ObjectId} businessId
+ */
+async function resolveGtmWorkspaceResourceCollision(collision, businessId) {
+  const existingPath = collision?.existingPath;
+  let ownedByBusiness = false;
+  if (existingPath) {
+    const artifact = await IntegrationArtifact.findOne({
+      businessId,
+      provider: 'gtm',
+      externalId: existingPath,
+    }).lean();
+    ownedByBusiness =
+      Boolean(artifact) && artifact?.metadata?.createdBy === 'gtm_conversion_setup_v1';
+  }
+
+  const resourceLabel = collision?.payloadName ?? collision?.logicalKey ?? 'resource';
+  const containerHint = collision?.containerId ? `container ${collision.containerId}` : 'this GTM container';
+  const collectionLabel = collision?.collection ?? 'resource';
+
+  if (ownedByBusiness) {
+    throw new GtmProviderPreconditionError(
+      `GTM ${containerHint} already has Zuggernaut ${collectionLabel} "${resourceLabel}" with different configuration. Select a different GTM container or remove the conflicting resource before starting setup again.`,
+      'GTM_CONTAINER_CONFLICT'
+    );
+  }
+
+  throw new GtmProviderPreconditionError(
+    `GTM ${containerHint} already has a conflicting ${collectionLabel} named "${resourceLabel}". Select a different GTM container or remove the conflicting name before starting setup.`,
+    'GTM_CONTAINER_CONFLICT'
+  );
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId} ctx.businessId
+ */
+async function createGtmResourceForConversionSetup(ctx) {
+  try {
+    return await createGtmWorkspaceResource(ctx);
+  } catch (err) {
+    if (isGtmWorkspaceResourceCollisionError(err)) {
+      await resolveGtmWorkspaceResourceCollision(err.collision, ctx.businessId);
+    }
+    throw err;
+  }
+}
+
+/**
  * @param {import('mongoose').Types.ObjectId} setupRunId
  * @param {import('mongoose').Types.ObjectId} businessId
  * @param {string} logicalKey
@@ -62,20 +116,36 @@ function gtmIdempotencyKey(setupRunId, logicalKey) {
  * @param {object} ctx
  */
 async function findExistingGtmArtifact(ctx) {
-  const { setupRunId, businessId, logicalKey } = ctx;
-  return IntegrationArtifact.findOne({
+  const { setupRunId, businessId, logicalKey, intentFingerprint } = ctx;
+  const currentRun = await IntegrationArtifact.findOne({
     setupRunId,
     businessId,
     provider: 'gtm',
     idempotencyKey: gtmIdempotencyKey(setupRunId, logicalKey),
   }).lean();
+  if (currentRun) return currentRun;
+
+  if (intentFingerprint) {
+    return findReusableArtifact({
+      businessId,
+      provider: 'gtm',
+      logicalKey,
+      fingerprint: intentFingerprint,
+    });
+  }
+  return null;
 }
 
 /**
  * @param {object} ctx
  */
 async function persistGtmArtifact(ctx) {
-  const { setupRunId, businessId, artifactType, logicalKey, externalId, metadata } = ctx;
+  const { setupRunId, businessId, artifactType, logicalKey, externalId, metadata, intentFingerprint } =
+    ctx;
+  const idempotencyKey =
+    intentFingerprint
+      ? businessScopedIdempotencyKey(businessId, 'gtm', logicalKey, intentFingerprint)
+      : gtmIdempotencyKey(setupRunId, logicalKey);
   await IntegrationArtifact.findOneAndUpdate(
     {
       setupRunId,
@@ -85,8 +155,14 @@ async function persistGtmArtifact(ctx) {
       externalId,
     },
     {
-      $setOnInsert: { idempotencyKey: gtmIdempotencyKey(setupRunId, logicalKey) },
-      $set: { metadata },
+      $setOnInsert: { idempotencyKey },
+      $set: {
+        metadata: {
+          ...metadata,
+          logicalKey,
+          ...(intentFingerprint ? { intentFingerprint } : {}),
+        },
+      },
     },
     { upsert: true, setDefaultsOnInsert: true }
   );
@@ -169,10 +245,13 @@ async function runGtmConversionSetup(ctx) {
   );
 
   const bc = await BusinessContext.findOne({ businessId }).lean();
+  const intentFingerprint = bc ? computeBusinessIntentFingerprint(bc) : '';
   const plan = buildGtmSetupPlan({
     conversionArtifacts,
     adsCustomerId,
     websiteUrl: bc?.websiteUrl ?? null,
+    thankYouUrls: Array.isArray(bc?.thankYouUrls) ? bc.thankYouUrls : [],
+    nameKey: bc?.nameKey ?? null,
   });
 
   const accessToken = await getGtmAccessToken({ businessId });
@@ -205,19 +284,25 @@ async function runGtmConversionSetup(ctx) {
     try {
       for (const spec of nonTagResources) {
         const collection = spec.kind === 'variable' ? 'variables' : 'triggers';
-        const existing = await findExistingGtmArtifact({ setupRunId, businessId, logicalKey: spec.logicalKey });
+        const existing = await findExistingGtmArtifact({
+          setupRunId,
+          businessId,
+          logicalKey: spec.logicalKey,
+          intentFingerprint,
+        });
 
         let resourcePath;
         if (existing) {
           resourcePath = existing.externalId;
           reusedArtifacts += 1;
         } else {
-          const created = await createGtmWorkspaceResource({
+          const created = await createGtmResourceForConversionSetup({
             gtmIds: activeGtmIds,
             accessToken,
             collection,
             payload: spec.gtmPayload,
             logicalKey: spec.logicalKey,
+            businessId,
           });
           resourcePath = created.resourcePath;
           if (spec.kind === 'variable') variablesCreated += 1;
@@ -229,6 +314,7 @@ async function runGtmConversionSetup(ctx) {
             artifactType: spec.artifactType,
             logicalKey: spec.logicalKey,
             externalId: resourcePath,
+            intentFingerprint,
             metadata: {
               role: spec.kind,
               template: spec.template,
@@ -249,7 +335,12 @@ async function runGtmConversionSetup(ctx) {
       }
 
       for (const spec of tagResources) {
-        const existing = await findExistingGtmArtifact({ setupRunId, businessId, logicalKey: spec.logicalKey });
+        const existing = await findExistingGtmArtifact({
+          setupRunId,
+          businessId,
+          logicalKey: spec.logicalKey,
+          intentFingerprint,
+        });
 
         let resourcePath;
         if (existing) {
@@ -272,12 +363,13 @@ async function runGtmConversionSetup(ctx) {
             firingTriggerId: firingTriggerIds,
           };
 
-          const created = await createGtmWorkspaceResource({
+          const created = await createGtmResourceForConversionSetup({
             gtmIds: activeGtmIds,
             accessToken,
             collection: 'tags',
             payload: tagPayload,
             logicalKey: spec.logicalKey,
+            businessId,
           });
           resourcePath = created.resourcePath;
           tagsCreated += 1;
@@ -288,6 +380,7 @@ async function runGtmConversionSetup(ctx) {
             artifactType: spec.artifactType,
             logicalKey: spec.logicalKey,
             externalId: resourcePath,
+            intentFingerprint,
             metadata: {
               role: 'conversion_tag',
               template: spec.template,
@@ -311,6 +404,7 @@ async function runGtmConversionSetup(ctx) {
         setupRunId,
         businessId,
         logicalKey: versionLogicalKey,
+        intentFingerprint,
       });
 
       if (existingVersion) {
@@ -335,6 +429,7 @@ async function runGtmConversionSetup(ctx) {
           artifactType: 'gtm_container',
           logicalKey: versionLogicalKey,
           externalId: publishedVersionPath,
+          intentFingerprint,
           metadata: {
             role: 'container_version',
             templateVersion: plan.templateVersion,

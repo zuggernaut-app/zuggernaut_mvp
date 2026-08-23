@@ -4,6 +4,13 @@ const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('../../constants/setupWorkflow');
 const { detectStuckSetupRun } = require('../setupRunStuckDetection');
 const { existingCompensation } = require('../compensation/setupRunCompensationService');
+const {
+  errorCodeFromStepDetails,
+  resolveSetupUserErrorMessage,
+  sanitizeSetupErrorSummary,
+  sanitizeStepErrorSummary,
+} = require('../../lib/setupUserErrorMessages');
+const { buildSupportPlaybook } = require('../../lib/setupSupportPlaybook');
 const BusinessContext = mongoose.model('BusinessContext');
 const SetupRun = mongoose.model('SetupRun');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
@@ -75,16 +82,17 @@ function mapOutcomeKind(status) {
  * @param {string} kind
  * @param {string | null | undefined} lastErrorSummary
  */
-function outcomeHeadline(kind, lastErrorSummary) {
+function outcomeHeadline(kind, lastErrorSummary, errorCode) {
+  const sanitizedSummary = sanitizeSetupErrorSummary(lastErrorSummary, errorCode);
   switch (kind) {
     case 'succeeded':
       return 'Google Ads setup completed successfully.';
     case 'failed':
-      return lastErrorSummary ?? 'Setup failed.';
+      return sanitizedSummary ?? 'Setup failed.';
     case 'snippet_pending':
       return 'GTM snippet must be installed before Ads campaign creation can continue.';
     case 'provisioning_required':
-      return lastErrorSummary ?? 'Provisioning approval is required before setup can continue.';
+      return sanitizedSummary ?? 'Provisioning approval is required before setup can continue.';
     case 'tracking_fix':
       return 'Tracking setup needs attention before continuing.';
     case 'manual_review':
@@ -252,10 +260,12 @@ function normalizeConversionActions(meta, steps, setupRunStatus, lastErrorSummar
     };
   }
 
-  const message =
+  const message = sanitizeSetupErrorSummary(
     manageStep.lastErrorSummary ??
-    (typeof lastErrorSummary === 'string' ? lastErrorSummary : null) ??
-    'Conversion actions need review before setup can continue.';
+      (typeof lastErrorSummary === 'string' ? lastErrorSummary : null) ??
+      'Conversion actions need review before setup can continue.',
+    errorCodeFromStepDetails(stepDetails)
+  );
 
   if (setupRunStatus === 'FAILED' && manageStep.status === 'failed') {
     return {
@@ -336,6 +346,112 @@ function buildConversionActionRecovery(conversionActions) {
       'Start a new setup run after resolving the issue.',
     ],
   };
+}
+
+/**
+ * @param {string | { text: string, href?: string, external?: boolean }} step
+ * @returns {{ text: string, href?: string, external?: boolean }}
+ */
+function normalizeRecoveryStep(step) {
+  if (typeof step === 'string') return { text: step };
+  if (step && typeof step === 'object' && typeof step.text === 'string') return step;
+  return { text: String(step) };
+}
+
+/**
+ * @param {object | null | undefined} recovery
+ * @returns {object | null}
+ */
+function normalizeRecovery(recovery) {
+  if (!recovery || typeof recovery !== 'object') return null;
+  return {
+    title: recovery.title,
+    steps: Array.isArray(recovery.steps) ? recovery.steps.map(normalizeRecoveryStep) : [],
+    ...(Array.isArray(recovery.advancedSteps) && recovery.advancedSteps.length > 0
+      ? { advancedSteps: recovery.advancedSteps.map(normalizeRecoveryStep) }
+      : {}),
+  };
+}
+
+/**
+ * @param {object} ctx
+ */
+function resolveSetupRecovery(ctx) {
+  const publicContainerId =
+    ctx.publicContainerId ??
+    (isObject(ctx.structuralEvidence) && typeof ctx.structuralEvidence.publicContainerId === 'string'
+      ? ctx.structuralEvidence.publicContainerId
+      : null);
+
+  let recovery = buildSupportPlaybook({
+    errorCode: ctx.errorCode,
+    outcomeKind: ctx.outcomeKind,
+    setupRunId: ctx.setupRunId,
+    businessId: ctx.businessId,
+    publicContainerId,
+  });
+
+  if (!recovery) {
+    const legacy = buildRecovery(ctx.outcomeKind, ctx.structuralEvidence);
+    if (legacy) {
+      recovery = {
+        title: legacy.title,
+        steps: legacy.steps.map((text) => ({ text })),
+      };
+    }
+  }
+
+  const conversionRecovery = ctx.conversionActions
+    ? buildConversionActionRecovery(ctx.conversionActions)
+    : null;
+  if (conversionRecovery) {
+    recovery = {
+      title: conversionRecovery.title,
+      steps: conversionRecovery.steps.map((text) => ({ text })),
+    };
+  }
+
+  if (ctx.stuckState?.stuck && ctx.outcomeKind === 'in_progress') {
+    recovery = {
+      title: 'Setup appears stuck',
+      steps: [
+        { text: ctx.stuckState.guidance ?? 'Verify the Temporal worker is running.' },
+        { text: 'Refresh this page after confirming the worker and MongoDB are healthy.' },
+        {
+          text: 'If the issue persists, inspect the workflow in Temporal UI and start a new setup run if needed.',
+        },
+      ],
+      advancedSteps: recovery?.advancedSteps,
+    };
+  } else if (ctx.compensation?.actions?.length) {
+    const compensationSteps = ctx.compensation.actions
+      .map((action) => {
+        if (action.type === 'ads_campaign_pause' && action.outcome === 'paused') {
+          return { text: 'A partially created Google Ads campaign was paused automatically.' };
+        }
+        if (action.type === 'gtm_manual_review_guidance' && typeof action.message === 'string') {
+          return { text: action.message };
+        }
+        if (
+          (action.type === 'gtm_provisioning_failure_guidance' ||
+            action.type === 'ads_provisioning_failure_guidance') &&
+          typeof action.message === 'string'
+        ) {
+          return { text: action.message };
+        }
+        return null;
+      })
+      .filter(Boolean);
+    if (compensationSteps.length > 0) {
+      recovery = {
+        title: recovery?.title ?? 'Partial setup requires review',
+        steps: [...(recovery?.steps ?? []), ...compensationSteps],
+        advancedSteps: recovery?.advancedSteps,
+      };
+    }
+  }
+
+  return normalizeRecovery(recovery);
 }
 
 function normalizeAdsCatalog(meta, steps) {
@@ -510,11 +626,14 @@ function buildAdsCampaignFailureFromStep(step) {
     (typeof details.code === 'string' && details.code.trim() ? details.code.trim() : null) ??
     (typeof firstIssue?.code === 'string' && firstIssue.code.trim() ? firstIssue.code.trim() : null);
 
-  const message =
-    (typeof details.message === 'string' && details.message.trim() ? details.message.trim() : null) ??
-    (typeof step.lastErrorSummary === 'string' && step.lastErrorSummary.trim()
-      ? step.lastErrorSummary.trim()
-      : 'Google Ads campaign creation failed.');
+  const message = resolveSetupUserErrorMessage({
+    errorCode: code,
+    fallbackMessage:
+      (typeof details.message === 'string' && details.message.trim() ? details.message.trim() : null) ??
+      (typeof step.lastErrorSummary === 'string' && step.lastErrorSummary.trim()
+        ? step.lastErrorSummary.trim()
+        : 'Google Ads campaign creation failed.'),
+  });
 
   const provider =
     details.provider === 'google_ads' || step.provider === 'google_ads' ? 'google_ads' : 'google_ads';
@@ -636,7 +755,7 @@ function buildRecommendations(meta, steps, structuralVerification, gtmSetup, set
       priority: 'recommended',
       title: 'Set up Google Tag Manager tracking',
       message:
-        'Your Google Ads campaign is live. Connect Google Tag Manager next so Zuggernaut can measure website conversions accurately.',
+        'Your Google Ads campaign was created paused and is ready to enable in Google Ads. Connect Google Tag Manager next so Zuggernaut can measure website conversions accurately.',
       steps: [
         'Open the setup page and connect Google Tag Manager.',
         'Select or provision a GTM container and workspace.',
@@ -679,7 +798,7 @@ function buildRecommendations(meta, steps, structuralVerification, gtmSetup, set
       priority: 'recommended',
       title: 'Complete conversion tracking setup',
       message:
-        'Your campaign is running, but some tracking elements still need attention for reliable conversion measurement.',
+        'Your campaign was created paused and is ready to enable in Google Ads, but some tracking elements still need attention for reliable conversion measurement.',
       steps: [
         missing.length > 0
           ? `Resolve: ${missing.map((m) => m.replace(/_/g, ' ')).join(', ')}.`
@@ -733,19 +852,28 @@ async function buildSetupRunReport(setupRunId) {
     attemptCount: s.attemptCount,
     startedAt: s.startedAt ?? null,
     endedAt: s.endedAt ?? null,
-    lastErrorSummary: s.lastErrorSummary ?? null,
+    lastErrorSummary: sanitizeStepErrorSummary(s),
     details: s.details ?? null,
     updatedAt: s.updatedAt,
   }));
 
   const meta = setupRun.meta ?? null;
+  const supportStateRaw = isObject(metaValue(meta, 'supportState')) ? metaValue(meta, 'supportState') : null;
+  const supportErrorCode =
+    supportStateRaw && typeof supportStateRaw.errorCode === 'string'
+      ? supportStateRaw.errorCode
+      : null;
+  const sanitizedRunErrorSummary = sanitizeSetupErrorSummary(
+    setupRun.lastErrorSummary,
+    supportErrorCode
+  );
   const gbpAudit = normalizeGbpAudit(meta, steps);
   const adsCatalog = normalizeAdsCatalog(meta, steps);
   const conversionActions = normalizeConversionActions(
     meta,
     steps,
     setupRun.status,
-    setupRun.lastErrorSummary
+    sanitizedRunErrorSummary
   );
   const gtmSetup = normalizeGtmSetup(meta, steps);
   const provisioning = normalizeProvisioning(meta, steps, setupRun.status);
@@ -773,48 +901,17 @@ async function buildSetupRunReport(setupRunId) {
   const outcomeKind = mapOutcomeKind(setupRun.status);
   const stuckState = detectStuckSetupRun(setupRun);
   const compensation = existingCompensation(meta);
-  const supportState = isObject(metaValue(meta, 'supportState')) ? metaValue(meta, 'supportState') : null;
-  let recovery = buildRecovery(outcomeKind, structuralVerification.evidence);
-  const conversionRecovery = buildConversionActionRecovery(conversionActions);
-  if (conversionRecovery) {
-    recovery = conversionRecovery;
-  }
-
-  if (stuckState.stuck && outcomeKind === 'in_progress') {
-    recovery = {
-      title: 'Setup appears stuck',
-      steps: [
-        stuckState.guidance ?? 'Verify the Temporal worker is running.',
-        'Refresh this page after confirming the worker and MongoDB are healthy.',
-        'If the issue persists, inspect the workflow in Temporal UI and start a new setup run if needed.',
-      ],
-    };
-  } else if (compensation?.actions?.length) {
-    const compensationSteps = compensation.actions
-      .map((action) => {
-        if (action.type === 'ads_campaign_pause' && action.outcome === 'paused') {
-          return 'A partially created Google Ads campaign was paused automatically.';
-        }
-        if (action.type === 'gtm_manual_review_guidance' && typeof action.message === 'string') {
-          return action.message;
-        }
-        if (
-          (action.type === 'gtm_provisioning_failure_guidance' ||
-            action.type === 'ads_provisioning_failure_guidance') &&
-          typeof action.message === 'string'
-        ) {
-          return action.message;
-        }
-        return null;
-      })
-      .filter(Boolean);
-    if (compensationSteps.length > 0) {
-      recovery = {
-        title: recovery?.title ?? 'Partial setup requires review',
-        steps: [...(recovery?.steps ?? []), ...compensationSteps],
-      };
-    }
-  }
+  const supportState = supportStateRaw;
+  const recovery = resolveSetupRecovery({
+    errorCode: supportErrorCode,
+    outcomeKind,
+    setupRunId: setupRun._id.toString(),
+    businessId: businessId.toString(),
+    structuralEvidence: structuralVerification.evidence,
+    stuckState,
+    compensation,
+    conversionActions,
+  });
 
   return {
     setupRun: {
@@ -822,7 +919,7 @@ async function buildSetupRunReport(setupRunId) {
       businessId: businessId.toString(),
       temporalWorkflowId: setupRun.temporalWorkflowId ?? null,
       status: setupRun.status,
-      lastErrorSummary: setupRun.lastErrorSummary ?? null,
+      lastErrorSummary: sanitizedRunErrorSummary,
       createdAt: setupRun.createdAt,
       updatedAt: setupRun.updatedAt,
     },
@@ -835,7 +932,7 @@ async function buildSetupRunReport(setupRunId) {
       : null,
     outcome: {
       kind: outcomeKind,
-      headline: outcomeHeadline(outcomeKind, setupRun.lastErrorSummary),
+      headline: outcomeHeadline(outcomeKind, sanitizedRunErrorSummary, supportErrorCode),
       recovery,
     },
     stuckState,
@@ -868,4 +965,5 @@ module.exports = {
   recommendedActionForAdsFailure,
   ADS_BUCKET_LABELS,
   buildRecovery,
+  resolveSetupRecovery,
 };

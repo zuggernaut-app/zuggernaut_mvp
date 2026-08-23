@@ -1,11 +1,12 @@
 'use strict';
 
-const axios = require('axios');
 const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('../../constants/setupWorkflow');
+const { ssrfSafeGet, SsrfError } = require('../../lib/ssrf');
 const { buildGtmSetupPlan } = require('./gtmTemplates/v1');
 const { loadSetupReadyConnection } = require('./setupReadyConnectionService');
 const { getConnectionStatus } = require('./integrationConnectionService');
+const { resolveHeadlessStatusFromLatestScrape } = require('./businessContextAdsReadinessService');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 const ProviderSnapshot = mongoose.model('ProviderSnapshot');
@@ -23,11 +24,12 @@ function resolvePublicContainerId(gtmIds) {
  * @param {object[]} conversionArtifacts
  * @param {string | null | undefined} websiteUrl
  */
-function computeExpectedStructure(conversionArtifacts, websiteUrl) {
+function computeExpectedStructure(conversionArtifacts, websiteUrl, thankYouUrls) {
   const plan = buildGtmSetupPlan({
     conversionArtifacts,
     adsCustomerId: '0',
     websiteUrl: websiteUrl ?? null,
+    thankYouUrls: thankYouUrls ?? [],
   });
 
   return {
@@ -73,11 +75,10 @@ function verifyAdsConversionLinkage(adsConversions, gtmTags, gtmTriggers) {
     const category = conv.metadata?.logicalCategory;
     if (category === 'call') {
       if (!triggerTemplates.has('call_tel_click')) missing.push('call_tel_trigger');
-      if (!triggerTemplates.has('call_element_hint_click')) missing.push('call_hint_trigger');
     }
     if (category === 'form') {
       if (!triggerTemplates.has('form_confirmation_page_url')) missing.push('form_url_trigger');
-      if (!triggerTemplates.has('form_submit_click')) missing.push('form_submit_trigger');
+      if (!triggerTemplates.has('form_submission')) missing.push('form_submit_trigger');
     }
 
     const firingKeys = tag.metadata?.firingTriggerLogicalKeys;
@@ -116,6 +117,16 @@ function collectStructuralMissing(expected, actual, linkageMissing) {
  */
 async function runStructuralVerification(ctx) {
   const { setupRunId, businessId, logger } = ctx;
+  const scrapeHeadlessStatus = await resolveHeadlessStatusFromLatestScrape(businessId);
+  const scrapeCompletenessEvidence =
+    scrapeHeadlessStatus === 'disabled_ssrf'
+      ? {
+          headlessStatus: 'disabled_ssrf',
+          scrapeCompletenessNote:
+            'Onboarding used static scraping only; headless browsing was disabled for security policies.',
+        }
+      : {};
+
   const gtmStatus = await getConnectionStatus(businessId, 'gtm');
   if (!gtmStatus.ready) {
     return {
@@ -124,6 +135,7 @@ async function runStructuralVerification(ctx) {
         gtmOptional: true,
         reason: gtmStatus.reason,
         nextAction: gtmStatus.nextAction,
+        ...scrapeCompletenessEvidence,
       },
       summary: 'GTM is not configured; structural verification skipped.',
     };
@@ -131,6 +143,7 @@ async function runStructuralVerification(ctx) {
 
   const bc = await BusinessContext.findOne({ businessId }).lean();
   const websiteUrl = bc?.websiteUrl?.trim() ?? null;
+  const thankYouUrls = Array.isArray(bc?.thankYouUrls) ? bc.thankYouUrls : [];
 
   const adsConversions = await IntegrationArtifact.find({
     setupRunId,
@@ -176,7 +189,7 @@ async function runStructuralVerification(ctx) {
     publicContainerId = resolvePublicContainerId(gtmConn?.providerIdentifiers ?? null);
   }
 
-  const expected = computeExpectedStructure(adsConversions, websiteUrl);
+  const expected = computeExpectedStructure(adsConversions, websiteUrl, thankYouUrls);
   const actual = {
     adsConversions: adsConversions.length,
     gtmTags: gtmTags.length,
@@ -196,6 +209,7 @@ async function runStructuralVerification(ctx) {
     expected,
     actual,
     missing: [],
+    ...scrapeCompletenessEvidence,
   };
 
   if (!websiteUrl) {
@@ -227,11 +241,13 @@ async function runStructuralVerification(ctx) {
 
   evidence.snippetChecked = true;
   try {
-    const res = await axios.get(websiteUrl, {
+    const res = await ssrfSafeGet(websiteUrl, {
       timeout: 15000,
       maxRedirects: 5,
+      maxContentLength: 2 * 1024 * 1024,
       validateStatus: () => true,
       headers: { Accept: 'text/html,*/*' },
+      responseType: 'text',
     });
     const html = typeof res.data === 'string' ? res.data : '';
     evidence.snippetPresent = detectSnippetInHtml(html, publicContainerId);
@@ -246,7 +262,12 @@ async function runStructuralVerification(ctx) {
       };
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'fetch_error';
+    const msg =
+      err instanceof SsrfError
+        ? err.code || 'ssrf_blocked'
+        : err instanceof Error
+          ? err.message
+          : 'fetch_error';
     evidence.missing = ['website_fetch'];
     return {
       result: 'manual_review_required',

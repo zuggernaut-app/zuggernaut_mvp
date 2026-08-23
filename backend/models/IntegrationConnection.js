@@ -47,4 +47,40 @@ const integrationConnectionSchema = new mongoose.Schema(
 
 integrationConnectionSchema.index({ businessId: 1, provider: 1 }, { unique: true });
 
+integrationConnectionSchema.index(
+  { 'providerIdentifiers.customerId': 1 },
+  {
+    unique: true,
+    name: 'uniq_google_ads_customerId',
+    partialFilterExpression: {
+      provider: 'google_ads',
+      'providerIdentifiers.customerId': { $exists: true, $type: 'string', $gt: '' },
+    },
+  }
+);
+
+integrationConnectionSchema.index(
+  { 'providerIdentifiers.containerId': 1 },
+  {
+    unique: true,
+    name: 'uniq_gtm_containerId',
+    partialFilterExpression: {
+      provider: 'gtm',
+      'providerIdentifiers.containerId': { $exists: true, $type: 'string', $gt: '' },
+    },
+  }
+);
+
+integrationConnectionSchema.index(
+  { 'providerIdentifiers.locationName': 1 },
+  {
+    unique: true,
+    name: 'uniq_gbp_locationName',
+    partialFilterExpression: {
+      provider: 'gbp',
+      'providerIdentifiers.locationName': { $exists: true, $type: 'string', $gt: '' },
+    },
+  }
+);
+
 module.exports = mongoose.model('IntegrationConnection', integrationConnectionSchema);

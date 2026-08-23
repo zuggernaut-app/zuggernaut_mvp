@@ -1,16 +1,25 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchGtmResourceOptions, saveGtmSelection } from '../../api/integrations'
+import {
+  fetchGtmAccounts,
+  fetchGtmResourceOptions,
+  saveGtmAccountSelection,
+  saveGtmSelection,
+} from '../../api/integrations'
 import { GtmResourceSelector } from './GtmResourceSelector'
 
 vi.mock('../../api/integrations', () => ({
   fetchGtmResourceOptions: vi.fn(),
+  fetchGtmAccounts: vi.fn(),
   saveGtmSelection: vi.fn(),
+  saveGtmAccountSelection: vi.fn(),
 }))
 
 const mockedFetch = vi.mocked(fetchGtmResourceOptions)
+const mockedFetchAccounts = vi.mocked(fetchGtmAccounts)
 const mockedSave = vi.mocked(saveGtmSelection)
+const mockedSaveAccount = vi.mocked(saveGtmAccountSelection)
 
 describe('GtmResourceSelector', () => {
   beforeEach(() => {
@@ -37,6 +46,15 @@ describe('GtmResourceSelector', () => {
           },
         ],
         selected: null,
+      },
+    })
+    mockedFetchAccounts.mockResolvedValue({
+      result: {
+        businessId: 'bid',
+        provider: 'gtm',
+        accounts: [{ accountId: 'mock-account', name: 'Mock Account' }],
+        selectedAccountId: null,
+        selectedAccount: null,
       },
     })
   })
@@ -77,6 +95,35 @@ describe('GtmResourceSelector', () => {
         workspaceId: 'mock-workspace',
       })
     })
+    expect(onSaved).toHaveBeenCalled()
+  })
+
+  it('create-new mode loads accounts only and saves account selection', async () => {
+    const onSaved = vi.fn()
+    mockedSaveAccount.mockResolvedValueOnce({
+      result: {
+        businessId: 'bid',
+        provider: 'gtm',
+        connectionHealth: 'provisioning_required',
+        providerIdentifiers: { accountId: 'mock-account' },
+      },
+    })
+
+    const user = userEvent.setup()
+    render(<GtmResourceSelector businessId="bid" mode="create-new" onSaved={onSaved} />)
+
+    await screen.findByLabelText(/gtm account/i)
+    await user.selectOptions(screen.getByLabelText(/gtm account/i), 'mock-account')
+    await user.click(screen.getByRole('button', { name: /save gtm account/i }))
+
+    await waitFor(() => {
+      expect(mockedFetchAccounts).toHaveBeenCalledWith('bid')
+      expect(mockedSaveAccount).toHaveBeenCalledWith({
+        businessId: 'bid',
+        accountId: 'mock-account',
+      })
+    })
+    expect(mockedFetch).not.toHaveBeenCalled()
     expect(onSaved).toHaveBeenCalled()
   })
 })

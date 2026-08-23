@@ -16,6 +16,7 @@ const {
   cancelProvisioningRequest,
 } = require('../../services/capabilities/integrationProvisioningService');
 const { createLogger } = require('../../lib/observability/logger');
+const { resolveSetupUserErrorMessage } = require('../../lib/setupUserErrorMessages');
 
 const router = express.Router();
 const logger = createLogger({ name: 'provisioningApi' });
@@ -39,14 +40,20 @@ function mapProvisioningError(err, res) {
     const status = statusByCode[err.code] ?? 400;
     return res.status(status).json({
       error: err.code,
-      message: err.message,
+      message: resolveSetupUserErrorMessage({
+        errorCode: err.code,
+        fallbackMessage: err.message,
+      }),
     });
   }
 
   if (err instanceof GtmProvisioningError || err instanceof AdsProvisioningError) {
     return res.status(502).json({
       error: err.code,
-      message: err.message,
+      message: resolveSetupUserErrorMessage({
+        errorCode: err.code,
+        fallbackMessage: err.message,
+      }),
     });
   }
 
@@ -128,6 +135,10 @@ router.post('/requests/:requestId/approve', requireAuth, async (req, res, next) 
       requestId,
       businessId: access.businessId,
       approvedByUserId: req.user.id,
+      provisioningIntent:
+        typeof req.body?.provisioningIntent === 'string'
+          ? req.body.provisioningIntent.trim()
+          : undefined,
     });
 
     return res.status(200).json({ request });

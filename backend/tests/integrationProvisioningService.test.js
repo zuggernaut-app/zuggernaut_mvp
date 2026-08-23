@@ -310,4 +310,22 @@ describe('integrationProvisioningService', () => {
       })
     ).rejects.toBeInstanceOf(ProvisioningServiceError);
   });
+
+  it('serializes failed provisioning requests with sanitized error messages', async () => {
+    const { serializeProvisioningRequest } = require('../services/capabilities/integrationProvisioningService');
+    const serialized = serializeProvisioningRequest({
+      _id: new mongoose.Types.ObjectId(),
+      businessId: new mongoose.Types.ObjectId(),
+      provider: 'gtm',
+      status: 'failed',
+      requestedResources: DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER.gtm,
+      errorCode: 'GTM_ACCOUNT_NOT_FOUND',
+      errorMessage: 'No GTM account available. Create a GTM account at https://tagmanager.google.com',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    expect(serialized.errorMessage).toMatch(/tagmanager\.google\.com/i);
+    expect(serialized.errorMessage).not.toMatch(/https:\/\/tagmanager\.google\.com/);
+  });
 });

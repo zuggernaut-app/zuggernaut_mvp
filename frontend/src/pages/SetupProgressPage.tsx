@@ -19,9 +19,12 @@ import {
   conversionActionHeadline,
   parseConversionActionMeta,
 } from '../lib/conversionActionsUi'
+import { resolveSetupUserErrorMessage } from '../lib/setupUserErrorMessages'
+import { RecoveryPlaybook } from '../components/setup/RecoveryPlaybook'
 import type {
   SetupRunCompensation,
   SetupRunReportAdsCampaignFailure,
+  SetupRunReportRecovery,
   SetupRunSupportState,
 } from '../types/api'
 
@@ -251,11 +254,14 @@ function parseAdsCampaignFailureFromStep(
     (typeof details.code === 'string' && details.code.trim() ? details.code.trim() : null) ??
     (typeof firstIssue?.code === 'string' && firstIssue.code.trim() ? firstIssue.code.trim() : null)
 
-  const message =
-    (typeof details.message === 'string' && details.message.trim() ? details.message.trim() : null) ??
-    (typeof step.lastErrorSummary === 'string' && step.lastErrorSummary.trim()
-      ? step.lastErrorSummary.trim()
-      : 'Google Ads campaign creation failed.')
+  const message = resolveSetupUserErrorMessage({
+    errorCode: code,
+    fallbackMessage:
+      (typeof details.message === 'string' && details.message.trim() ? details.message.trim() : null) ??
+      (typeof step.lastErrorSummary === 'string' && step.lastErrorSummary.trim()
+        ? step.lastErrorSummary.trim()
+        : 'Google Ads campaign creation failed.'),
+  })
 
   const stepName =
     typeof details.stepName === 'string' && details.stepName.trim()
@@ -926,6 +932,13 @@ export function SetupProgressPage(): ReactElement {
                   </li>
                 ) : null}
               </ul>
+            </section>
+          ) : null}
+          {data?.recovery &&
+          run.status !== 'SUCCEEDED' &&
+          run.status !== 'RUNNING' ? (
+            <section style={{ marginTop: '1rem' }}>
+              <RecoveryPlaybook recovery={data.recovery as SetupRunReportRecovery} />
             </section>
           ) : null}
           {run.status === 'FAILED' &&

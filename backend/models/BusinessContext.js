@@ -34,6 +34,7 @@ const businessContextSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    orgId: { type: mongoose.Schema.Types.ObjectId, ref: 'Org', index: true },
     websiteUrl: { type: String, trim: true },
     businessName: { type: String, trim: true },
     industry: { type: String, trim: true },
@@ -46,6 +47,10 @@ const businessContextSchema = new mongoose.Schema(
     conversionStrategy: { type: mongoose.Schema.Types.Mixed, default: undefined },
     differentiators: { type: String, trim: true },
     orderValueHint: { type: String, trim: true },
+    /** User-confirmed thank-you / confirmation page URL path(s) for GTM form conversion triggers. */
+    thankYouUrls: [{ type: String, trim: true }],
+    /** Frozen slug5-id6 key set at first context confirm; used for deterministic Ads/GTM resource names. */
+    nameKey: { type: String, trim: true },
     /** Raw scrape output — never map into confirmed fields without explicit user save */
     rawScrapeOutput: { type: mongoose.Schema.Types.Mixed, select: false },
     confirmedAt: { type: Date },

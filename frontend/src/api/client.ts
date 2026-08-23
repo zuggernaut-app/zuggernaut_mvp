@@ -56,6 +56,22 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
   skipAuth?: boolean
 }
 
+const CSRF_COOKIE_NAME = 'zugg_csrf'
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+function readCsrfCookie(): string | null {
+  if (typeof document === 'undefined') return null
+  const escaped = CSRF_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${escaped}=([^;]+)`))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+/** Bootstrap CSRF double-submit cookie before authenticated mutating API calls. */
+export async function ensureCsrfCookie(): Promise<void> {
+  if (readCsrfCookie()) return
+  await apiRequest<{ csrfToken: string }>('/auth/csrf')
+}
+
 async function parseJsonSafely(res: Response): Promise<unknown> {
   const text = await res.text()
   if (!text) return null
@@ -77,6 +93,14 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   const url = joinBaseAndPath(base, path)
 
   const headers = new Headers(fetchInit.headers)
+
+  const method = (fetchInit.method ?? 'GET').toUpperCase()
+  if (MUTATING_METHODS.has(method)) {
+    const csrf = readCsrfCookie()
+    if (csrf) {
+      headers.set('X-CSRF-Token', csrf)
+    }
+  }
 
   let body: BodyInit | undefined = rawBody as BodyInit | undefined
   if (rawBody !== undefined && !(rawBody instanceof FormData)) {

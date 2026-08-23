@@ -9,7 +9,6 @@ const {
 } = require('../capabilities/googleAdsCampaignComplianceService');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
 const { createLogger } = require('../../lib/observability/logger');
-const { getFreshGoogleAccessToken } = require('./googleTokenService');
 const { resolveGoogleAdsCustomerAuth } = require('./googleAdsCustomerAuth');
 const {
   GoogleAdsApiError,
@@ -19,6 +18,7 @@ const {
   getGoogleAdsRequestTimeoutMs,
   googleAdsPost,
   normalizeCustomerId,
+  parseGoogleAdsApiError,
 } = require('./googleAdsApiConfig');
 
 const googleAdsCampaignClientLogger = createLogger({ name: 'googleAdsCampaignClient' });
@@ -999,6 +999,10 @@ async function createResponsiveSearchAd(ctx) {
   );
 
   if (res.status < 200 || res.status >= 300) {
+    const parsed = parseGoogleAdsApiError(res.status, res.data, {
+      action: 'adGroupAds:mutate',
+      customerIds: [customerId],
+    });
     googleAdsCampaignClientLogger.error(
       {
         operation: 'adGroupAds:mutate',
@@ -1006,9 +1010,12 @@ async function createResponsiveSearchAd(ctx) {
         businessId: ctx.businessId != null ? String(ctx.businessId) : undefined,
         setupRunId,
         status: res.status,
-        responseBody: res.data,
+        googleAdsRequestId: parsed.requestId,
+        googleAdsErrors: parsed.googleAdsErrors.slice(0, 5),
+        fieldViolations: parsed.fieldViolations.slice(0, 5),
+        errorMessage: parsed.message,
       },
-      'Google Ads ad group ad mutate failed — full API response body'
+      'Google Ads ad group ad mutate failed'
     );
   }
 
@@ -1059,7 +1066,7 @@ async function pauseAdsCampaign(ctx) {
     throw new GoogleAdsApiError('Invalid campaign resource name for pause.', 'GOOGLE_ADS_PAUSE_INVALID');
   }
 
-  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
   const url = buildGoogleAdsApiUrl(`customers/${customerId}/campaigns:mutate`);
   const res = await googleAdsPost(
     url,
@@ -1075,7 +1082,7 @@ async function pauseAdsCampaign(ctx) {
       ],
     },
     {
-      headers: buildGoogleAdsHeaders(accessToken),
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
       timeout: getGoogleAdsRequestTimeoutMs(),
       validateStatus: () => true,
     }
@@ -1091,6 +1098,243 @@ async function pauseAdsCampaign(ctx) {
   }
 
   return { outcome: 'paused', source: 'google_ads_api' };
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.campaignResourceName
+ */
+async function enableAdsCampaign(ctx) {
+  const { businessId, campaignResourceName } = ctx;
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return { outcome: 'enabled', source: 'google_ads_api_mock' };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    return { outcome: 'skipped_api_disabled', source: 'google_ads_api' };
+  }
+
+  const customerId = normalizeCustomerId(campaignResourceName.split('/')[1]);
+  if (!customerId) {
+    throw new GoogleAdsApiError('Invalid campaign resource name for enable.', 'GOOGLE_ADS_ENABLE_INVALID');
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/campaigns:mutate`);
+  const res = await googleAdsPost(
+    url,
+    {
+      operations: [
+        {
+          update: {
+            resourceName: campaignResourceName,
+            status: 'ENABLED',
+          },
+          updateMask: 'status',
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_ENABLE_FAILED',
+      { label: 'Google Ads campaign enable', action: 'campaigns:mutate', customerIds: [customerId] }
+    );
+  }
+
+  return { outcome: 'enabled', source: 'google_ads_api' };
+}
+
+/**
+ * @param {string} campaignResourceName
+ */
+function buildGetCampaignByResourceNameQuery(campaignResourceName) {
+  const escaped = escapeGaqlLiteral(campaignResourceName);
+  return [
+    'SELECT campaign.resource_name, campaign.status, campaign.campaign_budget, campaign_budget.amount_micros',
+    'FROM campaign',
+    `WHERE campaign.resource_name = '${escaped}'`,
+    'LIMIT 1',
+  ].join('\n');
+}
+
+/**
+ * @param {string} budgetResourceName
+ * @returns {boolean}
+ */
+function isCampaignBudgetResourceName(budgetResourceName) {
+  return /^customers\/\d+\/campaignBudgets\/\d+$/.test(String(budgetResourceName ?? '').trim());
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.campaignResourceName
+ * @returns {Promise<{ status: string, budgetResourceName: string | null, amountMicros: number | null, source: string }>}
+ */
+async function getAdsCampaignLiveState(ctx) {
+  const { businessId, campaignResourceName } = ctx;
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      status: 'PAUSED',
+      budgetResourceName: mockResourceName(
+        normalizeCustomerId(campaignResourceName.split('/')[1]) ?? '0',
+        'campaignBudgets',
+        'mock'
+      ),
+      amountMicros: 10_000_000,
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    return {
+      status: 'UNKNOWN',
+      budgetResourceName: null,
+      amountMicros: null,
+      source: 'google_ads_api_disabled',
+    };
+  }
+
+  const customerId = normalizeCustomerId(campaignResourceName.split('/')[1]);
+  if (!customerId) {
+    throw new GoogleAdsApiError(
+      'Invalid campaign resource name for live state lookup.',
+      'GOOGLE_ADS_CAMPAIGN_STATE_INVALID'
+    );
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
+  const res = await googleAdsPost(
+    url,
+    { query: buildGetCampaignByResourceNameQuery(campaignResourceName) },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_CAMPAIGN_STATE_FAILED',
+      {
+        label: 'Google Ads campaign live state',
+        action: 'googleAds:search',
+        customerIds: [customerId],
+      }
+    );
+  }
+
+  const row = Array.isArray(res.data?.results) ? res.data.results[0] : null;
+  const status = typeof row?.campaign?.status === 'string' ? row.campaign.status : 'UNKNOWN';
+  const budgetResourceName =
+    typeof row?.campaign?.campaignBudget === 'string' ? row.campaign.campaignBudget : null;
+  const amountMicrosRaw = row?.campaignBudget?.amountMicros;
+  const amountMicros =
+    amountMicrosRaw != null && Number.isFinite(Number(amountMicrosRaw))
+      ? Number(amountMicrosRaw)
+      : null;
+
+  return {
+    status,
+    budgetResourceName,
+    amountMicros,
+    source: 'google_ads_api',
+  };
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.budgetResourceName — customers/{cid}/campaignBudgets/{id}
+ * @param {number} ctx.amountMicros
+ */
+async function updateCampaignBudget(ctx) {
+  const { businessId, budgetResourceName, amountMicros } = ctx;
+  const normalizedBudget = String(budgetResourceName ?? '').trim();
+
+  if (!isCampaignBudgetResourceName(normalizedBudget)) {
+    throw new GoogleAdsApiError(
+      'Invalid campaign budget resource name for update.',
+      'GOOGLE_ADS_BUDGET_UPDATE_INVALID'
+    );
+  }
+
+  const parsedAmount = Number(amountMicros);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    throw new GoogleAdsApiError(
+      'Campaign budget amountMicros must be a positive number.',
+      'GOOGLE_ADS_BUDGET_UPDATE_INVALID'
+    );
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return { outcome: 'updated', amountMicros: parsedAmount, source: 'google_ads_api_mock' };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    return { outcome: 'skipped_api_disabled', source: 'google_ads_api' };
+  }
+
+  const customerId = normalizeCustomerId(normalizedBudget.split('/')[1]);
+  if (!customerId) {
+    throw new GoogleAdsApiError(
+      'Invalid campaign budget resource name for update.',
+      'GOOGLE_ADS_BUDGET_UPDATE_INVALID'
+    );
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/campaignBudgets:mutate`);
+  const res = await googleAdsPost(
+    url,
+    {
+      operations: [
+        {
+          update: {
+            resourceName: normalizedBudget,
+            amountMicros: String(parsedAmount),
+          },
+          updateMask: 'amountMicros',
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_BUDGET_UPDATE_FAILED',
+      {
+        label: 'Google Ads campaign budget update',
+        action: 'campaignBudgets:mutate',
+        customerIds: [customerId],
+      }
+    );
+  }
+
+  return { outcome: 'updated', amountMicros: parsedAmount, source: 'google_ads_api' };
 }
 
 /**
@@ -1402,4 +1646,9 @@ module.exports = {
   linkCampaignToCustomConversionGoal: (ctx) =>
     withProviderRateLimit('google_ads', () => linkCampaignToCustomConversionGoal(ctx)),
   pauseAdsCampaign: (ctx) => withProviderRateLimit('google_ads', () => pauseAdsCampaign(ctx)),
+  enableAdsCampaign: (ctx) => withProviderRateLimit('google_ads', () => enableAdsCampaign(ctx)),
+  getAdsCampaignLiveState: (ctx) =>
+    withProviderRateLimit('google_ads', () => getAdsCampaignLiveState(ctx)),
+  updateCampaignBudget: (ctx) => withProviderRateLimit('google_ads', () => updateCampaignBudget(ctx)),
+  isCampaignBudgetResourceName,
 };

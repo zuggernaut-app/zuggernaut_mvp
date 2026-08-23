@@ -60,6 +60,62 @@ describe('googleTokenService', () => {
     expect(row.tokenExpiryAt.getTime()).toBeGreaterThan(Date.now());
   });
 
+  it('preserves selection_required connectionHealth after token refresh', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+
+    const user = await User.create({ email: 'refresh-sel@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      connectionHealth: 'selection_required',
+      accessTokenEnc: encryptToken('stale-access'),
+      refreshTokenEnc: encryptToken('live-refresh'),
+      tokenExpiryAt: new Date(Date.now() - 60_000),
+      scopes: ['https://www.googleapis.com/auth/adwords'],
+    });
+
+    await getFreshGoogleAccessToken({
+      businessId: bc.businessId,
+      provider: 'google_ads',
+    });
+
+    const row = await IntegrationConnection.findOne({ businessId: bc.businessId, provider: 'google_ads' })
+      .select('connectionHealth')
+      .lean();
+    expect(row.connectionHealth).toBe('selection_required');
+  });
+
+  it('preserves provisioning_required connectionHealth after token refresh', async () => {
+    const User = mongoose.model('User');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+
+    const user = await User.create({ email: 'refresh-prov-exp@test.com' });
+    const bc = await BusinessContext.create({ userId: user._id, confirmedAt: new Date() });
+    await IntegrationConnection.create({
+      businessId: bc.businessId,
+      provider: 'gtm',
+      connectionHealth: 'provisioning_required',
+      accessTokenEnc: encryptToken('stale-access'),
+      refreshTokenEnc: encryptToken('live-refresh'),
+      tokenExpiryAt: new Date(Date.now() - 60_000),
+      scopes: allScopesForProvider('gtm'),
+    });
+
+    await getFreshGoogleAccessToken({
+      businessId: bc.businessId,
+      provider: 'gtm',
+    });
+
+    const row = await IntegrationConnection.findOne({ businessId: bc.businessId, provider: 'gtm' })
+      .select('connectionHealth')
+      .lean();
+    expect(row.connectionHealth).toBe('provisioning_required');
+  });
+
   it('returns access token when connection is provisioning_required but OAuth is valid', async () => {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');

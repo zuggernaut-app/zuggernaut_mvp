@@ -14,6 +14,11 @@ const { getOAuthConnectionStatus } = require('../capabilities/integrationConnect
 const { selectionTimestampFields } = require('./providerResourceSelection');
 const { SELECTION_SOURCE } = require('../../constants/providerResourceSelection');
 const { recordProviderResourceSelection } = require('./recordProviderResourceSelection');
+const {
+  assertProviderResourceExclusive,
+  ProviderResourceExclusiveError,
+} = require('../../lib/providerResourceExclusivity');
+const { PROVISIONING_REASON_CODES } = require('../../constants/enums');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
@@ -163,6 +168,86 @@ async function listGtmResourceOptions(businessId) {
 
 /**
  * @param {import('mongoose').Types.ObjectId | string} businessId
+ */
+async function listGtmAccountsOnly(businessId) {
+  await requireGtmOAuth(businessId);
+
+  const conn = await IntegrationConnection.findOne({ businessId, provider: 'gtm' })
+    .select('providerIdentifiers')
+    .lean();
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'gtm' });
+  const rawAccounts = await listGtmAccounts(accessToken);
+  const accounts = rawAccounts.map((row) => normalizeGtmAccount(row)).filter(Boolean);
+
+  const selectedAccountId = conn?.providerIdentifiers?.accountId
+    ? String(conn.providerIdentifiers.accountId)
+    : null;
+
+  return {
+    businessId: String(businessId),
+    provider: 'gtm',
+    accounts,
+    selectedAccountId,
+    selectedAccount: selectedAccountId
+      ? accounts.find((row) => row.accountId === selectedAccountId) ?? null
+      : null,
+  };
+}
+
+/**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {string} accountId
+ */
+async function saveGtmAccountOnlySelection(businessId, accountId) {
+  await requireGtmOAuth(businessId);
+
+  const normalizedAccountId = accountId?.trim();
+  if (!normalizedAccountId) {
+    throw new GtmResourceSelectionError('accountId is required.', 'GTM_SELECTION_INVALID');
+  }
+
+  const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'gtm' });
+  const rawAccounts = await listGtmAccounts(accessToken);
+  const match = rawAccounts
+    .map((row) => normalizeGtmAccount(row))
+    .find((row) => row && row.accountId === normalizedAccountId);
+
+  if (!match) {
+    throw new GtmResourceSelectionError(
+      'Selected GTM account is not accessible for this OAuth grant.',
+      'GTM_SELECTION_NOT_ACCESSIBLE'
+    );
+  }
+
+  const providerIdentifiers = {
+    accountId: match.accountId,
+    accountName: match.name,
+    discoveryReason: PROVISIONING_REASON_CODES.find((c) => c === 'GTM_PROVISIONING_REQUIRED'),
+  };
+
+  await IntegrationConnection.findOneAndUpdate(
+    { businessId, provider: 'gtm' },
+    {
+      $set: {
+        connectionHealth: 'provisioning_required',
+        providerIdentifiers,
+      },
+    },
+    { upsert: true, setDefaultsOnInsert: true }
+  );
+
+  return {
+    businessId: String(businessId),
+    provider: 'gtm',
+    selectedAccountId: match.accountId,
+    selectedAccountName: match.name,
+    providerIdentifiers,
+  };
+}
+
+/**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
  * @param {{ accountId: string, containerId: string, workspaceId: string }} selection
  */
 async function saveGtmSelection(businessId, selection) {
@@ -189,6 +274,8 @@ async function saveGtmSelection(businessId, selection) {
       'GTM_SELECTION_NOT_ACCESSIBLE'
     );
   }
+
+  await assertProviderResourceExclusive(businessId, 'gtm', 'containerId', match.container.containerId);
 
   const providerIdentifiers = {
     accountId: match.account.accountId,
@@ -232,6 +319,9 @@ async function saveGtmSelection(businessId, selection) {
 
 module.exports = {
   GtmResourceSelectionError,
+  ProviderResourceExclusiveError,
   listGtmResourceOptions,
+  listGtmAccountsOnly,
   saveGtmSelection,
+  saveGtmAccountOnlySelection,
 };

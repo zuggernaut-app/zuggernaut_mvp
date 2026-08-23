@@ -120,6 +120,25 @@ class GtmApiError extends Error {
   }
 }
 
+class GtmWorkspaceResourceCollisionError extends GtmApiError {
+  /**
+   * @param {string} message
+   * @param {object} collision
+   */
+  constructor(message, collision) {
+    super(message, 'GTM_WORKSPACE_RESOURCE_COLLISION');
+    this.name = 'GtmWorkspaceResourceCollisionError';
+    this.collision = collision;
+  }
+}
+
+/**
+ * @param {unknown} err
+ */
+function isGtmWorkspaceResourceCollisionError(err) {
+  return err instanceof GtmWorkspaceResourceCollisionError;
+}
+
 /**
  * @param {{ data?: object, status?: number }} res
  */
@@ -133,6 +152,15 @@ function formatGtmApiErrorSuffix(res) {
     return `: ${res.data.message}`;
   }
   return '';
+}
+
+/**
+ * @param {{ data?: object, status?: number }} res
+ * @returns {string | null}
+ */
+function summarizeGtmApiResponseForLog(res) {
+  const summary = formatGtmApiErrorSuffix(res).replace(/^:\s*/, '').trim();
+  return summary || null;
 }
 
 /**
@@ -193,12 +221,148 @@ function workspaceResourceMatchesPayload(existing, payload, collection) {
  * @param {object} payload
  */
 async function findMatchingWorkspaceResource(accessToken, gtmIds, collection, payload) {
+  const items = await listGtmWorkspaceResources(accessToken, gtmIds, collection);
+  const match = items.find((item) => workspaceResourceMatchesPayload(item, payload, collection));
+  return match ?? null;
+}
+
+/**
+ * @param {string} accessToken
+ * @param {object} gtmIds
+ * @param {'variables' | 'triggers' | 'tags'} collection
+ * @param {string | undefined} name
+ */
+async function findWorkspaceResourceByName(accessToken, gtmIds, collection, name) {
+  if (!name) return null;
+  const items = await listGtmWorkspaceResources(accessToken, gtmIds, collection);
+  return items.find((item) => item?.name === name) ?? null;
+}
+
+/**
+ * @param {{ data?: object, status?: number }} res
+ */
+function isDuplicateNameApiResponse(res) {
+  const message = String(res?.data?.error?.message ?? '').toLowerCase();
+  const reason = res?.data?.error?.errors?.[0]?.reason;
+  return message.includes('duplicate name') || reason === 'duplicateName';
+}
+
+/**
+ * @param {object} ctx
+ * @param {object} ctx.gtmIds
+ * @param {object} ctx.payload
+ * @param {string} ctx.logicalKey
+ * @param {object} existing — GTM API resource row
+ * @param {'variables' | 'triggers' | 'tags'} collection
+ */
+function buildWorkspaceResourceCollisionDetails(ctx, existing, collection) {
+  const { gtmIds, payload, logicalKey } = ctx;
+  const existingValue =
+    collection === 'variables' && existing?.type === 'c' ? constantVariableValue(existing) : null;
+  const payloadValue =
+    collection === 'variables' && payload?.type === 'c' ? constantVariableValue(payload) : null;
+  return {
+    collection,
+    logicalKey,
+    payloadName: payload?.name,
+    payloadType: payload?.type,
+    payloadValue,
+    existingPath: existing?.path,
+    existingType: existing?.type,
+    existingValue,
+    accountId: gtmIds?.accountId,
+    containerId: gtmIds?.containerId,
+    workspaceId: gtmIds?.workspaceId,
+  };
+}
+
+/**
+ * @param {object} ctx
+ * @param {object} existing — GTM API resource row
+ * @param {'variables' | 'triggers' | 'tags'} collection
+ */
+function throwWorkspaceResourceCollision(ctx, existing, collection) {
+  const { payload } = ctx;
+  const collision = buildWorkspaceResourceCollisionDetails(ctx, existing, collection);
+  throw new GtmWorkspaceResourceCollisionError(
+    `GTM ${collection} name collision for "${payload?.name ?? ''}"`,
+    collision
+  );
+}
+
+/**
+ * @param {string} accessToken
+ * @param {object} gtmIds
+ * @param {'variables' | 'triggers' | 'tags'} collection
+ */
+async function listGtmWorkspaceResources(accessToken, gtmIds, collection) {
+  if (process.env.GTM_API_MOCK === 'true') {
+    return [];
+  }
+
   const listPath = `${workspaceBasePath(gtmIds)}/${collection}`;
   const data = await gtmGet(accessToken, listPath);
   const pathKey = collection.slice(0, -1);
-  const items = Array.isArray(data?.[pathKey]) ? data[pathKey] : [];
-  const match = items.find((item) => workspaceResourceMatchesPayload(item, payload, collection));
-  return match?.path ?? null;
+  return Array.isArray(data?.[pathKey]) ? data[pathKey] : [];
+}
+
+/**
+ * @param {object} ctx
+ * @param {string} ctx.accessToken
+ * @param {'variables' | 'triggers' | 'tags'} ctx.collection
+ * @param {object} ctx.existing — GTM API resource row
+ * @param {object} ctx.payload — intended resource body fields
+ */
+async function updateGtmWorkspaceResource(ctx) {
+  const { accessToken, collection, existing, payload } = ctx;
+
+  if (process.env.GTM_API_MOCK === 'true') {
+    return { resourcePath: existing.path, source: 'gtm_api_mock' };
+  }
+
+  if (process.env.GTM_API_ENABLED !== 'true') {
+    throw new GtmApiError(
+      'GTM API is not enabled (set GTM_API_ENABLED=true after configuring credentials).',
+      'GTM_API_NOT_ENABLED'
+    );
+  }
+
+  const updateBody = {
+    ...existing,
+    ...payload,
+    path: existing.path,
+  };
+
+  const url = `${GTM_API_BASE}/${existing.path}`;
+  const res = await axios.put(url, updateBody, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 30000,
+    validateStatus: () => true,
+  });
+
+  if (res.status < 200 || res.status >= 300) {
+    gtmClientLogger.error(
+      {
+        operation: 'workspace_resource_update',
+        collection,
+        status: res.status,
+        url,
+        gtmErrorResponse: res.data ?? null,
+      },
+      'GTM workspace resource update failed'
+    );
+    throw new GtmApiError(
+      `GTM ${collection} update failed (${res.status})${formatGtmApiErrorSuffix(res)}`,
+      'GTM_UPDATE_FAILED'
+    );
+  }
+
+  const pathKey = collection.slice(0, -1);
+  const resourcePath = res.data?.path ?? res.data?.[pathKey]?.path ?? existing.path;
+  return { resourcePath, source: 'gtm_api' };
 }
 
 /**
@@ -245,13 +409,36 @@ async function createGtmWorkspaceResource(ctx) {
   const url = `${GTM_API_BASE}/${workspaceBasePath(gtmIds)}/${collection}`;
 
   let reusablePath = null;
+  let reusableResource = null;
   try {
-    reusablePath = await findMatchingWorkspaceResource(accessToken, gtmIds, collection, payload);
+    reusableResource = await findMatchingWorkspaceResource(accessToken, gtmIds, collection, payload);
+    reusablePath = reusableResource?.path ?? null;
   } catch {
     reusablePath = null;
+    reusableResource = null;
   }
   if (reusablePath) {
     return { resourcePath: reusablePath, source: 'gtm_api_reused' };
+  }
+
+  try {
+    const sameNameResource = await findWorkspaceResourceByName(
+      accessToken,
+      gtmIds,
+      collection,
+      payload?.name
+    );
+    if (sameNameResource) {
+      if (workspaceResourceMatchesPayload(sameNameResource, payload, collection)) {
+        return { resourcePath: sameNameResource.path, source: 'gtm_api_reused' };
+      }
+      throwWorkspaceResourceCollision(ctx, sameNameResource, collection);
+    }
+  } catch (err) {
+    if (isGtmWorkspaceResourceCollisionError(err)) {
+      throw err;
+    }
+    /* list failed — proceed to create */
   }
 
   const res = await axiosPostWithGtmRateLimitRetry(
@@ -270,21 +457,49 @@ async function createGtmWorkspaceResource(ctx) {
 
   if (res.status === 400) {
     try {
-      const onConflictPath = await findMatchingWorkspaceResource(
+      const onConflictResource = await findMatchingWorkspaceResource(
         accessToken,
         gtmIds,
         collection,
         payload
       );
-      if (onConflictPath) {
-        return { resourcePath: onConflictPath, source: 'gtm_api_reused' };
+      if (onConflictResource?.path) {
+        return { resourcePath: onConflictResource.path, source: 'gtm_api_reused' };
       }
-    } catch {
+      if (isDuplicateNameApiResponse(res)) {
+        const byName = await findWorkspaceResourceByName(accessToken, gtmIds, collection, payload?.name);
+        if (byName) {
+          if (workspaceResourceMatchesPayload(byName, payload, collection)) {
+            return { resourcePath: byName.path, source: 'gtm_api_reused' };
+          }
+          throwWorkspaceResourceCollision(ctx, byName, collection);
+        }
+      }
+    } catch (err) {
+      if (isGtmWorkspaceResourceCollisionError(err)) {
+        throw err;
+      }
       /* fall through to error with API detail */
     }
   }
 
   if (res.status < 200 || res.status >= 300) {
+    gtmClientLogger.error(
+      {
+        operation: 'workspace_resource_create',
+        collection,
+        logicalKey,
+        status: res.status,
+        url,
+        payloadName: typeof payload?.name === 'string' ? payload.name : undefined,
+        payloadType: typeof payload?.type === 'string' ? payload.type : undefined,
+        accountId: gtmIds?.accountId,
+        containerId: gtmIds?.containerId,
+        workspaceId: gtmIds?.workspaceId,
+        gtmErrorResponse: res.data ?? null,
+      },
+      'GTM workspace resource create failed'
+    );
     throw new GtmApiError(
       `GTM ${collection} create failed (${res.status})${formatGtmApiErrorSuffix(res)}`,
       'GTM_CREATE_FAILED'
@@ -352,7 +567,7 @@ async function createGtmContainerVersion(ctx) {
         operation: 'create_version',
         status: createRes.status,
         url: createUrl,
-        responseBody: createRes.data,
+        errorSummary: summarizeGtmApiResponseForLog(createRes),
       },
       'GTM container version create failed'
     );
@@ -367,7 +582,8 @@ async function createGtmContainerVersion(ctx) {
       operation: 'create_version',
       status: createRes.status,
       url: createUrl,
-      responseBody: createRes.data,
+      containerVersionId: createRes.data?.containerVersion?.containerVersionId ?? null,
+      compilerError: createRes.data?.compilerError === true,
     },
     'GTM container version create succeeded'
   );
@@ -436,7 +652,7 @@ async function publishGtmContainerVersion(ctx) {
         status: publishRes.status,
         url: publishUrl,
         containerVersionId,
-        responseBody: publishRes.data,
+        errorSummary: summarizeGtmApiResponseForLog(publishRes),
       },
       'GTM container version publish failed'
     );
@@ -569,6 +785,47 @@ async function enableGtmBuiltinVariables(accessToken, gtmIds, types) {
  */
 async function getGtmAccessToken(ctx) {
   return getFreshGoogleAccessToken({ businessId: ctx.businessId, provider: 'gtm' });
+}
+
+/**
+ * @param {string} accessToken
+ * @param {string} accountId
+ * @param {string} containerId
+ */
+async function fetchGtmLiveContainerVersionPath(accessToken, accountId, containerId) {
+  if (process.env.GTM_API_MOCK === 'true') {
+    return {
+      path: `accounts/${accountId}/containers/${containerId}/versions/mock-live`,
+      containerVersionId: 'mock-live',
+      source: 'gtm_api_mock',
+    };
+  }
+
+  if (process.env.GTM_API_ENABLED !== 'true') {
+    throw new GtmApiError(
+      'GTM API is not enabled (set GTM_API_ENABLED=true after configuring credentials).',
+      'GTM_API_NOT_ENABLED'
+    );
+  }
+
+  const data = await gtmGet(accessToken, `accounts/${accountId}/containers/${containerId}/versions:live`);
+  const path = data?.path ?? data?.containerVersion?.path ?? null;
+  const containerVersionId =
+    data?.containerVersionId != null
+      ? String(data.containerVersionId)
+      : data?.containerVersion?.containerVersionId != null
+        ? String(data.containerVersion.containerVersionId)
+        : null;
+
+  if (!path) {
+    throw new GtmApiError('GTM live version fetch returned no version path', 'GTM_LIVE_VERSION_INVALID');
+  }
+
+  return {
+    path,
+    containerVersionId,
+    source: 'gtm_api',
+  };
 }
 
 /**
@@ -917,6 +1174,8 @@ async function discoverGtmProviderIdentifiers(accessToken) {
 
 module.exports = {
   GtmApiError,
+  GtmWorkspaceResourceCollisionError,
+  isGtmWorkspaceResourceCollisionError,
   isGtmWorkspaceAlreadySubmittedResponse,
   isGtmWorkspaceAlreadySubmittedError,
   parseRetryAfterMs,
@@ -944,10 +1203,18 @@ module.exports = {
   discoverGtmProviderIdentifiers: (accessToken) =>
     withProviderRateLimit('gtm', () => discoverGtmProviderIdentifiers(accessToken)),
   createGtmWorkspaceResource: (ctx) => withProviderRateLimit('gtm', () => createGtmWorkspaceResource(ctx)),
+  listGtmWorkspaceResources: (accessToken, gtmIds, collection) =>
+    withProviderRateLimit('gtm', () => listGtmWorkspaceResources(accessToken, gtmIds, collection)),
+  updateGtmWorkspaceResource: (ctx) =>
+    withProviderRateLimit('gtm', () => updateGtmWorkspaceResource(ctx)),
   createGtmContainerVersion: (ctx) => withProviderRateLimit('gtm', () => createGtmContainerVersion(ctx)),
   publishGtmContainerVersion: (ctx) => withProviderRateLimit('gtm', () => publishGtmContainerVersion(ctx)),
   createAndPublishContainerVersion: (ctx) =>
     withProviderRateLimit('gtm', () => createAndPublishContainerVersion(ctx)),
+  fetchGtmLiveContainerVersionPath: (accessToken, accountId, containerId) =>
+    withProviderRateLimit('gtm', () =>
+      fetchGtmLiveContainerVersionPath(accessToken, accountId, containerId)
+    ),
   enableGtmBuiltinVariables: (accessToken, gtmIds, types) =>
     withProviderRateLimit('gtm', () => enableGtmBuiltinVariables(accessToken, gtmIds, types)),
   getGtmAccessToken,

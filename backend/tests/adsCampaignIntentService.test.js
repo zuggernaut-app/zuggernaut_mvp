@@ -15,7 +15,7 @@ const { buildMinimalAdsReadyBusinessContext } = require('../services/capabilitie
 
 function normalizedFixture(overrides = {}) {
   const bc = buildMinimalAdsReadyBusinessContext(overrides);
-  const readiness = require('../services/capabilities/businessContextAdsReadinessService').validateBusinessContextAdsReadiness(bc);
+  const readiness = require('../services/capabilities/businessContextAdsReadinessService').validateBusinessContextAdsReadinessSync(bc);
   if (!readiness.ok) {
     throw new Error('fixture not ads-ready');
   }
@@ -39,7 +39,7 @@ describe('adsCampaignIntentService', () => {
     expect(intent.keywords[0]).toEqual(
       expect.objectContaining({ matchType: 'PHRASE' })
     );
-    expect(intent.geoTargetLabels).toEqual(['Mountain View']);
+    expect(intent.geoTargetLabels).toEqual(['San Francisco']);
     expect(intent.selectedConversionIds).toEqual(['1001']);
   });
 

@@ -1,11 +1,61 @@
 'use strict';
 
+const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('./setupWorkflow');
 
 /**
  * Stable idempotency key builders for provider-changing setup activities.
  * Every external create/select must lookup IntegrationArtifact by idempotencyKey before mutating.
  */
+
+const BUSINESS_KEY_VERSION = 'v1';
+
+/**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {string} provider — `google_ads` | `gtm`
+ * @param {string} logicalKey
+ * @param {string} fingerprint
+ */
+function businessScopedIdempotencyKey(businessId, provider, logicalKey, fingerprint) {
+  const biz = businessId.toString();
+  return `biz:${BUSINESS_KEY_VERSION}:${biz}:${provider}:${logicalKey}:${fingerprint}`;
+}
+
+/**
+ * @param {string} idempotencyKey
+ */
+function parseLegacyScopedIdempotencyKey(idempotencyKey) {
+  if (typeof idempotencyKey !== 'string') return null;
+  const match = idempotencyKey.match(/^(ads|gtm)-([a-f0-9]{24})-(.+)$/);
+  if (!match) return null;
+  return { prefix: match[1], setupRunId: match[2], logicalKey: match[3] };
+}
+
+/**
+ * @param {object} params
+ * @param {import('mongoose').Types.ObjectId | string} params.businessId
+ * @param {string} params.provider
+ * @param {string} params.logicalKey
+ * @param {string} params.fingerprint
+ */
+async function findReusableArtifact(params) {
+  const { businessId, provider, logicalKey, fingerprint } = params;
+  if (!fingerprint) return null;
+
+  const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+  const bizKey = businessScopedIdempotencyKey(businessId, provider, logicalKey, fingerprint);
+  const byBizKey = await IntegrationArtifact.findOne({ idempotencyKey: bizKey }).lean();
+  if (byBizKey) return byBizKey;
+
+  return IntegrationArtifact.findOne({
+    businessId,
+    provider,
+    'metadata.intentFingerprint': fingerprint,
+    'metadata.logicalKey': logicalKey,
+  })
+    .sort({ updatedAt: -1 })
+    .lean();
+}
 
 /**
  * @param {import('mongoose').Types.ObjectId | string} setupRunId
@@ -118,6 +168,10 @@ const PROVIDER_MUTATION_CONTRACT = Object.freeze([
 ]);
 
 module.exports = {
+  BUSINESS_KEY_VERSION,
+  businessScopedIdempotencyKey,
+  parseLegacyScopedIdempotencyKey,
+  findReusableArtifact,
   gtmConversionIdempotencyKey,
   adsCampaignIdempotencyKey,
   adsConversionCatalogIdempotencyKey,

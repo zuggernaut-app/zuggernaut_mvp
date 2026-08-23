@@ -214,4 +214,44 @@ describe('POST /api/v1/onboarding', () => {
     });
     expect(count).toBe(2);
   });
+
+  describe('SOFT_LAUNCH_MODE single business', () => {
+    const originalFlag = process.env.SOFT_LAUNCH_MODE;
+
+    afterEach(() => {
+      if (originalFlag === undefined) {
+        delete process.env.SOFT_LAUNCH_MODE;
+      } else {
+        process.env.SOFT_LAUNCH_MODE = originalFlag;
+      }
+    });
+
+    it('409 on second business when soft launch is enabled', async () => {
+      process.env.SOFT_LAUNCH_MODE = 'true';
+      const { agent } = await registerAgent(app, 'sl-second@test.com');
+      await agent.post('/api/v1/onboarding/business').expect(201);
+      const res = await agent.post('/api/v1/onboarding/business').expect(409);
+      expect(res.body.error).toBe('soft_launch_single_business');
+    });
+
+    it('releases softLaunchClaim when BusinessContext.create fails', async () => {
+      process.env.SOFT_LAUNCH_MODE = 'true';
+      const BusinessContext = mongoose.model('BusinessContext');
+      const createSpy = jest
+        .spyOn(BusinessContext, 'create')
+        .mockRejectedValueOnce(new Error('create failed'));
+
+      const { agent, userId } = await registerAgent(app, 'sl-unlock@test.com');
+      try {
+        await agent.post('/api/v1/onboarding/business').expect(500);
+      } finally {
+        createSpy.mockRestore();
+      }
+
+      const user = await mongoose.model('User').findById(userId).select('softLaunchClaim').lean();
+      expect(user.softLaunchClaim).toBeUndefined();
+
+      await agent.post('/api/v1/onboarding/business').expect(201);
+    });
+  });
 });

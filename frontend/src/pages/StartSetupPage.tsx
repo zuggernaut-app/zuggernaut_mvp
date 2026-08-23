@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { ReactElement } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { getBusinessContext } from '../api/businessContexts'
-import { startSetupRun } from '../api/setupRuns'
+import { getLatestSetupRun, startSetupRun } from '../api/setupRuns'
 import { GoogleAdsCustomerSelector } from '../components/integrations/GoogleAdsCustomerSelector'
 import { MccLinkPanel } from '../components/integrations/MccLinkPanel'
 import { GtmResourceSelector } from '../components/integrations/GtmResourceSelector'
@@ -20,6 +20,7 @@ import {
   isAdsReadinessOk,
 } from '../lib/businessContextAdsReadinessUi'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import { useSoftLaunchMode } from '../hooks/useSoftLaunchMode'
 import type { AdsReadinessResult } from '../types/api'
 import type { IntegrationProvider } from '../api/integrations'
 
@@ -61,11 +62,21 @@ export function StartSetupPage(): ReactElement {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { snapshot, setSetupRunId } = useOnboardingState()
+  const { softLaunchMode } = useSoftLaunchMode()
   const { businessId } = snapshot
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [integrationNotice, setIntegrationNotice] = useState<string | null>(null)
   const [adsReadiness, setAdsReadiness] = useState<AdsReadinessResult | null>(null)
+  const [latestRun, setLatestRun] = useState<{
+    id: string
+    status: string
+  } | null>(null)
+  const [latestRunLoading, setLatestRunLoading] = useState(true)
+  const [showRerunModal, setShowRerunModal] = useState(false)
+  const [showCancelPriorRunModal, setShowCancelPriorRunModal] = useState(false)
+  const [rerunBusy, setRerunBusy] = useState(false)
+  const [cancelPriorRunBusy, setCancelPriorRunBusy] = useState(false)
 
   const {
     connections,
@@ -106,6 +117,26 @@ export function StartSetupPage(): ReactElement {
   }, [businessId, navigate])
 
   useEffect(() => {
+    if (!businessId) return
+    let cancelled = false
+    void (async () => {
+      setLatestRunLoading(true)
+      try {
+        const { setupRun } = await getLatestSetupRun(businessId)
+        if (cancelled) return
+        setLatestRun(setupRun ? { id: setupRun.id, status: setupRun.status } : null)
+      } catch {
+        if (!cancelled) setLatestRun(null)
+      } finally {
+        if (!cancelled) setLatestRunLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [businessId])
+
+  useEffect(() => {
     const integration = searchParams.get('integration')
     const provider = searchParams.get('provider')
     const reason = searchParams.get('reason')
@@ -131,14 +162,28 @@ export function StartSetupPage(): ReactElement {
     setSearchParams(next, { replace: true })
   }, [searchParams, setSearchParams, refetchConnections])
 
-  async function onSubmit(e?: FormEvent): Promise<void> {
+  async function onSubmit(
+    e?: FormEvent,
+    options?: { force?: boolean; confirmCancelPriorRun?: boolean },
+  ): Promise<void> {
     e?.preventDefault()
     if (!businessId) return
     setError(null)
-    setBusy(true)
+    const force = options?.force === true
+    const confirmCancelPriorRun = options?.confirmCancelPriorRun === true
+    if (confirmCancelPriorRun) setCancelPriorRunBusy(true)
+    else if (force) setRerunBusy(true)
+    else setBusy(true)
     try {
-      const res = await startSetupRun(businessId)
+      const res = await startSetupRun(
+        businessId,
+        force || confirmCancelPriorRun
+          ? { force: true, ...(confirmCancelPriorRun ? { confirmCancelPriorRun: true } : {}) }
+          : undefined,
+      )
       setSetupRunId(res.setupRunId)
+      setShowRerunModal(false)
+      setShowCancelPriorRunModal(false)
       navigate(`/setup/progress/${res.setupRunId}`, { replace: true })
     } catch (err) {
       if (err instanceof ApiError) {
@@ -153,6 +198,20 @@ export function StartSetupPage(): ReactElement {
         } else if (err.status === 400 && Array.isArray(err.body?.issues)) {
           setAdsReadiness({ ok: false, issues: err.body.issues })
           setError(err.message)
+        } else if (err.code === 'setup_already_complete') {
+          setLatestRun({
+            id: typeof err.body?.setupRunId === 'string' ? err.body.setupRunId : latestRun?.id ?? '',
+            status: 'SUCCEEDED',
+          })
+          if (!softLaunchMode) {
+            setShowRerunModal(true)
+          }
+          setError(err.message)
+        } else if (err.code === 'setup_in_progress' && err.body?.cancelPriorRunRequired === true) {
+          if (!softLaunchMode) {
+            setShowCancelPriorRunModal(true)
+          }
+          setError(err.message)
         } else {
           setError(err.message)
         }
@@ -161,7 +220,21 @@ export function StartSetupPage(): ReactElement {
       }
     } finally {
       setBusy(false)
+      setRerunBusy(false)
+      setCancelPriorRunBusy(false)
     }
+  }
+
+  function onStartClick(e?: FormEvent): void {
+    e?.preventDefault()
+    if (latestRun?.status === 'SUCCEEDED') {
+      if (softLaunchMode) {
+        return
+      }
+      setShowRerunModal(true)
+      return
+    }
+    void onSubmit(e)
   }
 
   if (!businessId) {
@@ -190,12 +263,50 @@ export function StartSetupPage(): ReactElement {
     (connections.google_ads?.reason === 'mcc_link_required' ||
       connections.google_ads?.reason === 'mcc_link_pending')
 
+  const setupComplete = latestRun?.status === 'SUCCEEDED'
+  const setupInProgress = latestRun?.status === 'RUNNING'
+
   return (
     <PageLayout
       title="Start setup run"
       lead="Connect Google Ads (required), optionally connect GTM and GBP, then begin the Temporal workflow for this business."
     >
-      <form className="form" onSubmit={(e) => void onSubmit(e)}>
+      {setupComplete && latestRun ? (
+        <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          <p style={{ margin: softLaunchMode ? '0' : '0 0 0.5rem' }}>
+            Setup complete for this business.
+            {softLaunchMode
+              ? ' View the report below.'
+              : ' View the report or start a new run if you understand the risks.'}
+          </p>
+          <Link className="btn btn-primary" to={`/setup/report/${latestRun.id}`}>
+            View setup report
+          </Link>
+        </div>
+      ) : null}
+      {setupInProgress && latestRun ? (
+        <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          <p style={{ margin: softLaunchMode ? '0' : '0 0 0.5rem' }}>
+            A setup run is already in progress.{' '}
+            <Link to={`/setup/progress/${latestRun.id}`}>View progress</Link>
+          </p>
+          {!softLaunchMode ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={cancelPriorRunBusy || rerunBusy || busy}
+              onClick={() => void onSubmit(undefined, { force: true })}
+            >
+              {cancelPriorRunBusy ? (
+                <InlineLoading label="Checking…" />
+              ) : (
+                'Cancel and start new run'
+              )}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      <form className="form" onSubmit={(e) => onStartClick(e)}>
         <ErrorAlert message={error ?? connectionsError} />
         {!businessContextAdsReady && adsReadinessIssues.length > 0 ? (
           <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
@@ -255,7 +366,11 @@ export function StartSetupPage(): ReactElement {
                   ) : null}
                   {showSelectionUi(provider, reason) ? (
                     provider === 'gtm' ? (
-                      <GtmResourceSelector businessId={businessId} onSaved={() => void refetchConnections()} />
+                      <GtmResourceSelector
+                        businessId={businessId}
+                        mode={softLaunchMode ? 'create-new' : 'default'}
+                        onSaved={() => void refetchConnections()}
+                      />
                     ) : (
                       <GoogleAdsCustomerSelector
                         businessId={businessId}
@@ -300,9 +415,28 @@ export function StartSetupPage(): ReactElement {
           <code style={{ wordBreak: 'break-all', fontSize: '0.8rem' }}>{businessId}</code>
         </p>
         <div className="actions">
-          <button type="submit" className="btn btn-primary" disabled={busy || !canStartSetup}>
-            {busy ? <InlineLoading label="Starting…" /> : 'Start setup'}
-          </button>
+          {!softLaunchMode || !setupComplete ? (
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={
+                busy ||
+                rerunBusy ||
+                cancelPriorRunBusy ||
+                !canStartSetup ||
+                setupInProgress ||
+                latestRunLoading
+              }
+            >
+              {busy ? (
+                <InlineLoading label="Starting…" />
+              ) : setupComplete ? (
+                'Start new setup run'
+              ) : (
+                'Start setup'
+              )}
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn btn-secondary"
@@ -312,6 +446,81 @@ export function StartSetupPage(): ReactElement {
           </button>
         </div>
       </form>
+
+      {!softLaunchMode && showCancelPriorRunModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cancel-prior-run-modal-title"
+          className="alert alert-info"
+          style={{ marginTop: '1rem', maxWidth: '36rem' }}
+        >
+          <h2 id="cancel-prior-run-modal-title" style={{ fontSize: '1rem', marginTop: 0 }}>
+            Cancel the in-progress setup and start a new run?
+          </h2>
+          <p style={{ fontSize: '0.9rem' }}>
+            This will stop the current setup workflow and start a new one. This may create another
+            paused Google Ads campaign and additional GTM tags. Existing Google resources from the
+            previous run are not removed automatically.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={cancelPriorRunBusy}
+              onClick={() => void onSubmit(undefined, { force: true, confirmCancelPriorRun: true })}
+            >
+              {cancelPriorRunBusy ? (
+                <InlineLoading label="Starting…" />
+              ) : (
+                'Yes, cancel and start new run'
+              )}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowCancelPriorRunModal(false)}
+            >
+              Keep current run
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {!softLaunchMode && showRerunModal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rerun-modal-title"
+          className="alert alert-info"
+          style={{ marginTop: '1rem', maxWidth: '36rem' }}
+        >
+          <h2 id="rerun-modal-title" style={{ fontSize: '1rem', marginTop: 0 }}>
+            Start a new setup run?
+          </h2>
+          <p style={{ fontSize: '0.9rem' }}>
+            This may create another paused Google Ads campaign and additional GTM tags. Existing Google
+            resources from the previous run are not removed automatically.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={rerunBusy}
+              onClick={() => void onSubmit(undefined, { force: true })}
+            >
+              {rerunBusy ? <InlineLoading label="Starting…" /> : 'Yes, start new run'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setShowRerunModal(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
     </PageLayout>
   )
 }

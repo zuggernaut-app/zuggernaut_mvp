@@ -84,4 +84,70 @@ describe('/api/v1/auth', () => {
     const { agent } = await registerAgent(app, 'onboard_prot@example.com');
     await agent.post('/api/v1/onboarding/business').expect(201);
   });
+
+  it('sets SameSite=Lax on session cookie in development', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevSameSite = process.env.COOKIE_SAMESITE;
+    process.env.NODE_ENV = 'development';
+    delete process.env.COOKIE_SAMESITE;
+
+    const res = await request(app)
+      .post('/api/v1/auth/register')
+      .send({ email: 'samesite_dev@example.com', password: TEST_PASSWORD_DEFAULT, name: 'A' })
+      .expect(201);
+
+    const setCookie = res.headers['set-cookie'];
+    expect(Array.isArray(setCookie)).toBe(true);
+    const accessCookie = setCookie.find((c) => c.startsWith('zugg_access='));
+    expect(accessCookie).toMatch(/SameSite=Lax/i);
+
+    process.env.NODE_ENV = prevNodeEnv;
+    if (prevSameSite === undefined) delete process.env.COOKIE_SAMESITE;
+    else process.env.COOKIE_SAMESITE = prevSameSite;
+  });
+
+  it('sets SameSite=None; Secure on session cookie in split-hosting production', async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevOrigin = process.env.FRONTEND_ORIGIN;
+    const prevSameSite = process.env.COOKIE_SAMESITE;
+    process.env.NODE_ENV = 'production';
+    process.env.FRONTEND_ORIGIN = 'https://zuggernaut-mvp.web.app';
+    delete process.env.COOKIE_SAMESITE;
+
+    const res = await request(app)
+      .post('/api/v1/auth/register')
+      .send({ email: 'samesite_prod@example.com', password: TEST_PASSWORD_DEFAULT, name: 'A' })
+      .expect(201);
+
+    const setCookie = res.headers['set-cookie'];
+    const accessCookie = setCookie.find((c) => c.startsWith('zugg_access='));
+    expect(accessCookie).toMatch(/SameSite=None/i);
+    expect(accessCookie).toMatch(/;\s*Secure/i);
+
+    process.env.NODE_ENV = prevNodeEnv;
+    process.env.FRONTEND_ORIGIN = prevOrigin;
+    if (prevSameSite === undefined) delete process.env.COOKIE_SAMESITE;
+    else process.env.COOKIE_SAMESITE = prevSameSite;
+  });
+
+  it('rejects authenticated mutating requests without CSRF token', async () => {
+    const { agent } = await registerAgent(app, 'csrf_block@example.com');
+    expect(agent._accessCookie).toBeTruthy();
+
+    await request(app)
+      .post('/api/v1/onboarding/business')
+      .set('Cookie', `zugg_access=${agent._accessCookie}`)
+      .expect(403);
+  });
+
+  it('GET /auth/csrf issues CSRF cookie and token', async () => {
+    const res = await request(app).get('/api/v1/auth/csrf').expect(200);
+    expect(typeof res.body.csrfToken).toBe('string');
+    expect(res.body.csrfToken.length).toBeGreaterThan(10);
+
+    const setCookie = res.headers['set-cookie'];
+    const csrfCookie = setCookie.find((c) => c.startsWith('zugg_csrf='));
+    expect(csrfCookie).toBeDefined();
+    expect(csrfCookie).toMatch(/SameSite=Lax/i);
+  });
 });

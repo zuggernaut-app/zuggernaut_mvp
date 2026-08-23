@@ -16,6 +16,7 @@ const {
 } = require('../constants/temporalDefaults');
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { allScopesForProvider } = require('../constants/googleOAuth');
+const { deriveBusinessNameKey } = require('../lib/businessNameKey');
 
 describe('setup-runs API', () => {
   const app = createApp();
@@ -49,11 +50,27 @@ describe('setup-runs API', () => {
         businessName: 'Co',
         websiteUrl: 'https://example.com',
         services: ['Example service'],
-        serviceAreas: ['Local area'],
+        serviceAreas: ['San Francisco'],
         goals: { primary: 'both' },
       })
       .expect(200);
     return { agent, bid };
+  }
+
+  async function markBusinessSetupSucceeded(businessId, setupRunId) {
+    const SetupRun = mongoose.model('SetupRun');
+    const BusinessSetupState = mongoose.model('BusinessSetupState');
+    await SetupRun.findByIdAndUpdate(setupRunId, { status: 'SUCCEEDED' });
+    await BusinessSetupState.findOneAndUpdate(
+      { businessId: new mongoose.Types.ObjectId(businessId) },
+      {
+        $set: {
+          lockState: 'succeeded',
+          activeSetupRunId: new mongoose.Types.ObjectId(setupRunId),
+        },
+      },
+      { upsert: true }
+    );
   }
 
   it('returns 400 for invalid setupRunId', async () => {
@@ -443,6 +460,194 @@ describe('setup-runs API', () => {
 
     const { agent: otherAgent } = await registerAgent(app, 'sr-report-other@test.com');
     await otherAgent.get(`/api/v1/setup-runs/${sid}/report`).expect(404);
+  });
+
+  it('GET /latest returns null when no runs exist', async () => {
+    const { agent, bid } = await confirmedBusiness('sr-latest-empty@test.com');
+    const res = await agent.get(`/api/v1/setup-runs/latest?businessId=${bid}`).expect(200);
+    expect(res.body.setupRun).toBeNull();
+  });
+
+  it('GET /latest returns latest run for business', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-latest@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+    const SetupRun = mongoose.model('SetupRun');
+    await markBusinessSetupSucceeded(bid, created.body.setupRunId);
+
+    const res = await agent.get(`/api/v1/setup-runs/latest?businessId=${bid}`).expect(200);
+    expect(res.body.setupRun.id).toBe(created.body.setupRunId);
+    expect(res.body.setupRun.status).toBe('SUCCEEDED');
+  });
+
+  it('409 setup_in_progress when a run is RUNNING', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-in-progress@test.com');
+    await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    expect(res.body.error).toBe('setup_in_progress');
+  });
+
+  it('409 setup_already_complete when latest run SUCCEEDED without force', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-already-complete@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+    await markBusinessSetupSucceeded(bid, created.body.setupRunId);
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    expect(res.body.error).toBe('setup_already_complete');
+  });
+
+  it('409 requires cancel confirmation before force while a run is still in progress', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-force-blocked@test.com');
+    await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+    const res = await agent
+      .post('/api/v1/setup-runs')
+      .send({ businessId: bid, force: true })
+      .expect(409);
+    expect(res.body.error).toBe('setup_in_progress');
+    expect(res.body.cancelPriorRunRequired).toBe(true);
+    expect(res.body.setupRunId).toBeTruthy();
+  });
+
+  it('201 allows force restart while RUNNING after confirmCancelPriorRun terminates workflow', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    const terminate = jest.fn().mockResolvedValue(undefined);
+    const describe = jest.fn().mockResolvedValue({ status: { name: 'TERMINATED' } });
+    getTemporalClient.mockResolvedValue({
+      workflow: {
+        start: workflowStart,
+        getHandle: jest.fn().mockReturnValue({ terminate, describe }),
+      },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-force-cancel@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+    const res = await agent
+      .post('/api/v1/setup-runs')
+      .send({ businessId: bid, force: true, confirmCancelPriorRun: true })
+      .expect(201);
+    expect(res.body.setupRunId).not.toBe(created.body.setupRunId);
+    expect(res.body.status).toBe('RUNNING');
+    expect(terminate).toHaveBeenCalled();
+
+    const SetupRun = mongoose.model('SetupRun');
+    const prior = await SetupRun.findById(created.body.setupRunId).lean();
+    expect(prior.status).toBe('FAILED');
+    expect(prior.meta?.supersededByForce).toBe(true);
+  });
+
+  it('201 allows new run when latest SUCCEEDED and force=true', async () => {
+    const workflowStart = jest.fn().mockResolvedValue(undefined);
+    getTemporalClient.mockResolvedValue({
+      workflow: { start: workflowStart },
+    });
+
+    const { agent, bid } = await confirmedBusiness('sr-force-rerun@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+    await markBusinessSetupSucceeded(bid, created.body.setupRunId);
+
+    const res = await agent
+      .post('/api/v1/setup-runs')
+      .send({ businessId: bid, force: true })
+      .expect(201);
+    expect(res.body.setupRunId).not.toBe(created.body.setupRunId);
+    expect(res.body.status).toBe('RUNNING');
+  });
+
+  describe('SOFT_LAUNCH_MODE', () => {
+    const originalFlag = process.env.SOFT_LAUNCH_MODE;
+
+    afterEach(() => {
+      if (originalFlag === undefined) {
+        delete process.env.SOFT_LAUNCH_MODE;
+      } else {
+        process.env.SOFT_LAUNCH_MODE = originalFlag;
+      }
+    });
+
+    it('409 blocks force rerun after SUCCEEDED when soft launch is enabled', async () => {
+      process.env.SOFT_LAUNCH_MODE = 'true';
+      const workflowStart = jest.fn().mockResolvedValue(undefined);
+      getTemporalClient.mockResolvedValue({
+        workflow: { start: workflowStart },
+      });
+
+      const { agent } = await registerAgent(app, 'sr-sl-force-block@test.com');
+      const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+      const bid = draft.body.businessId;
+      await agent
+        .post(`/api/v1/onboarding/business/${bid}/scrape`)
+        .send({ websiteUrl: 'https://example.com' })
+        .expect(202);
+      await agent
+        .put(`/api/v1/business-contexts/${bid}`)
+        .send({
+          businessName: 'Co',
+          websiteUrl: 'https://example.com',
+          services: ['Example service'],
+          serviceAreas: ['San Francisco'],
+          goals: { primary: 'forms' },
+        })
+        .expect(200);
+
+      const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+      await markBusinessSetupSucceeded(bid, created.body.setupRunId);
+
+      const res = await agent
+        .post('/api/v1/setup-runs')
+        .send({ businessId: bid, force: true })
+        .expect(409);
+      expect(res.body.error).toBe('setup_already_complete');
+    });
+
+    it('freezes nameKey at setup start when missing from confirmed context', async () => {
+      const BusinessContext = mongoose.model('BusinessContext');
+      const { agent } = await registerAgent(app, 'sr-namekey@test.com');
+      const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+      const bid = draft.body.businessId;
+      await agent
+        .put(`/api/v1/business-contexts/${bid}`)
+        .send({
+          businessName: 'Acme Plumbing',
+          websiteUrl: 'https://acme.example',
+          services: ['Plumbing'],
+          serviceAreas: ['Oakland'],
+          goals: { primary: 'forms' },
+        })
+        .expect(200);
+
+      await BusinessContext.updateOne({ businessId: bid }, { $unset: { nameKey: 1 } });
+
+      await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+
+      const bc = await BusinessContext.findOne({ businessId: bid }).select('nameKey businessName').lean();
+      expect(bc.nameKey).toBe(deriveBusinessNameKey('Acme Plumbing', bid));
+    });
   });
 
   it('GET returns stuckState contract for RUNNING setup runs', async () => {

@@ -2,6 +2,19 @@
 
 const { SCRAPE_QUALITY, buildEmptyScrapeSuggestion } = require('../../constants/onboarding');
 
+/** Persisted when headless scrape is policy-disabled (T0-6 SSRF). */
+const HEADLESS_STATUS_DISABLED_SSRF = 'disabled_ssrf';
+
+/**
+ * @param {object | null | undefined} headlessRes
+ */
+function isHeadlessDisabledForSsrf(headlessRes) {
+  return (
+    Array.isArray(headlessRes?.blockReasons) &&
+    headlessRes.blockReasons.includes('headless_disabled_ssrf')
+  );
+}
+
 function socialTotal(socials) {
   if (!socials || typeof socials !== 'object') return 0;
   return Object.values(socials).reduce((n, arr) => n + (Array.isArray(arr) ? arr.length : 0), 0);
@@ -236,6 +249,11 @@ function normalizeScrapeResult(input) {
 
   let status = 'SUCCEEDED';
   const warnings = [];
+  const headlessDisabledSsrf = isHeadlessDisabledForSsrf(headlessRes);
+
+  if (headlessDisabledSsrf) {
+    warnings.push('headless_disabled_ssrf');
+  }
 
   if (robots && robots.allowed === false) {
     status = 'BLOCKED';
@@ -261,6 +279,10 @@ function normalizeScrapeResult(input) {
   const contactMethods = buildContactMethods(merged);
   const emptyFallback = buildEmptyScrapeSuggestion(websiteUrl);
 
+  const headlessStatusFields = headlessDisabledSsrf
+    ? { headlessStatus: HEADLESS_STATUS_DISABLED_SSRF }
+    : {};
+
   const suggested =
     scrapeQuality === SCRAPE_QUALITY.NONE
       ? {
@@ -269,6 +291,7 @@ function normalizeScrapeResult(input) {
           differentiators: buildDifferentiators(merged, scrapeQuality),
           scrapeQuality,
           manualFallback: true,
+          ...headlessStatusFields,
         }
       : {
           businessName: pickBusinessName(merged, websiteUrl),
@@ -281,6 +304,7 @@ function normalizeScrapeResult(input) {
           orderValueHint: merged.signalScore >= 4 ? 'medium' : 'unknown',
           scrapeQuality,
           manualFallback: false,
+          ...headlessStatusFields,
         };
 
   const rawPayload = {
@@ -302,9 +326,11 @@ function normalizeScrapeResult(input) {
       robots: robots?.reason || 'ok',
       staticBlocked: !!staticRes?.blocked,
       headlessBlocked: headlessRes ? !!headlessRes.blocked : false,
+      ...(headlessDisabledSsrf ? { headlessStatus: HEADLESS_STATUS_DISABLED_SSRF } : {}),
       signalScore: merged.signalScore,
       scrapeQuality,
     },
+    ...(headlessDisabledSsrf ? { headlessStatus: HEADLESS_STATUS_DISABLED_SSRF } : {}),
   };
 
   return { status, suggested, rawPayload };

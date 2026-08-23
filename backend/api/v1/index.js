@@ -35,6 +35,10 @@ router.use('/business-contexts', require('./businessContexts'));
 router.use('/setup-runs', require('./setupRuns'));
 router.use('/integrations', require('./integrations'));
 router.use('/integrations/provisioning', require('./provisioning'));
+router.use('/billing', require('./billing'));
+router.use('/settings', require('./settings'));
+router.use('/orgs', require('./orgs'));
+router.use('/admin', require('./admin'));
 
 router.use('/dev/integrations', (req, res, next) => {
   if (!isIntegrationDiagnosticsEnabled()) {

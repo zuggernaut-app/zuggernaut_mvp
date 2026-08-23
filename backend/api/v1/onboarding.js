@@ -13,17 +13,70 @@ const {
   resolveTemporalTaskQueue,
 } = require('../../constants/temporalDefaults');
 const { SCRAPE_TERMINAL_STATUSES } = require('../../constants/onboarding');
+const { isSoftLaunchMode } = require('../../constants/softLaunch');
 
 const router = express.Router();
 
 const TERMINAL_SCRAPE_STATUSES = new Set(SCRAPE_TERMINAL_STATUSES);
 
-router.post('/business', requireAuth, async (req, res) => {
+router.post('/business', requireAuth, async (req, res, next) => {
   const userId = new mongoose.Types.ObjectId(req.user.id);
+  const Membership = mongoose.model('Membership');
 
-  const draft = await BusinessContext.create({
-    userId,
-  });
+  let orgId;
+  const membership = await Membership.findOne({ userId, role: 'owner' }).lean();
+  if (membership?.orgId) {
+    orgId = membership.orgId;
+  } else {
+    const Org = mongoose.model('Org');
+    const user = await User.findById(userId).select('email primaryOrgId').lean();
+    if (user?.primaryOrgId) {
+      orgId = user.primaryOrgId;
+    } else {
+      const org = await Org.create({
+        name: user?.email ? `${user.email} org` : 'My organization',
+        ownerUserId: userId,
+      });
+      orgId = org._id;
+      await Membership.create({ orgId, userId, role: 'owner' });
+      await User.findByIdAndUpdate(userId, { $set: { primaryOrgId: orgId } });
+    }
+  }
+
+  let claimedSoftLaunch = false;
+  if (isSoftLaunchMode()) {
+    const claim = await User.findOneAndUpdate(
+      {
+        _id: userId,
+        softLaunchClaim: { $exists: false },
+      },
+      { $set: { softLaunchClaim: true } }
+    );
+    if (!claim) {
+      return res.status(409).json({
+        error: 'soft_launch_single_business',
+        message: 'Soft launch supports one business per user.',
+      });
+    }
+    claimedSoftLaunch = true;
+  }
+
+  let draft;
+  try {
+    draft = await BusinessContext.create({
+      userId,
+      orgId,
+    });
+  } catch (err) {
+    if (claimedSoftLaunch) {
+      await User.findByIdAndUpdate(userId, { $unset: { softLaunchClaim: '' } });
+    }
+    if (err?.name === 'ValidationError') {
+      const msg = typeof err.message === 'string' ? err.message : 'Validation failed';
+      return res.status(400).json({ error: 'validation_error', message: msg });
+    }
+    return next(err);
+  }
 
   await User.findOneAndUpdate(
     {

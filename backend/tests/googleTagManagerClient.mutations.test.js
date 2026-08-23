@@ -7,6 +7,7 @@ jest.mock('axios');
 
 const {
   GtmApiError,
+  GtmWorkspaceResourceCollisionError,
   createGtmWorkspaceResource,
   createGtmContainerVersion,
   publishGtmContainerVersion,
@@ -111,6 +112,93 @@ describe('googleTagManagerClient mutations', () => {
     expect(result.resourcePath).toBe('accounts/a/containers/c/workspaces/w/triggers/existing');
     expect(result.source).toBe('gtm_api_reused');
     expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it('throws GTM_WORKSPACE_RESOURCE_COLLISION when same name has mismatched constant value', async () => {
+    const existing = {
+      name: 'zug_conversion_id',
+      type: 'c',
+      path: 'accounts/a/containers/c/workspaces/w/variables/existing',
+      parameter: [{ key: 'value', value: 'AW-OLD' }],
+    };
+    axios.get.mockResolvedValue({
+      status: 200,
+      data: { variable: [existing], trigger: [], tag: [] },
+    });
+
+    await expect(
+      createGtmWorkspaceResource({
+        gtmIds,
+        accessToken,
+        collection: 'variables',
+        payload: {
+          name: 'zug_conversion_id',
+          type: 'c',
+          parameter: [{ key: 'value', value: 'AW-NEW' }],
+        },
+        logicalKey: 'zug_conversion_id',
+      })
+    ).rejects.toMatchObject({
+      code: 'GTM_WORKSPACE_RESOURCE_COLLISION',
+      collision: expect.objectContaining({
+        collection: 'variables',
+        payloadName: 'zug_conversion_id',
+        payloadValue: 'AW-NEW',
+        existingPath: existing.path,
+        existingValue: 'AW-OLD',
+        accountId: 'a',
+        containerId: 'c',
+        workspaceId: 'w',
+      }),
+    });
+
+    expect(axios.post).not.toHaveBeenCalled();
+    expect(axios.put).not.toHaveBeenCalled();
+  });
+
+  it('throws GTM_WORKSPACE_RESOURCE_COLLISION on 400 duplicate name from API', async () => {
+    const existing = {
+      name: 'zug_conversion_id',
+      type: 'c',
+      path: 'accounts/a/containers/c/workspaces/w/variables/existing',
+      parameter: [{ key: 'value', value: 'AW-OLD' }],
+    };
+    axios.get
+      .mockRejectedValueOnce(new Error('list failed'))
+      .mockRejectedValueOnce(new Error('list failed'))
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { variable: [], trigger: [], tag: [] },
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        data: { variable: [existing], trigger: [], tag: [] },
+      });
+    axios.post.mockResolvedValue({
+      status: 400,
+      data: {
+        error: {
+          message: 'Found entity with duplicate name',
+          errors: [{ reason: 'duplicateName' }],
+        },
+      },
+    });
+
+    await expect(
+      createGtmWorkspaceResource({
+        gtmIds,
+        accessToken,
+        collection: 'variables',
+        payload: {
+          name: 'zug_conversion_id',
+          type: 'c',
+          parameter: [{ key: 'value', value: 'AW-NEW' }],
+        },
+        logicalKey: 'zug_conversion_id',
+      })
+    ).rejects.toMatchObject({ code: 'GTM_WORKSPACE_RESOURCE_COLLISION' });
+
+    expect(axios.put).not.toHaveBeenCalled();
   });
 
   it('throws GTM_CREATE_FAILED when variable create returns 400 without reusable match', async () => {

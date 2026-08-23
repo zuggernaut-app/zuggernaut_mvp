@@ -3,7 +3,7 @@
  * `mvp_implementation_plan.md` → Database Architecture Strategy, Phase 3 (workflow states), Phase 5 (connections).
  */
 
-const PROVIDERS = Object.freeze(['gbp', 'gtm', 'google_ads']);
+const PROVIDERS = Object.freeze(['gbp', 'gtm', 'google_ads', 'meta']);
 
 const CONNECTION_HEALTH = Object.freeze([
   'connected',

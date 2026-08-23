@@ -7,6 +7,9 @@ const mongoose = require('mongoose');
 
 require('../models');
 
+const { initOtel } = require('../lib/observability/otel');
+initOtel('zuggernaut-worker');
+
 const { assertWorkerEnvironment } = require('../lib/auth/assertAuthEnvironment');
 const { SETUP_RUN_WORKFLOW_ACTIVITIES } = require('../constants/setupWorkflow');
 const { Worker, NativeConnection } = require('@temporalio/worker');

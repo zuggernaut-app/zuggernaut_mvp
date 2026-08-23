@@ -18,6 +18,15 @@ const {
   clearAccessTokenCookieAttributes,
 } = require('../../lib/auth/sessionCookie');
 const { validatePlainPassword } = require('../../lib/auth/validateCredentials');
+const {
+  generateResetToken,
+  hashResetToken,
+  resetTokenExpiresAt,
+  isResetTokenExpired,
+  verifyResetToken,
+} = require('../../lib/auth/passwordReset');
+const { sendEmail } = require('../../lib/notifications/emailTransport');
+const { issueCsrfCookie } = require('../../lib/auth/csrf');
 const { requireAuth } = require('./middleware/requireAuth');
 
 const router = express.Router();
@@ -33,6 +42,31 @@ const authWriteLimiter = rateLimit({
   },
 });
 
+const passwordResetRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'rate_limit_exceeded',
+    message: 'Too many password reset attempts. Try again shortly.',
+  },
+});
+
+function passwordResetFrontendOrigin() {
+  const origin = process.env.FRONTEND_ORIGIN?.trim()?.split(',')[0]?.trim();
+  return origin || 'http://localhost:5173';
+}
+
+function buildPasswordResetLink(email, plainToken) {
+  const base = passwordResetFrontendOrigin().replace(/\/+$/, '');
+  const params = new URLSearchParams({
+    token: plainToken,
+    email,
+  });
+  return `${base}/password-reset?${params.toString()}`;
+}
+
 function userResponse(doc) {
   const id =
     typeof doc?.id === 'string' ? doc.id : doc?._id != null ? doc._id.toString() : undefined;
@@ -44,6 +78,7 @@ function userResponse(doc) {
     id,
     email: doc.email,
     name,
+    platformAdmin: Boolean(doc.platformAdmin),
     createdAt: doc.createdAt,
   };
 }
@@ -56,7 +91,13 @@ function attachSessionCookie(res, user) {
   const maxAgeMs = accessTokenCookieMaxAgeMs();
   const cookie = accessTokenCookiePayload(maxAgeMs);
   res.cookie(cookie.name, token, cookie.options);
+  issueCsrfCookie(res);
 }
+
+router.get('/csrf', (_req, res) => {
+  const csrfToken = issueCsrfCookie(res);
+  res.status(200).json({ csrfToken });
+});
 
 router.post('/register', authWriteLimiter, async (req, res, next) => {
   const emailRaw =
@@ -168,9 +209,101 @@ router.post('/login', authWriteLimiter, async (req, res, next) => {
   }
 });
 
-router.post('/logout', (_req, res) => {
+router.post('/logout', (req, res) => {
   res.clearCookie(AUTH_ACCESS_COOKIE_NAME, clearAccessTokenCookieAttributes());
+  issueCsrfCookie(res);
   res.status(200).json({ ok: true });
+});
+
+router.post('/password-reset/request', passwordResetRequestLimiter, async (req, res, next) => {
+  const emailRaw =
+    typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+
+  const genericOk = () =>
+    res.status(200).json({
+      ok: true,
+      message: 'If an account exists for that email, a reset link has been sent.',
+    });
+
+  if (!emailRaw || !isValidEmail(emailRaw)) {
+    return genericOk();
+  }
+
+  try {
+    const user = await User.findOne({ email: emailRaw })
+      .select('+passwordHash')
+      .exec();
+
+    if (!user || typeof user.passwordHash !== 'string') {
+      return genericOk();
+    }
+
+    const plainToken = generateResetToken();
+    user.passwordResetToken = hashResetToken(plainToken);
+    user.passwordResetExpiresAt = resetTokenExpiresAt();
+    await user.save();
+
+    const resetLink = buildPasswordResetLink(emailRaw, plainToken);
+    await sendEmail({
+      to: emailRaw,
+      subject: 'Reset your Zuggernaut password',
+      text: `Use this link to reset your password (expires in 1 hour): ${resetLink}`,
+      html: `<p>Use this link to reset your password (expires in 1 hour):</p><p><a href="${resetLink}">${resetLink}</a></p>`,
+    });
+
+    return genericOk();
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.post('/password-reset/confirm', authWriteLimiter, async (req, res, next) => {
+  const emailRaw =
+    typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const tokenRaw = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+  const pwdRaw = typeof req.body?.password === 'string' ? req.body.password : '';
+
+  const genericInvalid = () =>
+    res.status(400).json({
+      error: 'validation_error',
+      message: 'Invalid or expired reset link. Request a new password reset.',
+    });
+
+  if (!emailRaw || !isValidEmail(emailRaw) || tokenRaw.length === 0) {
+    return genericInvalid();
+  }
+
+  const pwdMsg = validatePlainPassword(pwdRaw);
+  if (pwdMsg) {
+    return res.status(400).json({ error: 'validation_error', message: pwdMsg });
+  }
+
+  try {
+    const user = await User.findOne({ email: emailRaw })
+      .select('+passwordHash +passwordResetToken +passwordResetExpiresAt')
+      .exec();
+
+    if (
+      !user ||
+      typeof user.passwordResetToken !== 'string' ||
+      isResetTokenExpired(user.passwordResetExpiresAt) ||
+      !verifyResetToken(tokenRaw, user.passwordResetToken)
+    ) {
+      return genericInvalid();
+    }
+
+    user.passwordHash = await hashPassword(pwdRaw);
+    user.passwordResetToken = undefined;
+    user.passwordResetExpiresAt = undefined;
+    await user.save();
+
+    return res.status(200).json({
+      ok: true,
+      message: 'Password updated. You can log in with your new password.',
+    });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 router.get('/me', requireAuth, async (req, res, next) => {

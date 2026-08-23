@@ -1,8 +1,8 @@
 'use strict';
 
-jest.mock('axios');
+jest.mock('../lib/ssrf');
 
-const axios = require('axios');
+const { ssrfSafeGet, SsrfError } = require('../lib/ssrf');
 const mongoose = require('mongoose');
 const {
   runStructuralVerification,
@@ -73,7 +73,7 @@ describe('structuralVerificationService', () => {
 
   it('passes when GTM structure is complete and snippet is present', async () => {
     const { bc, run } = await seedVerifiedRun('verify-pass@test.com', 'both');
-    axios.get.mockResolvedValue({
+    ssrfSafeGet.mockResolvedValue({
       data: '<html><script src="https://www.googletagmanager.com/gtm.js?id=GTM-MOCK"></script></html>',
     });
 
@@ -90,7 +90,7 @@ describe('structuralVerificationService', () => {
 
   it('returns snippet_pending when structure is valid but snippet is missing', async () => {
     const { bc, run } = await seedVerifiedRun('verify-snippet@test.com', 'calls');
-    axios.get.mockResolvedValue({ data: '<html>no gtm here</html>' });
+    ssrfSafeGet.mockResolvedValue({ data: '<html>no gtm here</html>' });
 
     const verdict = await runStructuralVerification({
       setupRunId: run._id,
@@ -203,7 +203,7 @@ describe('structuralVerificationService', () => {
       metadata: { logicalCategory: 'call' },
     });
 
-    axios.get.mockResolvedValue({ data: '<html>GTM-MOCK</html>' });
+    ssrfSafeGet.mockResolvedValue({ data: '<html>GTM-MOCK</html>' });
 
     const verdict = await runStructuralVerification({
       setupRunId: run._id,
@@ -225,7 +225,7 @@ describe('structuralVerificationService', () => {
       provider: 'gtm',
       artifactType: 'gtm_tag',
     });
-    axios.get.mockResolvedValue({ data: '<html>GTM-MOCK</html>' });
+    ssrfSafeGet.mockResolvedValue({ data: '<html>GTM-MOCK</html>' });
 
     const verdict = await runStructuralVerification({
       setupRunId: run._id,
@@ -239,7 +239,7 @@ describe('structuralVerificationService', () => {
 
   it('returns manual_review_required when website fetch fails', async () => {
     const { bc, run } = await seedVerifiedRun('verify-fetch-fail@test.com', 'calls');
-    axios.get.mockRejectedValue(new Error('network down'));
+    ssrfSafeGet.mockRejectedValue(new Error('network down'));
 
     const verdict = await runStructuralVerification({
       setupRunId: run._id,
@@ -269,6 +269,6 @@ describe('structuralVerificationService', () => {
       'https://acme.example'
     );
     expect(expected.gtmTags).toBe(2);
-    expect(expected.gtmTriggers).toBe(4);
+    expect(expected.gtmTriggers).toBe(3);
   });
 });

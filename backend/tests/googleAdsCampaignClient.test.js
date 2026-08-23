@@ -21,6 +21,10 @@ const {
   createCampaignBudget,
   createCustomConversionGoal,
   createResponsiveSearchAd,
+  enableAdsCampaign,
+  pauseAdsCampaign,
+  updateCampaignBudget,
+  getAdsCampaignLiveState,
   escapeGaqlLiteral,
   linkCampaignToCustomConversionGoal,
 } = require('../services/integrations/googleAdsCampaignClient');
@@ -984,6 +988,52 @@ describe('googleAdsCampaignClient', () => {
       const searchConfig = axios.post.mock.calls[0][2];
       expect(searchConfig.headers.Authorization).toBe('Bearer test-access-token');
       expect(searchConfig.headers['login-customer-id']).toBe(managerId);
+    });
+  });
+
+  describe('campaign management mutations', () => {
+    beforeEach(() => {
+      process.env.GOOGLE_ADS_API_MOCK = 'true';
+      delete process.env.GOOGLE_ADS_API_ENABLED;
+    });
+
+    it('enableAdsCampaign returns enabled in mock mode', async () => {
+      const result = await enableAdsCampaign({
+        businessId: new mongoose.Types.ObjectId(),
+        campaignResourceName: 'customers/1234567890/campaigns/1',
+      });
+      expect(result).toEqual({ outcome: 'enabled', source: 'google_ads_api_mock' });
+    });
+
+    it('pauseAdsCampaign returns paused in mock mode', async () => {
+      const result = await pauseAdsCampaign({
+        businessId: new mongoose.Types.ObjectId(),
+        campaignResourceName: 'customers/1234567890/campaigns/1',
+      });
+      expect(result).toEqual({ outcome: 'paused', source: 'google_ads_api_mock' });
+    });
+
+    it('updateCampaignBudget returns updated in mock mode', async () => {
+      const result = await updateCampaignBudget({
+        businessId: new mongoose.Types.ObjectId(),
+        budgetResourceName: 'customers/1234567890/campaignBudgets/42',
+        amountMicros: 15_000_000,
+      });
+      expect(result).toEqual({
+        outcome: 'updated',
+        amountMicros: 15_000_000,
+        source: 'google_ads_api_mock',
+      });
+    });
+
+    it('getAdsCampaignLiveState returns mock paused state', async () => {
+      const result = await getAdsCampaignLiveState({
+        businessId: new mongoose.Types.ObjectId(),
+        campaignResourceName: 'customers/1234567890/campaigns/1',
+      });
+      expect(result.status).toBe('PAUSED');
+      expect(result.amountMicros).toBe(10_000_000);
+      expect(result.source).toBe('google_ads_api_mock');
     });
   });
 });

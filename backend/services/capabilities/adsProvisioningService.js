@@ -9,9 +9,10 @@ const {
   normalizeCustomerId,
   GoogleAdsAccountError,
 } = require('../integrations/googleAdsAccountClient');
-const { getFreshGoogleAccessToken } = require('../integrations/googleTokenService');
+const { getMccGoogleAdsAccessToken } = require('../integrations/googleTokenService');
 const { hasRequiredIdentifiers } = require('../integrations/providerDiscoveryResult');
 const { buildNewlyCreatedUnderMccLink } = require('./googleAdsMccLinkService');
+const { maybeInjectFailure } = require('../../lib/qaFailureInjection');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
@@ -133,6 +134,8 @@ async function resolveCustomerDisplayName(businessId, customerName) {
 async function provisionGoogleAdsCustomer(input) {
   const { businessId, setupRunId, provisioningRequestId, customerName, logger } = input;
 
+  maybeInjectFailure('ads_provisioning');
+
   const request = await IntegrationProvisioningRequest.findById(provisioningRequestId);
   assertApprovedAdsProvisioningRequest(request);
 
@@ -148,8 +151,6 @@ async function provisionGoogleAdsCustomer(input) {
   });
 
   try {
-    const accessToken = await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
-
     let customerResult;
     const existingArtifact = await findProvisioningArtifact({ businessId, setupRunId });
     if (existingArtifact) {
@@ -169,27 +170,43 @@ async function provisionGoogleAdsCustomer(input) {
       const conn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
         .select('providerIdentifiers')
         .lean();
-      const storedAccessible = Array.isArray(conn?.providerIdentifiers?.accessibleCustomerIds)
-        ? conn.providerIdentifiers.accessibleCustomerIds.map(normalizeCustomerId).filter(Boolean)
+      const providerIdentifiers = conn?.providerIdentifiers ?? {};
+      const storedAccessible = Array.isArray(providerIdentifiers.accessibleCustomerIds)
+        ? providerIdentifiers.accessibleCustomerIds.map(normalizeCustomerId).filter(Boolean)
         : [];
+      const selectedCustomerId = normalizeCustomerId(providerIdentifiers.customerId);
+      const provisioningIntent = providerIdentifiers.provisioningIntent ?? null;
+      const wantsMccCreate = provisioningIntent === 'mcc_create';
 
-      if (storedAccessible.length > 0) {
-        const loginCustomerId = normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
+      if (
+        selectedCustomerId &&
+        storedAccessible.includes(selectedCustomerId) &&
+        !wantsMccCreate
+      ) {
+        const loginCustomerId =
+          normalizeCustomerId(providerIdentifiers.loginCustomerId) ??
+          normalizeCustomerId(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID);
         customerResult = {
-          customerId: storedAccessible[0],
+          customerId: selectedCustomerId,
           ...(loginCustomerId ? { loginCustomerId, managerCustomerId: loginCustomerId } : {}),
           accessibleCustomerIds: storedAccessible,
           provisioningSource: 'discovery_selected_customer',
-          resourceName: `customers/${storedAccessible[0]}`,
+          resourceName: `customers/${selectedCustomerId}`,
         };
         logger?.info?.(
           { businessId: String(businessId), setupRunId: String(setupRunId), customerId: customerResult.customerId },
-          'google ads customer selected from discovery result'
+          'google ads customer selected from saved product selection'
+        );
+      } else if (storedAccessible.length > 0 && !wantsMccCreate) {
+        throw new AdsProvisioningError(
+          'Google Ads customer selection is required before provisioning.',
+          'ADS_SELECTION_REQUIRED'
         );
       } else {
         const managerCustomerId = getGoogleAdsLoginCustomerId({ required: true });
         const descriptiveName = await resolveCustomerDisplayName(businessId, customerName);
-        const created = await createCustomerClient(accessToken, managerCustomerId, { descriptiveName });
+        const mccAccessToken = await getMccGoogleAdsAccessToken();
+        const created = await createCustomerClient(mccAccessToken, managerCustomerId, { descriptiveName });
         customerResult = {
           customerId: created.customerId,
           loginCustomerId: managerCustomerId,
@@ -268,6 +285,27 @@ async function provisionGoogleAdsCustomer(input) {
         : typeof err.code === 'string'
           ? err.code
           : 'ADS_PROVISIONING_FAILED';
+
+    if (errorCode === 'ADS_SELECTION_REQUIRED') {
+      await IntegrationProvisioningRequest.findByIdAndUpdate(provisioningRequestId, {
+        $set: {
+          status: 'approved',
+          errorCode,
+          errorMessage: err.message,
+          lastAttemptedAt: new Date(),
+        },
+      });
+      await IntegrationConnection.findOneAndUpdate(
+        { businessId, provider: 'google_ads' },
+        {
+          $set: {
+            connectionHealth: 'selection_required',
+            'providerIdentifiers.selectionRequired': true,
+          },
+        }
+      );
+      throw err;
+    }
 
     await IntegrationProvisioningRequest.findByIdAndUpdate(provisioningRequestId, {
       $set: {

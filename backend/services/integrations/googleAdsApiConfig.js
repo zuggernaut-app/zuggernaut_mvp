@@ -469,6 +469,8 @@ async function axiosWithGoogleAdsRateLimitRetry(requestFn, logContext = {}) {
     }
 
     const waitMs = googleAdsRateLimitWaitMs(attempt, res.headers?.['retry-after']);
+    const { recordGoogleAdsRateLimitHit } = require('../../lib/observability/otel');
+    recordGoogleAdsRateLimitHit();
     googleAdsApiConfigLogger.warn(
       {
         operation: logContext.operation ?? 'google_ads_request',

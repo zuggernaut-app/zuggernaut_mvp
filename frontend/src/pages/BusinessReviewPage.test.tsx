@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { updateBusinessContext } from '../api/businessContexts'
 import { ApiError } from '../api/client'
 import { OnboardingProvider } from '../hooks/useOnboardingState'
+import { AuthProvider } from '../hooks/useAuth'
 import { TEST_IDS, seedSession } from '../test/pageTestUtils'
 import { BusinessReviewPage } from './BusinessReviewPage'
 
@@ -12,25 +13,48 @@ vi.mock('../api/businessContexts', () => ({
   updateBusinessContext: vi.fn(),
 }))
 
+const hoisted = vi.hoisted(() => ({
+  mockAuthMe: vi.fn(),
+  mockFetchSoftLaunchSettings: vi.fn(),
+}))
+
+vi.mock('../api/auth', () => ({
+  authMe: hoisted.mockAuthMe,
+  authRegister: vi.fn(),
+  authLogin: vi.fn(),
+  authLogout: vi.fn().mockResolvedValue({ ok: true }),
+}))
+
+vi.mock('../api/settings', () => ({
+  fetchSoftLaunchSettings: hoisted.mockFetchSoftLaunchSettings,
+}))
+
 const mockedUpdate = vi.mocked(updateBusinessContext)
 
 function renderReview(): ReturnType<typeof render> {
+  hoisted.mockAuthMe.mockResolvedValue({
+    user: { id: TEST_IDS.user, email: 'whoever@example.com', name: 'Who' },
+  })
+  hoisted.mockFetchSoftLaunchSettings.mockResolvedValue({ softLaunchMode: false })
+
   return render(
     <MemoryRouter initialEntries={['/onboarding/review']}>
-      <OnboardingProvider>
-        <Routes>
-          <Route path="/onboarding/review" element={<BusinessReviewPage />} />
-          <Route
-            path="/onboarding/business"
-            element={<div data-testid="business-target">business</div>}
-          />
-          <Route path="/setup" element={<div data-testid="setup-target">setup</div>} />
-          <Route
-            path="/onboarding/suggestions"
-            element={<div data-testid="suggestions-target">suggestions</div>}
-          />
-        </Routes>
-      </OnboardingProvider>
+      <AuthProvider>
+        <OnboardingProvider>
+          <Routes>
+            <Route path="/onboarding/review" element={<BusinessReviewPage />} />
+            <Route
+              path="/onboarding/business"
+              element={<div data-testid="business-target">business</div>}
+            />
+            <Route path="/setup" element={<div data-testid="setup-target">setup</div>} />
+            <Route
+              path="/onboarding/suggestions"
+              element={<div data-testid="suggestions-target">suggestions</div>}
+            />
+          </Routes>
+        </OnboardingProvider>
+      </AuthProvider>
     </MemoryRouter>,
   )
 }
@@ -51,7 +75,7 @@ describe('BusinessReviewPage', () => {
     })
   })
 
-  it('submits context and navigates to setup', async () => {
+  it('submits context with forms-only goal and navigates to setup', async () => {
     seedSession({
       userId: TEST_IDS.user,
       businessId: TEST_IDS.business,
@@ -72,7 +96,7 @@ describe('BusinessReviewPage', () => {
         serviceAreas: ['Metro area'],
         contactMethods: null,
         audienceSignals: null,
-        goals: { primary: 'both' },
+        goals: { primary: 'forms' },
         differentiators: null,
         orderValueHint: null,
         confirmedAt: new Date().toISOString(),
@@ -84,10 +108,10 @@ describe('BusinessReviewPage', () => {
     renderReview()
 
     await screen.findByRole('heading', { name: /confirm business context/i })
+    expect(screen.getByText(/we'll optimize for form submissions/i)).toBeInTheDocument()
 
     await user.clear(screen.getByLabelText(/^business name$/i))
     await user.type(screen.getByLabelText(/^business name$/i), 'Acme LLC')
-    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'both')
     await user.type(screen.getByLabelText(/^services/i), 'Consulting')
     await user.type(screen.getByLabelText(/^service areas/i), 'Metro area')
 
@@ -102,7 +126,7 @@ describe('BusinessReviewPage', () => {
       expect.objectContaining({
         businessName: 'Acme LLC',
         industry: 'Tech',
-        goals: { primary: 'both' },
+        goals: { primary: 'forms' },
       }),
     )
 
@@ -152,7 +176,6 @@ describe('BusinessReviewPage', () => {
     fireEvent.change(screen.getByLabelText(/contactMethods/i), {
       target: { value: '{broken' },
     })
-    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'both')
 
     await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
 
@@ -160,7 +183,7 @@ describe('BusinessReviewPage', () => {
     expect(mockedUpdate).not.toHaveBeenCalled()
   })
 
-  it('uses dropdown primary goal over unsupported scraped goals JSON', async () => {
+  it('persists forms primary goal over scraped goals JSON', async () => {
     seedSession({
       userId: TEST_IDS.user,
       businessId: TEST_IDS.business,
@@ -187,7 +210,7 @@ describe('BusinessReviewPage', () => {
         serviceAreas: ['Springfield'],
         contactMethods: null,
         audienceSignals: null,
-        goals: { primary: 'calls' },
+        goals: { primary: 'forms' },
         differentiators: null,
         orderValueHint: null,
         confirmedAt: new Date().toISOString(),
@@ -199,7 +222,6 @@ describe('BusinessReviewPage', () => {
     renderReview()
 
     await screen.findByRole('heading', { name: /confirm business context/i })
-    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'calls')
     await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
 
     await waitFor(() => {
@@ -209,7 +231,7 @@ describe('BusinessReviewPage', () => {
     expect(mockedUpdate).toHaveBeenCalledWith(
       TEST_IDS.business,
       expect.objectContaining({
-        goals: expect.objectContaining({ primary: 'calls' }),
+        goals: expect.objectContaining({ primary: 'forms' }),
       }),
     )
   })
@@ -227,7 +249,6 @@ describe('BusinessReviewPage', () => {
     renderReview()
 
     await screen.findByRole('heading', { name: /confirm business context/i })
-    await user.selectOptions(screen.getByLabelText(/^primary business goal$/i), 'both')
     await user.click(screen.getByRole('button', { name: /confirm & continue/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Bad payload')

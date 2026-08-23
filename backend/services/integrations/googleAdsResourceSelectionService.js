@@ -17,6 +17,10 @@ const {
 } = require('./providerResourceSelection');
 const { SELECTION_SOURCE } = require('../../constants/providerResourceSelection');
 const { recordProviderResourceSelection } = require('./recordProviderResourceSelection');
+const {
+  assertProviderResourceExclusive,
+  ProviderResourceExclusiveError,
+} = require('../../lib/providerResourceExclusivity');
 const { preserveMccLinkForSelection } = require('../capabilities/googleAdsMccLinkService');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
@@ -171,6 +175,8 @@ async function saveGoogleAdsSelection(businessId, selection) {
     providerIdentifiers.mccLink = preservedMccLink;
   }
 
+  await assertProviderResourceExclusive(businessId, 'google_ads', 'customerId', option.customerId);
+
   await recordProviderResourceSelection(businessId, 'google_ads', providerIdentifiers, {
     source: SELECTION_SOURCE.PRODUCT_SETUP,
     summary: {
@@ -198,8 +204,46 @@ async function saveGoogleAdsSelection(businessId, selection) {
   };
 }
 
+/**
+ * Records explicit user intent to create a new Google Ads customer under MCC
+ * instead of selecting an existing accessible account.
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ */
+async function saveGoogleAdsProvisioningIntent(businessId) {
+  await requireGoogleAdsOAuth(businessId);
+
+  const conn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
+    .select('providerIdentifiers connectionHealth')
+    .lean();
+
+  const providerIdentifiers = {
+    ...(conn?.providerIdentifiers ?? {}),
+    provisioningIntent: 'mcc_create',
+    selectionRequired: false,
+  };
+
+  await IntegrationConnection.findOneAndUpdate(
+    { businessId, provider: 'google_ads' },
+    {
+      $set: {
+        connectionHealth: 'provisioning_required',
+        providerIdentifiers,
+      },
+    }
+  );
+
+  return {
+    businessId: String(businessId),
+    provider: 'google_ads',
+    provisioningIntent: 'mcc_create',
+  };
+}
+
 module.exports = {
   GoogleAdsResourceSelectionError,
+  ProviderResourceExclusiveError,
   listGoogleAdsResourceOptions,
   saveGoogleAdsSelection,
+  saveGoogleAdsProvisioningIntent,
 };

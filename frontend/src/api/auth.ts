@@ -39,3 +39,25 @@ export async function authLogout(): Promise<{ ok: boolean }> {
 export async function authMe(): Promise<AuthSessionResponse> {
   return apiRequest<AuthSessionResponse>('/auth/me')
 }
+
+export type PasswordResetMessageResponse = { ok: boolean; message: string }
+
+export async function authPasswordResetRequest(body: { email: string }): Promise<PasswordResetMessageResponse> {
+  return apiRequest<PasswordResetMessageResponse>('/auth/password-reset/request', {
+    method: 'POST',
+    body,
+    skipAuth: true,
+  })
+}
+
+export async function authPasswordResetConfirm(body: {
+  email: string
+  token: string
+  password: string
+}): Promise<PasswordResetMessageResponse> {
+  return apiRequest<PasswordResetMessageResponse>('/auth/password-reset/confirm', {
+    method: 'POST',
+    body,
+    skipAuth: true,
+  })
+}

@@ -35,8 +35,25 @@ function createApp() {
     );
   }
 
+  app.use(
+    '/api/v1/billing/webhook',
+    express.raw({ type: 'application/json' }),
+    (req, _res, next) => {
+      req.rawBody = req.body;
+      next();
+    },
+  );
   app.use(express.json({ limit: '100kb' }));
   app.use(cookieParser());
+
+  const { requestIdMiddleware } = require('./api/v1/middleware/requestId');
+  app.use(requestIdMiddleware);
+
+  const { otelHttpMiddleware } = require('./lib/observability/otel');
+  app.use(otelHttpMiddleware);
+
+  const { csrfProtection } = require('./api/v1/middleware/csrfProtection');
+  app.use('/api/v1', csrfProtection);
 
   app.use('/api/v1', require('./api/v1'));
 
@@ -45,8 +62,8 @@ function createApp() {
     res.send('Backend is running!');
   });
 
-  app.use((err, _req, res, _next) => {
-    logger.error({ err }, 'Unhandled API error');
+  app.use((err, req, res, _next) => {
+    logger.error({ err, requestId: req.requestId }, 'Unhandled API error');
     if (res.headersSent) return;
     const status = typeof err.status === 'number' ? err.status : 500;
     const message =

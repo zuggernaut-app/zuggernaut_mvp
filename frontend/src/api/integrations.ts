@@ -218,6 +218,17 @@ export interface GoogleAdsSelectionBody {
   customerId: string
 }
 
+export interface GoogleAdsProvisioningIntentBody {
+  businessId: string
+  provisioningIntent: 'mcc_create'
+}
+
+export interface GoogleAdsProvisioningIntentResult {
+  businessId: string
+  provider: 'google_ads'
+  provisioningIntent: 'mcc_create'
+}
+
 export async function fetchGtmResourceOptions(
   businessId: string,
 ): Promise<{ result: GtmResourceOptionsResult }> {
@@ -225,6 +236,28 @@ export async function fetchGtmResourceOptions(
   return apiRequest<{ result: GtmResourceOptionsResult }>(
     `/integrations/gtm/resource-options?${q.toString()}`,
   )
+}
+
+export interface GtmAccountsResult {
+  businessId: string
+  provider: 'gtm'
+  accounts: Array<{ accountId: string; name?: string | null }>
+  selectedAccountId: string | null
+  selectedAccount: { accountId: string; name?: string | null } | null
+}
+
+export async function fetchGtmAccounts(
+  businessId: string,
+): Promise<{ result: GtmAccountsResult }> {
+  const q = new URLSearchParams({ businessId })
+  return apiRequest<{ result: GtmAccountsResult }>(`/integrations/gtm/accounts?${q.toString()}`)
+}
+
+export async function saveGtmAccountSelection(body: {
+  businessId: string
+  accountId: string
+}): Promise<{ result: Record<string, unknown> }> {
+  return apiRequest(`/integrations/gtm/account-selection`, { method: 'PUT', body })
 }
 
 export async function saveGtmSelection(
@@ -246,6 +279,16 @@ export async function saveGoogleAdsSelection(
   body: GoogleAdsSelectionBody,
 ): Promise<{ result: GoogleAdsResourceOptionsResult & { providerIdentifiers?: Record<string, unknown> } }> {
   return apiRequest(`/integrations/google_ads/selection`, { method: 'PUT', body })
+}
+
+export async function saveGoogleAdsProvisioningIntent(
+  businessId: string,
+): Promise<{ result: GoogleAdsProvisioningIntentResult }> {
+  const body: GoogleAdsProvisioningIntentBody = {
+    businessId,
+    provisioningIntent: 'mcc_create',
+  }
+  return apiRequest(`/integrations/google_ads/provisioning-intent`, { method: 'PUT', body })
 }
 
 export interface MccLinkState {
@@ -296,6 +339,34 @@ export async function sendMccLinkInvite(businessId: string): Promise<MccLinkStat
 
 export async function acceptMccLinkInvite(businessId: string): Promise<MccLinkStatusResponse> {
   return apiRequest<MccLinkStatusResponse>(`/integrations/google_ads/mcc-link/accept`, {
+    method: 'POST',
+    body: { businessId },
+  })
+}
+
+export async function writeGbpLocation(
+  locationId: string,
+  body: Record<string, unknown>,
+  consentGranted: boolean,
+): Promise<{ result: Record<string, unknown> }> {
+  return apiRequest<{ result: Record<string, unknown> }>(`/integrations/gbp/${locationId}/write`, {
+    method: 'POST',
+    headers: { 'x-gbp-write-consent': consentGranted ? 'true' : 'false' },
+    body,
+  })
+}
+
+export async function getMetaConnectUrl(): Promise<{ url: string | null; source: string }> {
+  return apiRequest<{ url: string | null; source: string }>('/integrations/meta/connect-url')
+}
+
+export async function getMetaStatus(businessId: string): Promise<{ status: Record<string, unknown> }> {
+  const q = new URLSearchParams({ businessId })
+  return apiRequest<{ status: Record<string, unknown> }>(`/integrations/meta/status?${q.toString()}`)
+}
+
+export async function runMetaSetup(businessId: string): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>('/integrations/meta/setup', {
     method: 'POST',
     body: { businessId },
   })

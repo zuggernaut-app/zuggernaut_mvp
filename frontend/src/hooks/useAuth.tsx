@@ -10,6 +10,7 @@ import {
 } from 'react'
 import type { RegisterBody } from '../api/auth'
 import { authLogin, authLogout, authMe, authRegister } from '../api/auth'
+import { ensureCsrfCookie } from '../api/client'
 import type { UserDto } from '../types/api'
 import {
   clearOnboardingDrafts,
@@ -64,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
 
   useEffect(() => {
     void (async () => {
+      await ensureCsrfCookie().catch(() => undefined)
       await refreshSession()
       setLoading(false)
     })()

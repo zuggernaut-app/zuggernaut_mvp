@@ -1,8 +1,8 @@
 'use strict';
 
-const axios = require('axios');
 const { SCRAPER_UA } = require('./robots');
 const { detectBlocking } = require('./detectBlocking');
+const { ssrfSafeGet, SsrfError } = require('../../lib/ssrf');
 const {
   createAggregate,
   collectSignalsFromHtml,
@@ -28,7 +28,7 @@ function normalizeStartUrl(url) {
  * @param {string} url
  */
 async function fetchHtml(url) {
-  const res = await axios.get(url, {
+  const res = await ssrfSafeGet(url, {
     timeout: FETCH_TIMEOUT_MS,
     maxRedirects: 5,
     maxContentLength: MAX_BODY_BYTES,
@@ -158,6 +158,13 @@ async function runStaticScrape(websiteUrl) {
       errors,
     };
   } catch (e) {
+    if (e instanceof SsrfError) {
+      errors.push({
+        url: normalized,
+        message: e.code || 'ssrf_blocked',
+      });
+      return buildFailure(normalized, 'ssrf_blocked', pages, errors);
+    }
     errors.push({
       url: normalized,
       message: typeof e?.message === 'string' ? e.message : 'fetch_failed',

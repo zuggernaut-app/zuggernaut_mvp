@@ -42,6 +42,9 @@ export function HomePage(): ReactElement {
             <Link className="btn btn-primary" to="/onboarding/business">
               Continue onboarding
             </Link>
+            <Link className="btn btn-secondary" to="/onboarding/business">
+              Add another business
+            </Link>
             {snapshot.setupRunId ? (
               <>
                 <Link className="btn btn-secondary" to={`/setup/progress/${snapshot.setupRunId}`}>
@@ -52,6 +55,9 @@ export function HomePage(): ReactElement {
                 </Link>
               </>
             ) : null}
+            <Link className="btn btn-secondary" to="/billing">
+              Billing
+            </Link>
             <button
               type="button"
               className="btn btn-secondary"

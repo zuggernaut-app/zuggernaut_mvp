@@ -100,6 +100,11 @@ export function OnboardingProvider({ children }: { children: ReactNode }): React
         emit()
       },
       setBusinessId: (id: string) => {
+        const prev = getStoredBusinessId()
+        if (prev !== null && prev !== id) {
+          clearStoredScrapePreview()
+          clearStoredSetupRunId()
+        }
         setStoredBusinessId(id)
         emit()
       },

@@ -1,6 +1,6 @@
 'use strict';
 
-const axios = require('axios');
+const { ssrfSafeGet } = require('../../lib/ssrf');
 
 const SCRAPER_UA =
   process.env.SCRAPER_USER_AGENT ||
@@ -71,7 +71,7 @@ async function checkRobotsAllowedForUrl(websiteUrl) {
   const robotsUrl = new URL('/robots.txt', u.origin).href;
 
   try {
-    const res = await axios.get(robotsUrl, {
+    const res = await ssrfSafeGet(robotsUrl, {
       timeout: 8000,
       maxRedirects: 3,
       maxContentLength: 256 * 1024,

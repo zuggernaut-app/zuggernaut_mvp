@@ -9,6 +9,7 @@ import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import { useSoftLaunchMode } from '../hooks/useSoftLaunchMode'
 
 function splitLines(raw: string): string[] {
   return raw
@@ -56,6 +57,7 @@ function readPrimaryGoal(goals: unknown): string {
 export function BusinessReviewPage(): ReactElement {
   const navigate = useNavigate()
   const { snapshot, clearScrapePreviewState } = useOnboardingState()
+  const { softLaunchMode } = useSoftLaunchMode()
   const { businessId, scrapePreview } = snapshot
   /** After successful PUT, scrape preview clears async; suppress redirect-to-business until `/setup` is shown. */
   const leavingAfterSaveRef = useRef(false)
@@ -76,6 +78,7 @@ export function BusinessReviewPage(): ReactElement {
         : '',
       differentiators: String(s?.differentiators ?? ''),
       orderValueHint: String(s?.orderValueHint ?? ''),
+      thankYouUrls: '',
       contactEmail: contact.email,
       contactPhone: contact.phone,
       contactMethodsRaw: s?.contactMethods ? JSON.stringify(s.contactMethods, null, 2) : '',
@@ -107,10 +110,8 @@ export function BusinessReviewPage(): ReactElement {
       setError('Business name is required to confirm your context.')
       return
     }
-    if (!form.primaryGoal) {
-      setError('Choose a primary business goal (calls, forms, or both).')
-      return
-    }
+
+    const primaryGoal = 'forms'
 
     setBusy(true)
     try {
@@ -122,7 +123,8 @@ export function BusinessReviewPage(): ReactElement {
         serviceAreas: splitLines(form.serviceAreas),
         differentiators: form.differentiators.trim() || undefined,
         orderValueHint: form.orderValueHint.trim() || undefined,
-        goals: { primary: form.primaryGoal },
+        thankYouUrls: splitLines(form.thankYouUrls),
+        goals: { primary: primaryGoal },
       }
 
       try {
@@ -148,7 +150,7 @@ export function BusinessReviewPage(): ReactElement {
               ? { ...(v as Record<string, unknown>) }
               : {}
           // Dropdown selection wins over scraped/legacy goals JSON (e.g. generate_leads).
-          body.goals = { ...merged, primary: form.primaryGoal }
+          body.goals = { ...merged, primary: primaryGoal }
         }
       } catch {
         throw new Error('Goals must be valid JSON or empty')
@@ -187,8 +189,18 @@ export function BusinessReviewPage(): ReactElement {
   return (
     <PageLayout
       title="Confirm business context"
-      lead="Adjust any fields below. Saving confirms your context so Google setup can begin."
+      lead={
+        softLaunchMode
+          ? 'Adjust any fields below. This release optimizes campaigns for form submissions only. Saving confirms your context so Google setup can begin.'
+          : 'Adjust any fields below. Saving confirms your context so Google setup can begin.'
+      }
     >
+      {softLaunchMode ? (
+        <section className="alert alert-info" style={{ marginBottom: '1rem' }}>
+          Soft launch: choose form submissions as your goal and confirm a thank-you page path when possible
+          so GTM can detect completed forms.
+        </section>
+      ) : null}
       {manualHint ? (
         <section className="alert alert-info" style={{ marginBottom: '1rem' }}>
           Scrape was skipped or returned limited data. Fill in the details your customers should
@@ -200,7 +212,11 @@ export function BusinessReviewPage(): ReactElement {
         <ErrorAlert message={error} />
         {readinessIssues.length > 0 ? (
           <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
-            <p style={{ margin: '0 0 0.5rem' }}>Before setup can start:</p>
+            <p style={{ margin: '0 0 0.5rem' }}>
+              {softLaunchMode
+                ? 'Before setup can start (forms-only release):'
+                : 'Before setup can start:'}
+            </p>
             <ul style={{ margin: 0, paddingLeft: '1.25rem' }}>
               {adsReadinessIssueMessages({ ok: false, issues: readinessIssues }).map((message) => (
                 <li key={message}>{message}</li>
@@ -267,6 +283,19 @@ export function BusinessReviewPage(): ReactElement {
           />
         </div>
         <div className="field">
+          <label htmlFor="thankYouUrls">Thank-you page URL paths (one per line)</label>
+          <textarea
+            id="thankYouUrls"
+            placeholder="/thank-you&#10;/contact/success"
+            value={form.thankYouUrls}
+            onChange={(e) => setForm((f) => ({ ...f, thankYouUrls: e.target.value }))}
+          />
+          <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', marginTop: '0.35rem' }}>
+            Optional. Used for GTM form conversion triggers after setup. Leave blank for a default
+            /thank path.
+          </p>
+        </div>
+        <div className="field">
           <label htmlFor="differentiators">Differentiators</label>
           <textarea
             id="differentiators"
@@ -283,17 +312,12 @@ export function BusinessReviewPage(): ReactElement {
           />
         </div>
         <div className="field">
-          <label htmlFor="primaryGoal">Primary business goal</label>
-          <select
-            id="primaryGoal"
-            value={form.primaryGoal}
-            onChange={(e) => setForm((f) => ({ ...f, primaryGoal: e.target.value }))}
-          >
-            <option value="">Select a goal…</option>
-            <option value="calls">Phone calls</option>
-            <option value="forms">Form submissions</option>
-            <option value="both">Calls and forms</option>
-          </select>
+          <span style={{ display: 'block', fontWeight: 600, marginBottom: '0.35rem' }}>
+            Primary business goal
+          </span>
+          <p style={{ margin: 0, color: 'var(--color-muted)' }}>
+            We&apos;ll optimize for form submissions.
+          </p>
         </div>
         <details style={{ marginTop: '0.5rem' }}>
           <summary

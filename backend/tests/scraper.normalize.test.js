@@ -85,4 +85,47 @@ describe('normalizeScrapeResult', () => {
     expect(suggested.scrapeQuality).toBe(SCRAPE_QUALITY.NONE);
     expect(suggested.businessName).toBe('Blocked');
   });
+
+  it('keeps SUCCEEDED with headlessStatus when static succeeds but headless is SSRF-disabled', () => {
+    const { status, suggested, rawPayload } = normalizeScrapeResult({
+      websiteUrl: 'https://acmeplumbing.example',
+      scrapeRunId: '507f1f77bcf86cd799439013',
+      startedAt: new Date().toISOString(),
+      robots: { allowed: true },
+      staticResult: {
+        extractedPreview: {
+          emails: ['hello@acme.example'],
+          phones: ['+15551234567'],
+          socials: { Instagram: [], Facebook: [], YouTube: [], LinkedIn: [] },
+          jsonLdNames: ['Acme Plumbing'],
+          metaDescription: 'Emergency plumbing in Austin',
+          ogSiteName: 'Acme Plumbing',
+          titles: [{ title: 'Acme Plumbing', url: 'https://acmeplumbing.example' }],
+          host: 'acmeplumbing.example',
+        },
+        blocked: false,
+      },
+      headlessResult: {
+        blocked: true,
+        blockReasons: ['headless_disabled_ssrf'],
+        errors: [{ url: 'https://acmeplumbing.example', message: 'headless_disabled_ssrf' }],
+        extractedPreview: {
+          emails: [],
+          phones: [],
+          socials: { Instagram: [], Facebook: [], YouTube: [], LinkedIn: [] },
+          jsonLdNames: [],
+          metaDescription: null,
+          ogSiteName: null,
+          titles: [],
+          host: 'acmeplumbing.example',
+        },
+      },
+    });
+
+    expect(status).toBe('SUCCEEDED');
+    expect(suggested.headlessStatus).toBe('disabled_ssrf');
+    expect(rawPayload.warnings).toContain('headless_disabled_ssrf');
+    expect(rawPayload.diagnostics.headlessStatus).toBe('disabled_ssrf');
+    expect(rawPayload.headlessStatus).toBe('disabled_ssrf');
+  });
 });

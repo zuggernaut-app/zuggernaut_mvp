@@ -4,6 +4,8 @@ export interface ApiErrorBody {
   message: string
   detail?: string
   setupRunId?: string
+  workflowId?: string
+  cancelPriorRunRequired?: boolean
   issues?: AdsReadinessIssue[]
 }
 
@@ -21,6 +23,7 @@ export interface UserDto {
   id: string
   email: string
   name: string | null
+  platformAdmin?: boolean
   createdAt?: string
 }
 
@@ -94,6 +97,7 @@ export interface BusinessContextDto {
   goals: unknown
   differentiators: string | null
   orderValueHint: string | null
+  thankYouUrls: string[]
   confirmedAt: string | null
   updatedAt?: string
 }
@@ -120,6 +124,7 @@ export interface BusinessContextUpdateBody {
   goals?: unknown
   differentiators?: string | null
   orderValueHint?: string | null
+  thankYouUrls?: string[]
 }
 
 export interface SetupRunDto {
@@ -183,12 +188,31 @@ export interface SetupRunMeta {
 export interface SetupRunDetailResponse {
   setupRun: SetupRunDto
   stuckState: SetupRunStuckState
+  recovery: SetupRunReportRecovery | null
   steps: SetupStepDto[]
+}
+
+export interface LatestSetupRunResponse {
+  setupRun: {
+    id: string
+    businessId: string
+    temporalWorkflowId: string | null
+    status: string
+    createdAt?: string
+    updatedAt?: string
+  } | null
+}
+
+export interface SetupRunReportRecoveryStep {
+  text: string
+  href?: string
+  external?: boolean
 }
 
 export interface SetupRunReportRecovery {
   title: string
-  steps: string[]
+  steps: SetupRunReportRecoveryStep[]
+  advancedSteps?: SetupRunReportRecoveryStep[]
 }
 
 export interface SetupRunReportGbpGuidance {
@@ -368,6 +392,8 @@ export interface SetupRunReportResponse {
 
 export interface CreateSetupRunBody {
   businessId: string
+  force?: boolean
+  confirmCancelPriorRun?: boolean
 }
 
 export interface CreateSetupRunSuccessResponse {

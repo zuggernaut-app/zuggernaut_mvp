@@ -112,6 +112,9 @@ const mongoose = require('mongoose');
 const { ApplicationFailure } = require('@temporalio/activity');
 const capabilities = require('../services/capabilities');
 const conversionActionManagement = require('../services/capabilities/adsConversionActionManagementService');
+const {
+  ConversionActionClaimError,
+} = require('../services/capabilities/conversionActionCreationClaim');
 const { SETUP_STEP_NAMES } = require('../constants/setupWorkflow');
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { allScopesForProvider } = require('../constants/googleOAuth');
@@ -1017,6 +1020,47 @@ describe('setupRun activities (with mocked capabilities)', () => {
       expect(updated.status).toBe('FAILED');
       expect(updated.meta?.supportState?.failedStep).toBe(SETUP_STEP_NAMES.MANAGE_ADS_CONVERSION_ACTIONS);
       expect(updated.meta?.supportState?.errorCode).toBe('ConversionActionManagementError');
+
+      manageSpy.mockRestore();
+    });
+
+    it('throws retryable ApplicationFailure when conversion action claim is in progress', async () => {
+      const SetupRun = mongoose.model('SetupRun');
+      const BusinessSetupState = mongoose.model('BusinessSetupState');
+      const { bc, run } = await seedAdsRun('act-manage-claim-busy@test.com');
+
+      await BusinessSetupState.create({
+        businessId: bc.businessId,
+        lockState: 'running',
+        activeSetupRunId: run._id,
+        generation: 1,
+      });
+
+      const manageSpy = jest
+        .spyOn(conversionActionManagement, 'manageConversionActions')
+        .mockRejectedValue(
+          new ConversionActionClaimError(
+            'Conversion action creation is already in progress for this slot.',
+            'CONVERSION_ACTION_CLAIM_IN_PROGRESS'
+          )
+        );
+
+      let failure;
+      try {
+        await manageAdsConversionActionsActivity({
+          setupRunId: run._id.toString(),
+          businessId: bc.businessId.toString(),
+        });
+      } catch (err) {
+        failure = err;
+      }
+
+      expect(failure).toBeInstanceOf(ApplicationFailure);
+      expect(failure.nonRetryable).toBe(false);
+      expect(failure.type).toBe('CONVERSION_ACTION_CLAIM_IN_PROGRESS');
+
+      const updated = await SetupRun.findById(run._id).lean();
+      expect(updated.status).toBe('RUNNING');
 
       manageSpy.mockRestore();
     });

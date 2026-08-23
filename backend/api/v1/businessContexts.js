@@ -14,6 +14,14 @@ const { BUSINESS_CONTEXT_CONFIRM_REQUIRED } = require('../../constants/onboardin
 const {
   validateBusinessContextAdsReadiness,
 } = require('../../services/capabilities/businessContextAdsReadinessService');
+const {
+  assertBusinessMembershipOrOwnership,
+  listOrgIdsForUser,
+  MembershipCheckError,
+} = require('../../lib/auth/membershipCheck');
+const { isSoftLaunchMode } = require('../../constants/softLaunch');
+const { deriveBusinessNameKey } = require('../../lib/businessNameKey');
+const { resolvePrimaryGoal } = require('../../services/capabilities/adsConversionCatalogService');
 
 const router = express.Router();
 
@@ -31,6 +39,8 @@ function serializeBusinessContext(doc) {
     goals: doc.goals ?? null,
     differentiators: doc.differentiators ?? null,
     orderValueHint: doc.orderValueHint ?? null,
+    thankYouUrls: Array.isArray(doc.thankYouUrls) ? doc.thankYouUrls : [],
+    nameKey: doc.nameKey ?? null,
     confirmedAt: doc.confirmedAt ?? null,
     updatedAt: doc.updatedAt,
   };
@@ -48,17 +58,44 @@ const EDITABLE_FIELDS = new Set([
   'goals',
   'differentiators',
   'orderValueHint',
+  'thankYouUrls',
 ]);
+
+router.get('/', requireAuth, async (req, res) => {
+  const userId = new mongoose.Types.ObjectId(req.user.id);
+  const orgIds = await listOrgIdsForUser(userId);
+  const accessFilters = [{ userId }];
+  if (orgIds.length > 0) {
+    accessFilters.push({ orgId: { $in: orgIds } });
+  }
+
+  const rows = await BusinessContext.find({ $or: accessFilters })
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  return res.status(200).json({
+    businessContexts: rows.map(serializeBusinessContext),
+  });
+});
 
 router.get('/:businessId', requireAuth, async (req, res) => {
   const businessIdRaw = req.params.businessId;
   if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
     return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
   }
-  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
-  const userId = new mongoose.Types.ObjectId(req.user.id);
 
-  const doc = await BusinessContext.findOne({ businessId, userId }).lean();
+  try {
+    await assertBusinessMembershipOrOwnership(req.user.id, businessIdRaw);
+  } catch (err) {
+    if (err instanceof MembershipCheckError) {
+      const status = err.code === 'forbidden' ? 403 : 404;
+      return res.status(status).json({ error: err.code, message: err.message });
+    }
+    throw err;
+  }
+
+  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  const doc = await BusinessContext.findOne({ businessId }).lean();
   if (!doc) {
     return res.status(404).json({
       error: 'not_found',
@@ -68,7 +105,7 @@ router.get('/:businessId', requireAuth, async (req, res) => {
 
   return res.status(200).json({
     businessContext: serializeBusinessContext(doc),
-    adsReadiness: validateBusinessContextAdsReadiness(doc),
+    adsReadiness: await validateBusinessContextAdsReadiness(doc),
   });
 });
 
@@ -78,14 +115,20 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
     return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
   }
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
-  const userId = new mongoose.Types.ObjectId(req.user.id);
+
+  try {
+    await assertBusinessMembershipOrOwnership(req.user.id, businessIdRaw);
+  } catch (err) {
+    if (err instanceof MembershipCheckError) {
+      const status = err.code === 'forbidden' ? 403 : 404;
+      return res.status(status).json({ error: err.code, message: err.message });
+    }
+    throw err;
+  }
 
   let doc;
   try {
-    doc = await BusinessContext.findOne({
-      businessId,
-      userId,
-    });
+    doc = await BusinessContext.findOne({ businessId });
   } catch {
     return res.status(503).json({
       error: 'service_unavailable',
@@ -104,7 +147,7 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
   for (const key of EDITABLE_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
     const val = body[key];
-    if (key === 'services' || key === 'serviceAreas') {
+    if (key === 'services' || key === 'serviceAreas' || key === 'thankYouUrls') {
       const list = normalizeStringList(val, key);
       if (!list.ok) {
         return res.status(400).json({ error: 'validation_error', message: list.message });
@@ -174,6 +217,20 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
     }
   }
 
+  if (isSoftLaunchMode()) {
+    const primary = resolvePrimaryGoal(doc.goals);
+    if (primary !== 'forms') {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'During soft launch, primary business goal must be form submissions.',
+      });
+    }
+  }
+
+  if (!doc.nameKey) {
+    doc.nameKey = deriveBusinessNameKey(doc.businessName, doc.businessId);
+  }
+
   doc.confirmedAt = new Date();
   try {
     await doc.save();
@@ -188,7 +245,7 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
 
   return res.status(200).json({
     businessContext: serializeBusinessContext(doc),
-    adsReadiness: validateBusinessContextAdsReadiness(doc.toObject()),
+    adsReadiness: await validateBusinessContextAdsReadiness(doc.toObject()),
   });
 });
 

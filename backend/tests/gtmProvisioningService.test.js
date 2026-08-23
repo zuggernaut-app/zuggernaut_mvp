@@ -185,6 +185,27 @@ describe('gtmProvisioningService', () => {
     expect(count).toBe(3);
   });
 
+  it('marks provisioning request failed when multiple GTM accounts exist without selection', async () => {
+    const { bc, run, request } = await seedApprovedProvisioning();
+    listGtmAccounts.mockResolvedValueOnce([
+      { accountId: 'prov-account-1', name: 'A' },
+      { accountId: 'prov-account-2', name: 'B' },
+    ]);
+
+    await expect(
+      provisionGtmResources({
+        businessId: bc.businessId,
+        setupRunId: run._id,
+        provisioningRequestId: request._id,
+        logger,
+      })
+    ).rejects.toMatchObject({ code: 'GTM_SELECTION_REQUIRED' });
+
+    const updatedRequest = await mongoose.model('IntegrationProvisioningRequest').findById(request._id).lean();
+    expect(updatedRequest.status).toBe('failed');
+    expect(updatedRequest.errorCode).toBe('GTM_SELECTION_REQUIRED');
+  });
+
   it('marks provisioning request failed when no GTM account exists', async () => {
     const { bc, run, request } = await seedApprovedProvisioning();
     listGtmAccounts.mockResolvedValueOnce([]);
@@ -209,5 +230,55 @@ describe('gtmProvisioningService', () => {
     expect(provisioningArtifactIdempotencyKey(businessId, setupRunId, 'account')).toBe(
       `gtm:account:${businessId}:${setupRunId}`
     );
+  });
+
+  it('reuses prior gtm_container integration artifact before creating a new container', async () => {
+    const IntegrationConnection = mongoose.model('IntegrationConnection');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const { bc, run, request } = await seedApprovedProvisioning();
+
+    const priorRun = await mongoose.model('SetupRun').create({
+      businessId: bc.businessId,
+      status: 'FAILED',
+    });
+
+    await IntegrationConnection.updateOne(
+      { businessId: bc.businessId, provider: 'gtm' },
+      {
+        $set: {
+          providerIdentifiers: {
+            accountId: 'prov-account-1',
+            discoveryReason: 'GTM_PROVISIONING_REQUIRED',
+          },
+        },
+      }
+    );
+
+    await IntegrationArtifact.create({
+      setupRunId: priorRun._id,
+      businessId: bc.businessId,
+      provider: 'gtm',
+      artifactType: 'gtm_container',
+      externalId: 'prior-container-1',
+      idempotencyKey: `gtm:container:${bc.businessId}:${priorRun._id}`,
+      metadata: {
+        role: 'container',
+        path: 'accounts/prov-account-1/containers/prior-container-1',
+        publicContainerId: 'GTM-PRIOR',
+      },
+    });
+
+    createGtmContainer.mockClear();
+
+    const result = await provisionGtmResources({
+      businessId: bc.businessId,
+      setupRunId: run._id,
+      provisioningRequestId: request._id,
+      logger,
+    });
+
+    expect(createGtmContainer).not.toHaveBeenCalled();
+    expect(result.providerIdentifiers.containerId).toBe('prior-container-1');
+    expect(result.providerIdentifiers.publicContainerId).toBe('GTM-PRIOR');
   });
 });

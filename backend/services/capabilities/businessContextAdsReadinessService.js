@@ -1,7 +1,9 @@
 'use strict';
 
+const mongoose = require('mongoose');
 const { validateHttpUrl } = require('../../lib/validation');
 const { ADS_READINESS_CODES } = require('../../constants/businessContextAdsReadiness');
+const { SCRAPE_RUN_STATUS } = require('../../constants/enums');
 const { resolvePrimaryGoal } = require('./adsConversionCatalogService');
 const { truncateRsaText } = require('../integrations/googleAdsCampaignClient');
 
@@ -44,6 +46,13 @@ function normalizeBusinessNameForAds(businessName) {
  */
 
 /**
+ * @typedef {object} AdsReadinessWarning
+ * @property {string} code
+ * @property {string} field
+ * @property {string} message
+ */
+
+/**
  * @typedef {object} AdsReadinessNormalized
  * @property {string} businessName
  * @property {string} websiteUrl
@@ -67,7 +76,7 @@ function buildMinimalAdsReadyBusinessContext(overrides = {}) {
     websiteUrl: 'https://example.com',
     industry: 'services',
     services: ['Example service'],
-    serviceAreas: ['Local area'],
+    serviceAreas: ['San Francisco'],
     goals: { primary: 'both' },
     ...overrides,
   };
@@ -107,17 +116,17 @@ function goalsPrimaryIsSupported(goals) {
 }
 
 /**
- * Maps scraper/placeholder service area labels to geo strings Google Ads can suggest.
+ * Detects scraper/placeholder service area labels that are not valid geo targets.
  *
  * @param {string | undefined | null} label
- * @returns {string}
+ * @returns {boolean}
  */
-function normalizeServiceAreaForGeoSuggest(label) {
+function isPlaceholderServiceArea(label) {
   const raw = String(label ?? '').trim();
   const l = raw.toLowerCase();
 
   if (!raw) {
-    return raw;
+    return false;
   }
 
   if (
@@ -128,17 +137,14 @@ function normalizeServiceAreaForGeoSuggest(label) {
     l === 'unknown' ||
     l.includes('unknown')
   ) {
-    return 'Mountain View';
+    return true;
   }
 
-  if (l.endsWith(' area') && !raw.includes('.')) {
-    return raw;
-  }
   if (l.endsWith(' area') && raw.includes('.')) {
-    return 'Mountain View';
+    return true;
   }
 
-  return raw;
+  return false;
 }
 
 /**
@@ -181,7 +187,7 @@ function buildAdCopySeeds(businessName, primaryService, area) {
  * @param {object | null | undefined} businessContext — lean BusinessContext
  * @returns {{ ok: true, normalized: AdsReadinessNormalized } | { ok: false, issues: AdsReadinessIssue[] }}
  */
-function validateBusinessContextAdsReadiness(businessContext) {
+function validateBusinessContextAdsReadinessSync(businessContext) {
   const issues = [];
   const bc = businessContext ?? {};
 
@@ -252,6 +258,14 @@ function validateBusinessContextAdsReadiness(businessContext) {
         'Add at least one service area before Google Ads setup can start.'
       )
     );
+  } else if (isPlaceholderServiceArea(rawPrimaryServiceArea)) {
+    issues.push(
+      issue(
+        ADS_READINESS_CODES.PLACEHOLDER_SERVICE_AREA,
+        'serviceAreas',
+        'Confirm a real city or region for your service area before Google Ads setup can start.'
+      )
+    );
   }
 
   if (!goalsPrimaryIsPresent(bc.goals)) {
@@ -276,7 +290,7 @@ function validateBusinessContextAdsReadiness(businessContext) {
     return { ok: false, issues };
   }
 
-  const primaryServiceArea = normalizeServiceAreaForGeoSuggest(rawPrimaryServiceArea);
+  const primaryServiceArea = rawPrimaryServiceArea;
   const resolvedPrimaryGoal = resolvePrimaryGoal(bc.goals);
   const adsBusinessName = normalizeBusinessNameForAds(businessName);
   if (!adsBusinessName) {
@@ -311,6 +325,83 @@ function validateBusinessContextAdsReadiness(businessContext) {
   };
 }
 
+const TERMINAL_SCRAPE_STATUSES = Object.freeze(
+  SCRAPE_RUN_STATUS.filter((status) => status !== 'QUEUED' && status !== 'RUNNING')
+);
+
+/**
+ * Read headless scrape policy from the latest terminal ScrapeRun for this business.
+ *
+ * @param {import('mongoose').Types.ObjectId | string | null | undefined} businessId
+ * @returns {Promise<'disabled_ssrf' | null>}
+ */
+async function resolveHeadlessStatusFromLatestScrape(businessId) {
+  if (!businessId) return null;
+
+  const ScrapeRun = mongoose.model('ScrapeRun');
+  let run;
+  try {
+    run = await ScrapeRun.findOne({
+      businessId,
+      status: { $in: TERMINAL_SCRAPE_STATUSES },
+    })
+      .sort({ updatedAt: -1 })
+      .select('resultSuggested')
+      .lean();
+  } catch {
+    return null;
+  }
+
+  const suggested = run?.resultSuggested;
+  if (!suggested || typeof suggested !== 'object') return null;
+
+  if (suggested.headlessStatus === 'disabled_ssrf') return 'disabled_ssrf';
+  if (
+    Array.isArray(suggested.warnings) &&
+    suggested.warnings.includes('headless_disabled_ssrf')
+  ) {
+    return 'disabled_ssrf';
+  }
+
+  return null;
+}
+
+/**
+ * @param {{ ok: true, normalized: AdsReadinessNormalized } | { ok: false, issues: AdsReadinessIssue[] }} result
+ * @param {'disabled_ssrf' | null} headlessStatus
+ */
+function attachScrapeCompletenessWarnings(result, headlessStatus) {
+  if (!result.ok || headlessStatus !== 'disabled_ssrf') return result;
+
+  const warnings = [
+    issue(
+      ADS_READINESS_CODES.HEADLESS_DISABLED_SSRF,
+      'scrape',
+      'Onboarding used static scraping only; headless browsing was disabled for security. Review business details manually if the site relies on heavy JavaScript.'
+    ),
+  ];
+
+  return { ...result, warnings };
+}
+
+/**
+ * Validates confirmed BusinessContext inputs required for Google Ads campaign creation.
+ * When scrape used static-only (headless disabled for SSRF), attaches a non-blocking warning.
+ *
+ * @param {object | null | undefined} businessContext — lean BusinessContext
+ * @returns {Promise<
+ *   { ok: true, normalized: AdsReadinessNormalized, warnings?: AdsReadinessWarning[] }
+ *   | { ok: false, issues: AdsReadinessIssue[] }
+ * >}
+ */
+async function validateBusinessContextAdsReadiness(businessContext) {
+  const result = validateBusinessContextAdsReadinessSync(businessContext);
+  if (!result.ok) return result;
+
+  const headlessStatus = await resolveHeadlessStatusFromLatestScrape(businessContext?.businessId);
+  return attachScrapeCompletenessWarnings(result, headlessStatus);
+}
+
 /**
  * @param {{ ok: false, issues: AdsReadinessIssue[] }} result
  */
@@ -324,8 +415,11 @@ function formatAdsReadinessSummary(result) {
 module.exports = {
   buildMinimalAdsReadyBusinessContext,
   validateBusinessContextAdsReadiness,
+  validateBusinessContextAdsReadinessSync,
+  resolveHeadlessStatusFromLatestScrape,
+  attachScrapeCompletenessWarnings,
   formatAdsReadinessSummary,
-  normalizeServiceAreaForGeoSuggest,
+  isPlaceholderServiceArea,
   normalizeBusinessNameForAds,
   buildAdCopySeeds,
   buildKeywordSeeds,

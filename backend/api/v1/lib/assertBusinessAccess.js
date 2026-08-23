@@ -1,22 +1,25 @@
 'use strict';
 
 const mongoose = require('mongoose');
-const BusinessContext = mongoose.model('BusinessContext');
+const {
+  assertBusinessMembershipOrOwnership,
+  MembershipCheckError,
+} = require('../../../lib/auth/membershipCheck');
 
 /**
  * @param {string} userId
  * @param {string} businessIdRaw
- * @returns {Promise<{ businessId: import('mongoose').Types.ObjectId } | null>}
+ * @returns {Promise<{ businessId: import('mongoose').Types.ObjectId, orgId?: import('mongoose').Types.ObjectId | null } | null>}
  */
 async function assertBusinessAccess(userId, businessIdRaw) {
-  if (!businessIdRaw || !mongoose.Types.ObjectId.isValid(businessIdRaw)) {
-    return null;
+  try {
+    return await assertBusinessMembershipOrOwnership(userId, businessIdRaw);
+  } catch (err) {
+    if (err instanceof MembershipCheckError) {
+      return null;
+    }
+    throw err;
   }
-  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
-  const userObjectId = new mongoose.Types.ObjectId(userId);
-  const exists = await BusinessContext.exists({ businessId, userId: userObjectId });
-  if (!exists) return null;
-  return { businessId };
 }
 
-module.exports = { assertBusinessAccess };
+module.exports = { assertBusinessAccess, MembershipCheckError };

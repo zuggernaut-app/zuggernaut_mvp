@@ -3,6 +3,7 @@
 const mongoose = require('mongoose');
 const { SETUP_STEP_NAMES } = require('../../constants/setupWorkflow');
 const { adsConversionCatalogIdempotencyKey } = require('../../constants/idempotency');
+const { conversionMeasurementFromAction } = require('../../lib/googleAdsConversionTagSnippets');
 const { fetchGoogleAdsConversionCatalog } = require('../integrations/googleAdsConversionCatalogClient');
 const { requireSetupReadyConnection } = require('./setupReadyConnectionService');
 const ProviderSnapshot = mongoose.model('ProviderSnapshot');
@@ -82,45 +83,74 @@ function sortForSelection(actions) {
 }
 
 /**
+ * GTM awct tags require tag-snippet-derived conversionId + conversionLabel.
+ *
+ * @param {object} action
+ */
+function hasGtmBindableMeasurement(action) {
+  return Boolean(conversionMeasurementFromAction(action));
+}
+
+/**
+ * @param {object[]} actions
+ */
+function selectBindableConversionActions(actions) {
+  return sortForSelection(actions.filter((action) => hasGtmBindableMeasurement(action)));
+}
+
+/**
+ * @param {'call' | 'form'} logicalCategory
+ * @param {object[]} allInCategory
+ * @param {object[]} bindableInCategory
+ * @param {string} primaryGoalLabel
+ */
+function assertBindableConversionActionSelected(
+  logicalCategory,
+  allInCategory,
+  bindableInCategory,
+  primaryGoalLabel
+) {
+  if (bindableInCategory[0]) return bindableInCategory[0];
+
+  const slotLabel = logicalCategory === 'call' ? 'call' : 'form';
+  const missingCode =
+    logicalCategory === 'call' ? 'ADS_CATALOG_MISSING_CALL' : 'ADS_CATALOG_MISSING_FORM';
+
+  if (allInCategory.length === 0) {
+    throw new AdsCatalogPreconditionError(
+      `No ${slotLabel} conversion action available for primary goal "${primaryGoalLabel}".`,
+      missingCode
+    );
+  }
+
+  const example = allInCategory[0];
+  throw new AdsCatalogPreconditionError(
+    `Selected ${slotLabel} conversion action "${example.name ?? example.externalId}" (${example.externalId}) lacks GTM-bindable measurement (conversionId/conversionLabel from tag snippets). Choose a different conversion action in Google Ads or create a webpage conversion with tag snippets.`,
+    'ADS_CONVERSION_MEASUREMENT_MISSING'
+  );
+}
+
+/**
  * @param {object[]} catalog — normalized actions with logicalCategory
  * @param {'calls' | 'forms' | 'both'} primaryGoal
  */
 function selectConversionActions(catalog, primaryGoal) {
-  const calls = sortForSelection(catalog.filter((a) => a.logicalCategory === 'call'));
-  const forms = sortForSelection(catalog.filter((a) => a.logicalCategory === 'form'));
+  const allCalls = catalog.filter((a) => a.logicalCategory === 'call');
+  const allForms = catalog.filter((a) => a.logicalCategory === 'form');
+  const calls = selectBindableConversionActions(allCalls);
+  const forms = selectBindableConversionActions(allForms);
 
   const selected = [];
 
   if (primaryGoal === 'calls') {
-    if (!calls[0]) {
-      throw new AdsCatalogPreconditionError(
-        'No call conversion action available for primary goal "calls".',
-        'ADS_CATALOG_MISSING_CALL'
-      );
-    }
-    selected.push(calls[0]);
+    selected.push(assertBindableConversionActionSelected('call', allCalls, calls, 'calls'));
   } else if (primaryGoal === 'forms') {
-    if (!forms[0]) {
-      throw new AdsCatalogPreconditionError(
-        'No form conversion action available for primary goal "forms".',
-        'ADS_CATALOG_MISSING_FORM'
-      );
-    }
-    selected.push(forms[0]);
+    selected.push(assertBindableConversionActionSelected('form', allForms, forms, 'forms'));
   } else {
-    if (!calls[0]) {
-      throw new AdsCatalogPreconditionError(
-        'No call conversion action available for primary goal "both".',
-        'ADS_CATALOG_MISSING_CALL'
-      );
-    }
-    if (!forms[0]) {
-      throw new AdsCatalogPreconditionError(
-        'No form conversion action available for primary goal "both".',
-        'ADS_CATALOG_MISSING_FORM'
-      );
-    }
-    selected.push(calls[0], forms[0]);
+    selected.push(
+      assertBindableConversionActionSelected('call', allCalls, calls, 'both'),
+      assertBindableConversionActionSelected('form', allForms, forms, 'both')
+    );
   }
 
   return selected;
@@ -178,6 +208,30 @@ async function fetchAndPersistConversionCatalog(ctx) {
     ...action,
     logicalCategory: classifyConversionAction(action),
   }));
+
+  for (const action of catalog) {
+    if (action.logicalCategory !== 'call' && action.logicalCategory !== 'form') {
+      continue;
+    }
+    if (hasGtmBindableMeasurement(action)) {
+      continue;
+    }
+    logger.warn(
+      {
+        operation: 'conversion_measurement_eligibility',
+        setupRunId: setupRunId.toString(),
+        businessId: businessId.toString(),
+        externalId: action.externalId,
+        logicalCategory: action.logicalCategory,
+        type: action.type ?? null,
+        category: action.category ?? null,
+        hasConversionId: Boolean(action.conversionId),
+        hasConversionLabel: Boolean(action.conversionLabel),
+        tagSnippets: action.tagSnippets ?? null,
+      },
+      'Ads conversion action lacks GTM-bindable measurement'
+    );
+  }
 
   try {
     const {
@@ -261,6 +315,9 @@ async function fetchAndPersistConversionCatalog(ctx) {
             type: row.type,
             selectedBy: 'deterministic_rank_and_sort',
             primaryGoal,
+            ...(row.conversionId ? { conversionId: row.conversionId } : {}),
+            ...(row.conversionLabel ? { conversionLabel: row.conversionLabel } : {}),
+            ...(row.tagSnippets ? { tagSnippets: row.tagSnippets } : {}),
           },
         },
       },

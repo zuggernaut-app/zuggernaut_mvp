@@ -17,6 +17,23 @@ const { createLogger } = require('../lib/observability/logger');
 describe('adsConversionCatalogService', () => {
   const logger = createLogger({ level: 'silent' });
 
+  function withMeasurement(row, label = 'label_mock') {
+    const conversionId = row.conversionId ?? 'AW-1234567890';
+    const conversionLabel = row.conversionLabel ?? label;
+    return {
+      ...row,
+      conversionId,
+      conversionLabel,
+      tagSnippets: row.tagSnippets ?? [
+        {
+          type: 'WEBPAGE',
+          pageFormat: 'HTML',
+          eventSnippet: `gtag('event', 'conversion', {'send_to': '${conversionId}/${conversionLabel}'});`,
+        },
+      ],
+    };
+  }
+
   async function seedRun(email, goals = { primary: 'both' }) {
     const User = mongoose.model('User');
     const BusinessContext = mongoose.model('BusinessContext');
@@ -70,8 +87,8 @@ describe('adsConversionCatalogService', () => {
 
   it('selects only call conversion for calls goal', () => {
     const catalog = [
-      { externalId: '1', resourceName: 'a/1', logicalCategory: 'call', status: 'ENABLED' },
-      { externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' },
+      withMeasurement({ externalId: '1', resourceName: 'a/1', logicalCategory: 'call', status: 'ENABLED' }, 'call_lbl'),
+      withMeasurement({ externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' }, 'form_lbl'),
     ];
     const selected = selectConversionActions(catalog, 'calls');
     expect(selected).toHaveLength(1);
@@ -80,8 +97,8 @@ describe('adsConversionCatalogService', () => {
 
   it('selects only form conversion for forms goal', () => {
     const catalog = [
-      { externalId: '1', resourceName: 'a/1', logicalCategory: 'call', status: 'ENABLED' },
-      { externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' },
+      withMeasurement({ externalId: '1', resourceName: 'a/1', logicalCategory: 'call', status: 'ENABLED' }, 'call_lbl'),
+      withMeasurement({ externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' }, 'form_lbl'),
     ];
     const selected = selectConversionActions(catalog, 'forms');
     expect(selected).toHaveLength(1);
@@ -90,16 +107,72 @@ describe('adsConversionCatalogService', () => {
 
   it('selects call and form for both goal', () => {
     const catalog = [
-      { externalId: '1', resourceName: 'a/1', logicalCategory: 'call', status: 'ENABLED' },
-      { externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' },
+      withMeasurement({ externalId: '1', resourceName: 'a/1', logicalCategory: 'call', status: 'ENABLED' }, 'call_lbl'),
+      withMeasurement({ externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' }, 'form_lbl'),
     ];
     const selected = selectConversionActions(catalog, 'both');
     expect(selected.map((s) => s.logicalCategory).sort()).toEqual(['call', 'form']);
   });
 
   it('fails when required category is missing', () => {
-    const catalog = [{ externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' }];
+    const catalog = [
+      withMeasurement({ externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' }, 'form_lbl'),
+    ];
     expect(() => selectConversionActions(catalog, 'calls')).toThrow(AdsCatalogPreconditionError);
+  });
+
+  it('fails with ADS_CONVERSION_MEASUREMENT_MISSING when only unbindable actions exist', () => {
+    const catalog = [
+      {
+        externalId: '7643591645',
+        resourceName: 'a/7643591645',
+        logicalCategory: 'call',
+        status: 'ENABLED',
+        category: 'PHONE_CALL_LEAD',
+        type: 'AD_CALL',
+        name: 'Calls from ads',
+      },
+      withMeasurement(
+        { externalId: '2', resourceName: 'a/2', logicalCategory: 'form', status: 'ENABLED' },
+        'form_lbl'
+      ),
+    ];
+
+    let err;
+    try {
+      selectConversionActions(catalog, 'both');
+    } catch (caught) {
+      err = caught;
+    }
+    expect(err).toBeInstanceOf(AdsCatalogPreconditionError);
+    expect(err.code).toBe('ADS_CONVERSION_MEASUREMENT_MISSING');
+  });
+
+  it('prefers bindable call action over higher-ranked unbindable call', () => {
+    const catalog = [
+      {
+        externalId: 'unbindable',
+        resourceName: 'a/unbindable',
+        logicalCategory: 'call',
+        status: 'ENABLED',
+        category: 'PHONE_CALL_LEAD',
+        type: 'AD_CALL',
+        includeInConversionsMetric: true,
+      },
+      withMeasurement(
+        {
+          externalId: 'bindable',
+          resourceName: 'a/bindable',
+          logicalCategory: 'call',
+          status: 'ENABLED',
+          includeInConversionsMetric: false,
+        },
+        'call_lbl'
+      ),
+    ];
+
+    const selected = selectConversionActions(catalog, 'calls');
+    expect(selected[0].externalId).toBe('bindable');
   });
 
   it('maps leads goal to forms selection', () => {
@@ -204,14 +277,14 @@ describe('adsConversionCatalogService', () => {
       {
         $set: {
           'providerIdentifiers.mockConversionActions': [
-            {
+            withMeasurement({
               id: '9001',
               name: 'Lead form',
               category: 'SUBMIT_LEAD_FORM',
               type: 'WEBPAGE',
               status: 'ENABLED',
               includeInConversionsMetric: true,
-            },
+            }, 'form_lbl'),
           ],
         },
       }
@@ -259,14 +332,14 @@ describe('adsConversionCatalogService', () => {
       {
         $set: {
           'providerIdentifiers.mockConversionActions': [
-            {
+            withMeasurement({
               id: '9002',
               name: 'Lead form',
               category: 'SUBMIT_LEAD_FORM',
               type: 'WEBPAGE',
               status: 'ENABLED',
               includeInConversionsMetric: true,
-            },
+            }, 'form_lbl'),
           ],
         },
       }
@@ -317,7 +390,7 @@ describe('adsConversionCatalogService', () => {
         businessId: bc.businessId,
         logger,
       })
-    ).rejects.toThrow(/No form conversion action available/);
+    ).rejects.toMatchObject({ code: 'ADS_CATALOG_MISSING_FORM' });
   });
 });
 

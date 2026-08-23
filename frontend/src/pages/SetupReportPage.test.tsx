@@ -12,6 +12,10 @@ vi.mock('../hooks/useSetupRunReport', () => ({
   useSetupRunReport: (setupRunId: string | null) => mockUseSetupRunReport(setupRunId),
 }))
 
+vi.mock('../components/setup/EnableCampaignCard', () => ({
+  EnableCampaignCard: () => <div data-testid="enable-campaign-card">Campaign management</div>,
+}))
+
 function fullReport(overrides: Partial<SetupRunReportResponse['report']> = {}): SetupRunReportResponse {
   return {
     report: {
@@ -183,6 +187,22 @@ describe('SetupReportPage', () => {
     expect(screen.getByText(/customers\/123\/campaigns\/zug-campaign/)).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Artifacts created/i })).toBeInTheDocument()
     expect(screen.getByText(/Ads campaigns/)).toBeInTheDocument()
+    expect(screen.getByTestId('enable-campaign-card')).toBeInTheDocument()
+  })
+
+  it('shows enable campaign card when setup succeeded with campaign created', async () => {
+    seedSession({ userId: TEST_IDS.user, setupRunId: TEST_IDS.setupRun })
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport().report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    expect(await screen.findByTestId('enable-campaign-card')).toBeInTheDocument()
   })
 
   it('shows Ads campaign failure details when campaign creation failed', async () => {
@@ -291,7 +311,7 @@ describe('SetupReportPage', () => {
           headline: 'GTM snippet must be installed before Ads campaign creation can continue.',
           recovery: {
             title: 'Install the Google Tag Manager snippet',
-            steps: ['Add the GTM container snippet to the head of every page.'],
+            steps: [{ text: 'Add the GTM container snippet to the head of every page.' }],
           },
         },
         structuralVerification: {
@@ -371,7 +391,7 @@ describe('SetupReportPage', () => {
             priority: 'recommended',
             title: 'Set up Google Tag Manager tracking',
             message:
-              'Your Google Ads campaign is live. Connect Google Tag Manager next so Zuggernaut can measure website conversions accurately.',
+              'Your Google Ads campaign was created paused and is ready to enable in Google Ads. Connect Google Tag Manager next so Zuggernaut can measure website conversions accurately.',
             steps: [
               'Open the setup page and connect Google Tag Manager.',
               'Select or provision a GTM container and workspace.',
@@ -459,7 +479,7 @@ describe('SetupReportPage', () => {
           headline: 'Setup paused until Google integrations are connected.',
           recovery: {
             title: 'Conversion actions need manual setup',
-            steps: ['Create the required conversion actions in Google Ads.'],
+            steps: [{ text: 'Create the required conversion actions in Google Ads.' }],
           },
         },
         conversionActions: {
@@ -502,7 +522,7 @@ describe('SetupReportPage', () => {
           headline: 'Provisioning approval is required before setup can continue.',
           recovery: {
             title: 'Approve Google resource provisioning',
-            steps: ['Approve provisioning, then start a new setup run.'],
+            steps: [{ text: 'Approve provisioning, then start a new setup run.' }],
           },
         },
         supportState: {

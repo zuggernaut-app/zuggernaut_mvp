@@ -8,6 +8,7 @@ const {
   CONNECTION_REASON,
   safeProviderIdentifiers,
 } = require('./integrationConnectionService');
+const { resolveSetupUserErrorMessage } = require('../../lib/setupUserErrorMessages');
 const { provisionGtmResources, GtmProvisioningError } = require('./gtmProvisioningService');
 const {
   provisionGoogleAdsCustomer,
@@ -54,7 +55,12 @@ function serializeProvisioningRequest(doc) {
     approvedAt: doc.approvedAt ?? null,
     createdProviderIdentifiers: safeProviderIdentifiers(doc.createdProviderIdentifiers),
     errorCode: doc.errorCode ?? null,
-    errorMessage: doc.errorMessage ?? null,
+    errorMessage: doc.errorCode
+      ? resolveSetupUserErrorMessage({
+          errorCode: doc.errorCode,
+          fallbackMessage: doc.errorMessage ?? null,
+        })
+      : doc.errorMessage ?? null,
     setupRunId: doc.setupRunId ? doc.setupRunId.toString() : null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -223,7 +229,7 @@ async function assertSetupRunForBusiness(setupRunId, businessId) {
  * @param {import('mongoose').Types.ObjectId | string} input.approvedByUserId
  */
 async function approveProvisioningRequest(input) {
-  const { requestId, businessId, approvedByUserId } = input;
+  const { requestId, businessId, approvedByUserId, provisioningIntent } = input;
   const request = await loadOwnedProvisioningRequest(requestId, businessId);
 
   if (request.status !== 'pending_approval') {
@@ -231,6 +237,11 @@ async function approveProvisioningRequest(input) {
       `Provisioning request cannot be approved from status ${request.status}.`,
       'PROVISIONING_INVALID_STATUS'
     );
+  }
+
+  if (request.provider === 'google_ads' && provisioningIntent === 'mcc_create') {
+    const { saveGoogleAdsProvisioningIntent } = require('../integrations/googleAdsResourceSelectionService');
+    await saveGoogleAdsProvisioningIntent(businessId);
   }
 
   const approvedAt = new Date();

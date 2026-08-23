@@ -14,10 +14,14 @@ const {
   normalizeCustomerId,
 } = require('./googleAdsApiConfig');
 
+const {
+  extractConversionMeasurementFromTagSnippets,
+} = require('../../lib/googleAdsConversionTagSnippets');
+
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
 const CONVERSION_ACTION_QUERY =
-  'SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric FROM conversion_action WHERE conversion_action.status != \'REMOVED\'';
+  "SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric, conversion_action.tag_snippets FROM conversion_action WHERE conversion_action.status != 'REMOVED'";
 
 /**
  * @param {object} row — Google Ads conversionAction resource or mock row
@@ -43,6 +47,13 @@ function normalizeConversionAction(row) {
 
   if (!externalId || !resourceName) return null;
 
+  const tagSnippets = Array.isArray(row.tagSnippets)
+    ? row.tagSnippets
+    : Array.isArray(row.tag_snippets)
+      ? row.tag_snippets
+      : null;
+  const measurement = extractConversionMeasurementFromTagSnippets(tagSnippets);
+
   return {
     externalId,
     resourceName,
@@ -51,6 +62,13 @@ function normalizeConversionAction(row) {
     status: row.status ?? null,
     type: row.type ?? null,
     includeInConversionsMetric: row.includeInConversionsMetric === true,
+    ...(tagSnippets ? { tagSnippets } : {}),
+    ...(measurement
+      ? {
+          conversionId: measurement.conversionId,
+          conversionLabel: measurement.conversionLabel,
+        }
+      : {}),
   };
 }
 
@@ -68,6 +86,7 @@ function normalizeSearchResultRow(resultRow) {
     status: ca.status,
     type: ca.type,
     includeInConversionsMetric: ca.includeInConversionsMetric,
+    tagSnippets: ca.tagSnippets,
   });
 }
 
@@ -116,6 +135,16 @@ async function fetchGoogleAdsConversionCatalogMock(businessId, customerIdOverrid
         status: 'ENABLED',
         type: 'AD_CALL',
         includeInConversionsMetric: true,
+        conversionId: 'AW-1234567890',
+        conversionLabel: 'call_label_mock',
+        tagSnippets: [
+          {
+            type: 'WEBPAGE',
+            pageFormat: 'HTML',
+            eventSnippet:
+              "gtag('event', 'conversion', {'send_to': 'AW-1234567890/call_label_mock'});",
+          },
+        ],
       },
       {
         externalId: '1002',
@@ -125,6 +154,16 @@ async function fetchGoogleAdsConversionCatalogMock(businessId, customerIdOverrid
         status: 'ENABLED',
         type: 'WEBPAGE',
         includeInConversionsMetric: true,
+        conversionId: 'AW-1234567890',
+        conversionLabel: 'form_label_mock',
+        tagSnippets: [
+          {
+            type: 'WEBPAGE',
+            pageFormat: 'HTML',
+            eventSnippet:
+              "gtag('event', 'conversion', {'send_to': 'AW-1234567890/form_label_mock'});",
+          },
+        ],
       },
     ],
   };

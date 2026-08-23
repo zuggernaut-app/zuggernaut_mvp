@@ -14,6 +14,9 @@ const { encryptToken } = require('../../lib/crypto/tokenEncryption');
 const { PROVIDERS } = require('../../constants/enums');
 const { discoverProviderConnection } = require('./providerDiscoveryService');
 const { mergeRediscoveryWithSavedSelection } = require('./providerDiscoveryResult');
+const {
+  assertProviderResourceExclusive,
+} = require('../../lib/providerResourceExclusivity');
 const { getFreshGoogleAccessToken } = require('./googleTokenService');
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
@@ -207,29 +210,65 @@ async function completeGoogleOAuthCallback(input) {
 
   const cfg = getGoogleProviderOAuthConfig(provider);
 
-  await IntegrationConnection.findOneAndUpdate(
-    { businessId, provider },
-    {
-      $set: {
-        businessId,
-        provider,
-        connectionHealth,
-        scopes: grantedScopes,
-        tokenExpiryAt,
-        accessTokenEnc,
-        ...(refreshTokenEnc ? { refreshTokenEnc } : {}),
-        providerIdentifiers,
+  const prior = await IntegrationConnection.findOne({ businessId, provider })
+    .select('providerIdentifiers')
+    .lean();
+
+  const gbpLocationLocked =
+    provider === 'gbp' && Boolean(prior?.providerIdentifiers?.locationName);
+
+  if (
+    provider === 'gbp' &&
+    !gbpLocationLocked &&
+    providerIdentifiers?.locationName
+  ) {
+    await assertProviderResourceExclusive(
+      businessId,
+      'gbp',
+      'locationName',
+      providerIdentifiers.locationName
+    );
+  }
+
+  const tokenFields = {
+    businessId,
+    provider,
+    connectionHealth,
+    scopes: grantedScopes,
+    tokenExpiryAt,
+    accessTokenEnc,
+    ...(refreshTokenEnc ? { refreshTokenEnc } : {}),
+  };
+
+  if (gbpLocationLocked) {
+    await IntegrationConnection.findOneAndUpdate(
+      { businessId, provider },
+      { $set: tokenFields },
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+  } else {
+    await IntegrationConnection.findOneAndUpdate(
+      { businessId, provider },
+      {
+        $set: {
+          ...tokenFields,
+          providerIdentifiers,
+        },
       },
-    },
-    { upsert: true, setDefaultsOnInsert: true }
-  );
+      { upsert: true, setDefaultsOnInsert: true }
+    );
+  }
+
+  const responseIdentifiers = gbpLocationLocked
+    ? prior?.providerIdentifiers ?? providerIdentifiers
+    : providerIdentifiers;
 
   return {
     provider,
     displayName: cfg?.displayName ?? provider,
     scopes: grantedScopes,
     tokenExpiryAt,
-    providerIdentifiers,
+    providerIdentifiers: responseIdentifiers,
     connectionHealth,
     discoveryReason,
   };

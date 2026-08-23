@@ -9,8 +9,12 @@
 
 const crypto = require('crypto');
 const { withProviderRateLimit } = require('../../lib/providerRateLimit');
+const { createLogger } = require('../../lib/observability/logger');
 const { resolveGoogleAdsCustomerAuth } = require('./googleAdsCustomerAuth');
 const { mockResourceName } = require('./googleAdsCampaignClient');
+const {
+  extractConversionMeasurementFromTagSnippets,
+} = require('../../lib/googleAdsConversionTagSnippets');
 const {
   GoogleAdsApiError,
   buildGoogleAdsApiUrl,
@@ -21,6 +25,8 @@ const {
   isConversionActionCreationEnabled,
   normalizeCustomerId,
 } = require('./googleAdsApiConfig');
+
+const conversionActionClientLogger = createLogger({ name: 'googleAdsConversionActionClient' });
 
 /**
  * @param {string} idempotencyKey
@@ -36,6 +42,16 @@ function mockExternalIdFromIdempotencyKey(idempotencyKey) {
  */
 function extractMutateResourceName(res, customerId) {
   if (res.status < 200 || res.status >= 300) {
+    // Temporary instrumentation: do not use key `responseBody` — pino redacts it (T1-10).
+    conversionActionClientLogger.warn(
+      {
+        action: 'conversionActions:mutate',
+        customerId,
+        status: res.status,
+        googleAdsErrorBody: res.data,
+      },
+      'Google Ads conversionActions:mutate failed'
+    );
     throw createGoogleAdsApiErrorFromResponse(
       res.status,
       res.data,
@@ -125,15 +141,29 @@ function buildConversionActionCreatePayload(config) {
  * @returns {Promise<{ resourceName: string, externalId: string, source: string }>}
  */
 async function createConversionActionMock(ctx) {
-  const { customerId, idempotencyKey } = ctx;
+  const { customerId, idempotencyKey, conversionActionConfig } = ctx;
   const normalizedCustomerId = normalizeCustomerId(customerId) ?? 'mockcustomerid';
   const externalId = mockExternalIdFromIdempotencyKey(idempotencyKey);
   const logicalKey = crypto.createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 16);
+  const conversionLabel = `mock_label_${logicalKey.slice(0, 8)}`;
+  const conversionId = `AW-${normalizedCustomerId}`;
+  const tagSnippets = [
+    {
+      type: 'WEBPAGE',
+      pageFormat: 'HTML',
+      eventSnippet: `gtag('event', 'conversion', {'send_to': '${conversionId}/${conversionLabel}'});`,
+    },
+  ];
 
   return {
     resourceName: mockResourceName(normalizedCustomerId, 'conversionActions', logicalKey),
     externalId,
     source: 'google_ads_api_mock',
+    idempotencyKey,
+    conversionId,
+    conversionLabel,
+    tagSnippets,
+    name: conversionActionConfig?.name ?? null,
   };
 }
 
@@ -198,9 +228,24 @@ async function createConversionAction(ctx) {
   const resourceName = extractMutateResourceName(res, normalizedCustomerId);
   const externalId = externalIdFromResourceName(resourceName);
 
-  void idempotencyKey;
+  const tagSnippets = Array.isArray(res.data?.results?.[0]?.conversionAction?.tagSnippets)
+    ? res.data.results[0].conversionAction.tagSnippets
+    : null;
+  const measurement = extractConversionMeasurementFromTagSnippets(tagSnippets);
 
-  return { resourceName, externalId, source: 'google_ads_api' };
+  return {
+    resourceName,
+    externalId,
+    source: 'google_ads_api',
+    idempotencyKey,
+    ...(measurement
+      ? {
+          conversionId: measurement.conversionId,
+          conversionLabel: measurement.conversionLabel,
+          tagSnippets: measurement.tagSnippets,
+        }
+      : {}),
+  };
 }
 
 module.exports = {

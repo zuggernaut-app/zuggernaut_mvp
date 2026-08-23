@@ -2,8 +2,14 @@
 
 const mongoose = require('mongoose');
 const { Context } = require('@temporalio/activity');
+const { ApplicationFailure } = require('@temporalio/activity');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
 const SetupRun = mongoose.model('SetupRun');
+const {
+  syncBusinessSetupLockFromStatus,
+  assertCurrentSetupRun,
+  SetupRunSupersededError,
+} = require('../../services/setup/businessSetupStateService');
 
 function activityAttempt() {
   try {
@@ -126,7 +132,29 @@ async function markStepSkipped({ setupRunId, businessId, stepName, provider, det
 
 async function patchSetupRun(setupRunId, patch, logger) {
   await SetupRun.updateOne({ _id: setupRunId }, { $set: patch });
+  if (typeof patch.status === 'string') {
+    const run = await SetupRun.findById(setupRunId).select('businessId').lean();
+    if (run?.businessId) {
+      await syncBusinessSetupLockFromStatus(run.businessId, setupRunId, patch.status);
+    }
+  }
   logger.info({ setupRunId: setupRunId.toString(), keys: Object.keys(patch) }, 'setup run patched');
+}
+
+/**
+ * Re-verify this activity is still the active setup run before provider mutation (T0-1).
+ * @param {import('mongoose').Types.ObjectId} setupRunId
+ * @param {import('mongoose').Types.ObjectId} businessId
+ */
+async function assertCurrentSetupRunOrFail(setupRunId, businessId) {
+  try {
+    await assertCurrentSetupRun(businessId, setupRunId);
+  } catch (err) {
+    if (err instanceof SetupRunSupersededError) {
+      throw ApplicationFailure.nonRetryable(err.message, err.code);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -155,4 +183,5 @@ module.exports = {
   markStepSkipped,
   patchSetupRun,
   mergeSetupRunMeta,
+  assertCurrentSetupRunOrFail,
 };

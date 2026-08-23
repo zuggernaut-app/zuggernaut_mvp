@@ -7,6 +7,7 @@ const { checkRobotsAllowedForUrl } = require('../services/scraper/robots');
 const { runStaticScrape } = require('../services/scraper/staticScraper');
 const { runHeadlessScrape } = require('../services/scraper/headlessScraper');
 const { normalizeScrapeResult } = require('../services/scraper/normalize');
+const { assertUrlAllowed, SsrfError } = require('../lib/ssrf');
 
 const logger = createLogger({ name: 'scrapeActivities' });
 
@@ -24,6 +25,13 @@ async function checkRobotsActivity(input) {
   const websiteUrl = typeof input?.websiteUrl === 'string' ? input.websiteUrl.trim() : '';
   if (!websiteUrl) {
     return { allowed: false, reason: 'missing_url' };
+  }
+  try {
+    await assertUrlAllowed(websiteUrl);
+  } catch (err) {
+    const reason = err instanceof SsrfError ? err.code || 'ssrf_blocked' : 'ssrf_blocked';
+    logger.info({ websiteUrl, allowed: false, reason }, 'robots_check');
+    return { allowed: false, reason };
   }
   const out = await checkRobotsAllowedForUrl(websiteUrl);
   logger.info({ websiteUrl, ...out }, 'robots_check');
@@ -45,9 +53,13 @@ async function scrapeStaticActivity(input) {
     throw ApplicationFailure.nonRetryable('missing websiteUrl', 'ScrapeValidation');
   }
   try {
+    await assertUrlAllowed(websiteUrl);
     const raw = await runStaticScrape(websiteUrl);
     return stripForTemporal(raw);
   } catch (err) {
+    if (err instanceof SsrfError) {
+      throw ApplicationFailure.nonRetryable(err.code || 'ssrf_blocked', 'SsrfBlocked');
+    }
     const msg = typeof err?.message === 'string' ? err.message : 'static_scrape_failed';
     logger.warn({ err: msg, websiteUrl }, 'scrape_static_failed');
     throw ApplicationFailure.retryable(msg, 'ScrapeStaticRetryable');
@@ -63,9 +75,13 @@ async function scrapeHeadlessActivity(input) {
     throw ApplicationFailure.nonRetryable('missing websiteUrl', 'ScrapeValidation');
   }
   try {
+    await assertUrlAllowed(websiteUrl);
     const raw = await runHeadlessScrape(websiteUrl);
     return stripForTemporal(raw);
   } catch (err) {
+    if (err instanceof SsrfError) {
+      throw ApplicationFailure.nonRetryable(err.code || 'ssrf_blocked', 'SsrfBlocked');
+    }
     const msg = typeof err?.message === 'string' ? err.message : 'headless_scrape_failed';
     logger.warn({ err: msg, websiteUrl }, 'scrape_headless_failed');
     throw ApplicationFailure.retryable(msg, 'ScrapeHeadlessRetryable');

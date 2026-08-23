@@ -21,8 +21,10 @@ jest.mock('../services/integrations/googleAdsAccountClient', () => {
 });
 
 jest.mock('../services/integrations/googleTokenService', () => ({
-  getFreshGoogleAccessToken: jest.fn().mockResolvedValue('test-ads-token'),
+  getMccGoogleAdsAccessToken: jest.fn().mockResolvedValue('test-mcc-token'),
 }));
+
+const { getMccGoogleAdsAccessToken } = require('../services/integrations/googleTokenService');
 
 describe('adsProvisioningService', () => {
   const logger = createLogger({ level: 'silent' });
@@ -101,10 +103,77 @@ describe('adsProvisioningService', () => {
     ).rejects.toMatchObject({ code: 'ADS_PROVISIONING_APPROVAL_REQUIRED' });
   });
 
-  it('selects an existing accessible customer without MCC create', async () => {
+  it('requires explicit customer selection when accessible customers exist', async () => {
     const { bc, run, request } = await seedApprovedProvisioning({
       providerIdentifiers: {
         accessibleCustomerIds: ['1234567890', '9876543210'],
+        discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+      },
+    });
+
+    await expect(
+      provisionGoogleAdsCustomer({
+        businessId: bc.businessId,
+        setupRunId: run._id,
+        provisioningRequestId: request._id,
+        logger,
+      })
+    ).rejects.toMatchObject({ code: 'ADS_SELECTION_REQUIRED' });
+
+    expect(createCustomerClient).not.toHaveBeenCalled();
+  });
+
+  it('creates via MCC when provisioningIntent is mcc_create despite accessible customers', async () => {
+    const { bc, run, request } = await seedApprovedProvisioning({
+      providerIdentifiers: {
+        accessibleCustomerIds: ['1234567890', '9876543210'],
+        provisioningIntent: 'mcc_create',
+        discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+      },
+    });
+
+    const result = await provisionGoogleAdsCustomer({
+      businessId: bc.businessId,
+      setupRunId: run._id,
+      provisioningRequestId: request._id,
+      logger,
+    });
+
+    expect(createCustomerClient).toHaveBeenCalledTimes(1);
+    expect(getMccGoogleAdsAccessToken).toHaveBeenCalledTimes(1);
+    expect(result.providerIdentifiers.customerId).toBe('mock-provisioned-customer');
+  });
+
+  it('keeps provisioning request approved when selection is required', async () => {
+    const { bc, run, request } = await seedApprovedProvisioning({
+      providerIdentifiers: {
+        accessibleCustomerIds: ['1234567890'],
+        discoveryReason: 'ADS_PROVISIONING_REQUIRED',
+      },
+    });
+
+    await expect(
+      provisionGoogleAdsCustomer({
+        businessId: bc.businessId,
+        setupRunId: run._id,
+        provisioningRequestId: request._id,
+        logger,
+      })
+    ).rejects.toMatchObject({ code: 'ADS_SELECTION_REQUIRED' });
+
+    const updatedRequest = await mongoose.model('IntegrationProvisioningRequest').findById(request._id).lean();
+    expect(updatedRequest.status).toBe('approved');
+    expect(updatedRequest.errorCode).toBe('ADS_SELECTION_REQUIRED');
+
+    const conn = await mongoose.model('IntegrationConnection').findOne({ businessId: bc.businessId, provider: 'google_ads' }).lean();
+    expect(conn.connectionHealth).toBe('selection_required');
+  });
+
+  it('selects a saved customer without MCC create', async () => {
+    const { bc, run, request } = await seedApprovedProvisioning({
+      providerIdentifiers: {
+        accessibleCustomerIds: ['1234567890', '9876543210'],
+        customerId: '9876543210',
         discoveryReason: 'ADS_PROVISIONING_REQUIRED',
       },
     });
@@ -118,7 +187,7 @@ describe('adsProvisioningService', () => {
 
     expect(createCustomerClient).not.toHaveBeenCalled();
     expect(result.connectionHealth).toBe('connected');
-    expect(result.providerIdentifiers.customerId).toBe('1234567890');
+    expect(result.providerIdentifiers.customerId).toBe('9876543210');
     expect(result.providerIdentifiers.loginCustomerId).toBe('9999999999');
     expect(result.providerIdentifiers.mccLink).toBeUndefined();
 
@@ -127,7 +196,7 @@ describe('adsProvisioningService', () => {
       setupRunId: run._id,
       artifactType: 'ads_customer',
     }).lean();
-    expect(artifact.externalId).toBe('1234567890');
+    expect(artifact.externalId).toBe('9876543210');
     expect(artifact.metadata.provisioningSource).toBe('discovery_selected_customer');
   });
 
@@ -144,6 +213,12 @@ describe('adsProvisioningService', () => {
     });
 
     expect(createCustomerClient).toHaveBeenCalledTimes(1);
+    expect(getMccGoogleAdsAccessToken).toHaveBeenCalledTimes(1);
+    expect(createCustomerClient).toHaveBeenCalledWith(
+      'test-mcc-token',
+      '9999999999',
+      expect.objectContaining({ descriptiveName: expect.any(String) })
+    );
     expect(result.providerIdentifiers.customerId).toBe('mock-provisioned-customer');
     expect(result.providerIdentifiers.mccLink).toEqual(
       expect.objectContaining({

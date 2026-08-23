@@ -28,12 +28,9 @@ async function scrapeWorkflow(input) {
   const businessId = typeof safe.businessId === 'string' ? safe.businessId.trim() : '';
   const userId = typeof safe.userId === 'string' ? safe.userId.trim() : '';
   const websiteUrl = typeof safe.websiteUrl === 'string' ? safe.websiteUrl.trim() : '';
-  const startedAt =
-    typeof safe.startedAt === 'string'
-      ? safe.startedAt
-      : new Date().toISOString();
+  const startedAt = typeof safe.startedAt === 'string' ? safe.startedAt.trim() : '';
 
-  if (!scrapeRunId || !businessId || !userId || !websiteUrl) {
+  if (!scrapeRunId || !businessId || !userId || !websiteUrl || !startedAt) {
     return {
       workflow: 'scrapeWorkflow',
       status: 'FAILED',
