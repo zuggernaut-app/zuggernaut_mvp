@@ -40,6 +40,95 @@ function parseSoftLaunchTesterEmails() {
 }
 
 /**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @returns {Promise<import('mongoose').Types.ObjectId>}
+ */
+async function resolveBillingUserIdForBusiness(businessId) {
+  const BusinessContext = mongoose.model('BusinessContext');
+  const Org = mongoose.model('Org');
+  const businessObjectId =
+    businessId instanceof mongoose.Types.ObjectId
+      ? businessId
+      : new mongoose.Types.ObjectId(businessId);
+
+  const bc = await BusinessContext.findOne({ businessId: businessObjectId })
+    .select('userId orgId')
+    .lean();
+  if (!bc) {
+    throw new SubscriptionGateError('Business context not found.', 'business_not_found');
+  }
+
+  if (bc.orgId) {
+    const org = await Org.findById(bc.orgId).select('ownerUserId').lean();
+    if (org?.ownerUserId) {
+      return org.ownerUserId;
+    }
+  }
+
+  return bc.userId;
+}
+
+/**
+ * Subscription gate for campaign enable: checks the business billing principal, not the actor.
+ * No soft-launch or dev free-plan bypasses.
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ */
+async function assertActivePlanForBusinessOwner(businessId) {
+  const feature = 'campaign_enable';
+  const BusinessContext = mongoose.model('BusinessContext');
+  const businessObjectId =
+    businessId instanceof mongoose.Types.ObjectId
+      ? businessId
+      : new mongoose.Types.ObjectId(businessId);
+
+  const bc = await BusinessContext.findOne({ businessId: businessObjectId })
+    .select('orgId userId')
+    .lean();
+  if (!bc) {
+    throw new SubscriptionGateError('Business context not found.', 'business_not_found');
+  }
+
+  let subscription = null;
+  if (bc.orgId) {
+    subscription = await Subscription.findOne({ orgId: bc.orgId })
+      .select('+stripeCustomerId +stripeSubscriptionId')
+      .populate('planId')
+      .exec();
+  }
+
+  if (!subscription) {
+    const billingUserId = await resolveBillingUserIdForBusiness(businessObjectId);
+    subscription = await Subscription.findOne({ userId: billingUserId })
+      .select('+stripeCustomerId +stripeSubscriptionId')
+      .populate('planId')
+      .exec();
+  }
+
+  if (!subscription) {
+    throw new SubscriptionGateError(
+      'An active subscription is required for this action. Visit Billing to subscribe.',
+      'subscription_required',
+      { feature, grace: false }
+    );
+  }
+
+  if (isActiveStatus(subscription.status)) {
+    return { allowed: true, subscription, grace: false };
+  }
+
+  if (isWithinGracePeriod(subscription.currentPeriodEnd)) {
+    return { allowed: true, subscription, grace: true };
+  }
+
+  throw new SubscriptionGateError(
+    'Your subscription is not active. Visit Billing to restore access.',
+    'subscription_lapsed',
+    { feature, grace: false, status: subscription.status }
+  );
+}
+
+/**
  * @param {import('mongoose').Types.ObjectId | string} userId
  * @param {'setup_start' | 'campaign_enable'} feature
  */
@@ -169,10 +258,56 @@ async function upsertSubscriptionFromStripe({
   ).exec();
 }
 
+/**
+ * Non-throwing subscription check for dashboards (business billing principal).
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @returns {Promise<{ active: boolean, code: 'active' | 'subscription_required' | 'subscription_lapsed' }>}
+ */
+async function getSubscriptionStatusForBusinessOwner(businessId) {
+  const BusinessContext = mongoose.model('BusinessContext');
+  const businessObjectId =
+    businessId instanceof mongoose.Types.ObjectId
+      ? businessId
+      : new mongoose.Types.ObjectId(businessId);
+
+  const bc = await BusinessContext.findOne({ businessId: businessObjectId })
+    .select('orgId userId')
+    .lean();
+  if (!bc) {
+    return { active: false, code: 'subscription_required' };
+  }
+
+  let subscription = null;
+  if (bc.orgId) {
+    subscription = await Subscription.findOne({ orgId: bc.orgId }).select('status currentPeriodEnd').lean();
+  }
+  if (!subscription) {
+    const billingUserId = await resolveBillingUserIdForBusiness(businessObjectId);
+    subscription = await Subscription.findOne({ userId: billingUserId })
+      .select('status currentPeriodEnd')
+      .lean();
+  }
+
+  if (!subscription) {
+    return { active: false, code: 'subscription_required' };
+  }
+  if (isActiveStatus(subscription.status)) {
+    return { active: true, code: 'active' };
+  }
+  if (isWithinGracePeriod(subscription.currentPeriodEnd)) {
+    return { active: true, code: 'active' };
+  }
+  return { active: false, code: 'subscription_lapsed' };
+}
+
 module.exports = {
   GRACE_PERIOD_MS,
   SubscriptionGateError,
   assertActivePlan,
+  assertActivePlanForBusinessOwner,
+  getSubscriptionStatusForBusinessOwner,
+  resolveBillingUserIdForBusiness,
   upsertSubscriptionFromStripe,
   isWithinGracePeriod,
 };

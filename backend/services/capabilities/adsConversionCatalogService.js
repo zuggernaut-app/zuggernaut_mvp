@@ -19,7 +19,7 @@ class AdsCatalogPreconditionError extends Error {
 }
 
 const CALL_CATEGORIES = new Set(['PHONE_CALL_LEAD']);
-const CALL_TYPES = new Set(['PHONE_CALL_FROM_ADS', 'AD_CALL', 'CLICK_TO_CALL']);
+const CALL_TYPES = new Set(['AD_CALL']);
 const FORM_CATEGORIES = new Set([
   'SUBMIT_LEAD_FORM',
   'SIGNUP',
@@ -37,10 +37,9 @@ function classifyConversionAction(action) {
   const type = String(action.type ?? '').toUpperCase();
   const name = String(action.name ?? '').toLowerCase();
 
-  if (CALL_CATEGORIES.has(category) || CALL_TYPES.has(type)) return 'call';
+  if (CALL_TYPES.has(type)) return 'call';
   if (FORM_CATEGORIES.has(category)) return 'form';
   if (type === 'WEBPAGE' && /form|submit|lead|signup|contact|inquiry|quote/.test(name)) return 'form';
-  if (/call|phone|tel/.test(name)) return 'call';
   if (/form|submit|lead|signup|contact|inquiry|quote/.test(name)) return 'form';
   return 'other';
 }
@@ -294,6 +293,21 @@ async function fetchAndPersistConversionCatalog(ctx) {
   );
 
   for (const row of selected) {
+    let phoneCallDurationSeconds = row.phoneCallDurationSeconds;
+    if (phoneCallDurationSeconds == null && process.env.GOOGLE_ADS_API_MOCK === 'true') {
+      const priorArtifact = await IntegrationArtifact.findOne({
+        businessId,
+        provider: 'google_ads',
+        artifactType: 'ads_conversion_action',
+        externalId: row.externalId,
+      })
+        .select('metadata.phoneCallDurationSeconds')
+        .lean();
+      if (priorArtifact?.metadata?.phoneCallDurationSeconds != null) {
+        phoneCallDurationSeconds = priorArtifact.metadata.phoneCallDurationSeconds;
+      }
+    }
+
     await IntegrationArtifact.findOneAndUpdate(
       {
         setupRunId,
@@ -318,6 +332,9 @@ async function fetchAndPersistConversionCatalog(ctx) {
             ...(row.conversionId ? { conversionId: row.conversionId } : {}),
             ...(row.conversionLabel ? { conversionLabel: row.conversionLabel } : {}),
             ...(row.tagSnippets ? { tagSnippets: row.tagSnippets } : {}),
+            ...(phoneCallDurationSeconds != null
+              ? { phoneCallDurationSeconds }
+              : {}),
           },
         },
       },

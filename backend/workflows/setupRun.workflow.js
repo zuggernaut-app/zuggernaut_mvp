@@ -1,6 +1,6 @@
 'use strict';
 
-const { proxyActivities } = require('@temporalio/workflow');
+const { proxyActivities, patched } = require('@temporalio/workflow');
 const { SETUP_WORKFLOW_TERMINALS: T } = require('../constants/setupWorkflow');
 const { SETUP_ACTIVITY_POLICIES: P } = require('../constants/setupActivityPolicies');
 
@@ -218,38 +218,23 @@ async function setupRunWorkflow(input) {
     });
   }
 
-  const verify = await runStructuralVerificationActivity({
+  const activityCtx = {
     setupRunId: load.setupRunId,
     businessId: load.businessId,
-  });
+  };
 
-  // Phase 10 strict gate (mvp_implementation_plan.md): Ads creation runs only after
-  // structural verification passes. Optional GTM (skipped verification) still returns pass.
-  if (verify.outcome !== 'pass') {
-    const terminal =
-      verify.outcome === 'snippet_pending'
-        ? T.SNIPPET_PENDING
-        : verify.outcome === 'needs_tracking_fix'
-          ? T.NEEDS_TRACKING_FIX
-          : verify.outcome === 'manual_review'
-            ? T.MANUAL_REVIEW
-            : T.FAILED;
+  let ads;
+  let verify;
 
-    return {
-      workflow: 'setupRunWorkflow',
-      terminal,
-      setupRunId: load.setupRunId,
-      gbp,
-      manage,
-      verify,
-      ads: null,
-    };
+  // Replay-safe reorder: new runs create campaigns before verification; in-flight runs keep
+  // the prior order until they drain, then deprecatePatch('lead-campaign-create-before-verify').
+  if (patched('lead-campaign-create-before-verify')) {
+    ads = await createAdsCampaignActivity(activityCtx);
+    verify = await runStructuralVerificationActivity(activityCtx);
+  } else {
+    verify = await runStructuralVerificationActivity(activityCtx);
+    ads = await createAdsCampaignActivity(activityCtx);
   }
-
-  const ads = await createAdsCampaignActivity({
-    setupRunId: load.setupRunId,
-    businessId: load.businessId,
-  });
 
   return {
     workflow: 'setupRunWorkflow',

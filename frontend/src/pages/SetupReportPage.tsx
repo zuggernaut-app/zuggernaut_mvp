@@ -1,6 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ApiError } from '../api/client'
+import { startSetupRun } from '../api/setupRuns'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
@@ -42,15 +44,36 @@ function outcomeTone(kind: string): string {
 }
 
 export function SetupReportPage(): ReactElement {
+  const navigate = useNavigate()
   const { setupRunId: paramId } = useParams<{ setupRunId: string }>()
   const { snapshot, setSetupRunId } = useOnboardingState()
   const effectiveId = paramId ?? snapshot.setupRunId
+  const [forceBusy, setForceBusy] = useState(false)
+  const [forceError, setForceError] = useState<string | null>(null)
+  const [showForceConfirm, setShowForceConfirm] = useState(false)
 
   useEffect(() => {
     if (paramId && paramId !== snapshot.setupRunId) setSetupRunId(paramId)
   }, [paramId, snapshot.setupRunId, setSetupRunId])
 
   const { report, loading, error, lastUpdatedAt, refetch } = useSetupRunReport(effectiveId ?? null)
+
+  async function handleForceRerun(): Promise<void> {
+    if (!report?.setupRun.businessId) return
+    setForceError(null)
+    setForceBusy(true)
+    try {
+      const result = await startSetupRun(report.setupRun.businessId, { force: true })
+      setSetupRunId(result.setupRunId)
+      setShowForceConfirm(false)
+      navigate(`/setup/progress/${result.setupRunId}`, { replace: true })
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not restart setup.'
+      setForceError(msg)
+    } finally {
+      setForceBusy(false)
+    }
+  }
 
   if (!effectiveId) {
     return (
@@ -72,10 +95,48 @@ export function SetupReportPage(): ReactElement {
         Run <code style={{ wordBreak: 'break-all', fontSize: '0.8rem' }}>{effectiveId}</code>
       </p>
       <ErrorAlert message={error} />
+      <ErrorAlert message={forceError} />
       {loading && !report ? <InlineLoading /> : null}
 
       {report ? (
         <>
+          {report.susoStale ? (
+            <div className="alert alert-warning" style={{ marginBottom: '1rem' }}>
+              <p style={{ margin: '0 0 0.5rem' }}>
+                Campaigns were generated under SUSO version {report.susoVersions.artifact ?? '—'}.
+                Your current foundation is version {report.susoVersions.current}. Review Step 0 changes
+                before regenerating campaigns.
+              </p>
+              {!showForceConfirm ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowForceConfirm(true)}
+                >
+                  Review / force re-run
+                </button>
+              ) : (
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={forceBusy}
+                    onClick={() => void handleForceRerun()}
+                  >
+                    {forceBusy ? 'Starting…' : 'Confirm force re-run'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={forceBusy}
+                    onClick={() => setShowForceConfirm(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
           {report.outcome.kind === 'succeeded' && report.setupRun.businessId ? (
             <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
               Setup finished successfully. You can{' '}

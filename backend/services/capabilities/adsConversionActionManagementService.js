@@ -16,7 +16,10 @@ const {
 } = require('../../constants/conversionActionRequirements');
 const { adsConversionActionCreationIdempotencyKey } = require('../../constants/idempotency');
 const { isConversionActionCreationEnabled } = require('../integrations/googleAdsApiConfig');
-const { createConversionAction } = require('../integrations/googleAdsConversionActionClient');
+const {
+  createConversionAction,
+  updateConversionActionPhoneDuration,
+} = require('../integrations/googleAdsConversionActionClient');
 const { resolvePrimaryGoal, sortForSelection } = require('./adsConversionCatalogService');
 const {
   claimConversionActionCreation,
@@ -32,6 +35,8 @@ const { zugConversionActionName } = require('../../lib/businessNameKey');
 const { requireSetupReadyConnection } = require('./setupReadyConnectionService');
 const BusinessContext = mongoose.model('BusinessContext');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+
+const MIN_CALL_CONVERSION_DURATION_SECONDS = 60;
 
 class ConversionActionManagementError extends Error {
   constructor(message, code = 'CONVERSION_ACTION_MANAGEMENT_ERROR') {
@@ -116,7 +121,31 @@ function resolveDerivedFrom(goals, confirmedAt) {
 function deriveConversionStrategy(businessContext) {
   const goals = businessContext?.goals ?? null;
   const resolvedPrimaryGoal = resolvePrimaryGoal(goals);
-  const slotDefs = CONVERSION_SLOTS_BY_GOAL[resolvedPrimaryGoal];
+
+  let slotDefs = null;
+  try {
+    const { planLeadCampaignSlots } = require('./leadCampaignPlanner');
+    const plans = planLeadCampaignSlots(businessContext);
+    const actions = new Set();
+    if (plans.recommended?.action) actions.add(plans.recommended.action);
+    if (plans.alternative?.action) actions.add(plans.alternative.action);
+    if (actions.size > 0) {
+      const defs = [];
+      if (actions.has('calls')) {
+        defs.push({ slot: 'call', logicalCategory: 'call', required: true });
+      }
+      if (actions.has('forms')) {
+        defs.push({ slot: 'form', logicalCategory: 'form', required: true });
+      }
+      slotDefs = defs;
+    }
+  } catch {
+    slotDefs = null;
+  }
+
+  if (!slotDefs?.length) {
+    slotDefs = CONVERSION_SLOTS_BY_GOAL[resolvedPrimaryGoal];
+  }
 
   return {
     resolvedPrimaryGoal,
@@ -214,8 +243,82 @@ async function findExistingCreatedConversionArtifact(ctx) {
 }
 
 /**
+ * Ensure reused catalog call conversions meet the minimum call duration.
+ *
  * @param {object} ctx
  */
+async function ensureCallConversionMinDuration(ctx) {
+  const { businessId, customerId, setupRunId, catalog, requiredSlots, logger } = ctx;
+  const failures = [];
+
+  for (const slot of requiredSlots ?? []) {
+    if (slot.logicalCategory !== 'call' || !slot.externalId) {
+      continue;
+    }
+
+    const catalogAction = catalog.find((row) => row.externalId === slot.externalId);
+    const resourceName = slot.resourceName ?? catalogAction?.resourceName ?? null;
+    if (!resourceName) {
+      continue;
+    }
+
+    const currentDuration = catalogAction?.phoneCallDurationSeconds;
+    if (currentDuration != null && currentDuration >= MIN_CALL_CONVERSION_DURATION_SECONDS) {
+      continue;
+    }
+
+    try {
+      await updateConversionActionPhoneDuration({
+        businessId,
+        customerId,
+        resourceName,
+        phoneCallDurationSeconds: MIN_CALL_CONVERSION_DURATION_SECONDS,
+      });
+
+      await IntegrationArtifact.updateMany(
+        {
+          businessId,
+          provider: 'google_ads',
+          artifactType: { $in: ['ads_conversion_action', 'ads_conversion_action_created'] },
+          externalId: slot.externalId,
+        },
+        { $set: { 'metadata.phoneCallDurationSeconds': MIN_CALL_CONVERSION_DURATION_SECONDS } }
+      );
+
+      logger?.info?.(
+        {
+          setupRunId: String(setupRunId),
+          businessId: String(businessId),
+          externalId: slot.externalId,
+          phoneCallDurationSeconds: MIN_CALL_CONVERSION_DURATION_SECONDS,
+        },
+        'call conversion duration updated to minimum'
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'call duration update failed';
+      const errorCode =
+        err instanceof Error && err.code ? err.code : 'CALL_CONVERSION_DURATION_UPDATE_FAILED';
+      failures.push({
+        externalId: slot.externalId,
+        errorCode,
+        message,
+      });
+      logger?.warn?.(
+        {
+          setupRunId: String(setupRunId),
+          businessId: String(businessId),
+          externalId: slot.externalId,
+          errorCode,
+          error: message,
+        },
+        'failed to update call conversion duration'
+      );
+    }
+  }
+
+  return { failures };
+}
+
 async function persistCreatedConversionArtifact(ctx) {
   const { setupRunId, businessId, slot, externalId, resourceName, source, template, measurement } = ctx;
   await finalizeConversionActionCreation({
@@ -570,6 +673,15 @@ async function manageConversionActions(ctx) {
 
   const resolution = resolveStrategyWithCatalog(bc, catalog);
 
+  const { failures: callDurationUpdateFailures } = await ensureCallConversionMinDuration({
+    businessId,
+    customerId,
+    setupRunId,
+    catalog,
+    requiredSlots: resolution.strategy.requiredSlots,
+    logger,
+  });
+
   let fillResult = { created: [], failed: [], skipped: [], creationEnabled: true };
   if (resolution.unmatchedCount > 0) {
     const unmatchedSlotObjects = resolution.strategy.requiredSlots.filter(
@@ -614,6 +726,7 @@ async function manageConversionActions(ctx) {
       created,
       reused,
       strategy: finalStrategy,
+      callDurationUpdateFailures,
     };
   }
 
@@ -654,5 +767,6 @@ module.exports = {
   fillUnmatchedSlots,
   persistConversionStrategy,
   manageConversionActions,
+  ensureCallConversionMinDuration,
   toCreatedSlot,
 };

@@ -178,7 +178,7 @@ async function createCustomerClient(accessToken, managerCustomerId, customerInpu
 }
 
 const CUSTOMER_METADATA_QUERY =
-  'SELECT customer.id, customer.descriptive_name, customer.manager, customer.status, customer.test_account FROM customer LIMIT 1';
+  'SELECT customer.id, customer.descriptive_name, customer.manager, customer.status, customer.test_account, customer.currency_code FROM customer LIMIT 1';
 
 /**
  * @param {unknown} body
@@ -219,6 +219,7 @@ async function searchGoogleAdsCustomerMetadata(accessToken, customerId) {
       manager: isManager,
       status: isCancelled ? 'CANCELLED' : 'ENABLED',
       testAccount: false,
+      currencyCode: process.env.GOOGLE_ADS_DEFAULT_CURRENCY_CODE?.trim() || 'USD',
     };
   }
 
@@ -257,6 +258,7 @@ async function searchGoogleAdsCustomerMetadata(accessToken, customerId) {
         manager: customer.manager === true,
         status: customer.status ?? null,
         testAccount: customer.testAccount === true,
+        currencyCode: customer.currencyCode ?? customer.currency_code ?? null,
       };
     }
 
@@ -725,8 +727,49 @@ async function acceptCustomerManagerLink(accessToken, clientCustomerId, managerC
   };
 }
 
+const { SUPPORTED_ACCOUNT_CURRENCIES } = require('../../constants/leadCampaign');
+const { resolveGoogleAdsCustomerAuth } = require('./googleAdsCustomerAuth');
+
+/**
+ * @param {{ businessId: import('mongoose').Types.ObjectId | string, customerId?: string }} ctx
+ * @returns {Promise<string>}
+ */
+async function getCustomerCurrencyCode(ctx) {
+  const { businessId, customerId: customerIdInput } = ctx;
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return process.env.GOOGLE_ADS_DEFAULT_CURRENCY_CODE?.trim() || 'USD';
+  }
+
+  const { accessToken } = await resolveGoogleAdsCustomerAuth(businessId, customerIdInput);
+  const normalizedId = normalizeCustomerId(customerIdInput);
+  if (!normalizedId) {
+    throw new GoogleAdsAccountError('customerId is required to read account currency.', 'ADS_CUSTOMER_ID_REQUIRED');
+  }
+
+  const metadata = await searchGoogleAdsCustomerMetadata(accessToken, normalizedId);
+  const currency = String(metadata?.currencyCode ?? '').trim().toUpperCase();
+  if (!currency) {
+    throw new GoogleAdsAccountError(
+      'Could not read Google Ads account currency.',
+      'ADS_CUSTOMER_CURRENCY_UNAVAILABLE'
+    );
+  }
+  return currency;
+}
+
+/**
+ * @param {string} currencyCode
+ * @returns {boolean}
+ */
+function isSupportedAccountCurrency(currencyCode) {
+  const normalized = String(currencyCode ?? '').trim().toUpperCase();
+  return SUPPORTED_ACCOUNT_CURRENCIES.includes(normalized);
+}
+
 module.exports = {
   GoogleAdsAccountError,
+  getCustomerCurrencyCode,
+  isSupportedAccountCurrency,
   getEffectiveAdsDiscoveryReason,
   normalizeCustomerId,
   customerIdFromResourceName,

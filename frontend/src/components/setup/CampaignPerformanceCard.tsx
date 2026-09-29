@@ -30,7 +30,12 @@ export function CampaignPerformanceCard({ businessId }: CampaignPerformanceCardP
       setError(null)
       try {
         const { performance } = await getAdsCampaignPerformance(businessId)
-        if (!cancelled) setMetrics(performance.metrics)
+        const slotMetrics =
+          performance.slots?.recommended?.metrics ??
+          performance.slots?.alternative?.metrics ??
+          performance.metrics ??
+          null
+        if (!cancelled) setMetrics(slotMetrics)
       } catch (err) {
         if (!cancelled) {
           if (err instanceof ApiError) setError(err.message)

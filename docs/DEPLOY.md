@@ -63,7 +63,7 @@ For local development only, use `docker/temporal` — do not use local Temporal 
 
 6. Scale to **1 instance** for MVP. Do **not** set an HTTP `healthcheckPath` on this service — use Railway process health only.
 
-## 5. Firebase Hosting — Frontend
+## 5. Firebase Hosting — Frontend (app SPA)
 
 1. Install Firebase CLI: `npm install -g firebase-tools`
 2. `firebase login` and create/select project; update `.firebaserc` `default` project id.
@@ -80,6 +80,120 @@ firebase deploy --only hosting
 
 4. Set `FRONTEND_ORIGIN` on the API to your Firebase URL, e.g. `https://zuggernaut-mvp.web.app`.
 
+**Important:** The app SPA uses the **root** `firebase.json`. Do not deploy the app from `marketing/` — that directory has its own isolated Firebase config for the marketing site only.
+
+## 5b. Firebase Hosting — Marketing site (zuggernaut.com)
+
+Static landing page lives in `marketing/`. Copy and claims spec: `product_strategy/product/landing-page-mvp.md`.
+
+### One-time Firebase setup
+
+1. In [Firebase console](https://console.firebase.google.com/) → project **zuggernaut-mvp** → Hosting → **Add another site**.
+2. Create site id **`zuggernaut-com`** (must match `marketing/firebase.json` `hosting.site`).
+3. Do **not** modify root `firebase.json` or `.firebaserc`.
+
+### Build
+
+Set `APP_URL` to the **app** origin where `/register` lives (deferred until app subdomain is chosen). For smoke tests against the current SPA:
+
+```bash
+# Example — replace when app moves to app.zuggernaut.com
+set APP_URL=https://zuggernaut-mvp.web.app   # Windows cmd
+# $env:APP_URL="https://zuggernaut-mvp.web.app"  # PowerShell
+npm run marketing:build
+```
+
+Verify every CTA in `marketing/dist/index.html` points at the same `{APP_URL}/register`.
+
+### Preview channel (guardrail: test before custom domain)
+
+```bash
+cd marketing
+firebase hosting:channel:deploy preview --expires 7d
+```
+
+Review the preview URL. Confirm CTAs, mobile layout, and sticky CTA bar.
+
+### Production deploy (marketing only)
+
+```bash
+cd marketing
+firebase deploy --only hosting:zuggernaut-com
+```
+
+The app SPA is unaffected: deploy it separately from the repo root with `firebase deploy --only hosting` (default site).
+
+### Custom domain — zuggernaut.com (manual DNS)
+
+**Guardrail — audit before changing DNS:**
+
+1. Inventory current DNS records at your registrar (A, AAAA, CNAME, MX, TXT/SPF/DKIM). **Do not remove or change MX, SPF, or DKIM** unless you intend to move email.
+2. Lower TTLs 24–48 hours before cutover.
+3. In Firebase Hosting → site **zuggernaut-com** → Add custom domain → `zuggernaut.com`.
+4. Add only the records Firebase shows (typically A/AAAA or CNAME for apex; CNAME for `www`).
+5. Add `www` → redirect to apex (or apex → `www`, pick one canonical host).
+6. Keep a written copy of pre-cutover records for rollback.
+
+After DNS propagates, rebuild with the final `APP_URL` and redeploy from `marketing/`.
+
+### Post-deploy smoke test
+
+1. Open `https://zuggernaut.com` on desktop Chrome and iOS Safari.
+2. Tap **Get started free** — lands on `{APP_URL}/register`.
+3. Rollback: Firebase Hosting → Release history → Roll back to previous version.
+
+## Session cookies and CSRF (split hosting)
+
+Firebase Hosting (SPA) and Railway (API) are **different sites**. The API must send session cookies with `SameSite=None; Secure` so the browser includes them on cross-origin `fetch(..., { credentials: 'include' })` calls.
+
+| Setting | Production (split hosting) | Local dev (Vite proxy) |
+|---------|---------------------------|-------------------------|
+| `FRONTEND_ORIGIN` | Firebase URL (required for CORS) | `http://localhost:5173` |
+| `NODE_ENV` | `production` | `development` |
+| Session `SameSite` | `none` (auto when prod + `FRONTEND_ORIGIN`) | `lax` (same-site via proxy) |
+| `Secure` cookie flag | `true` (required for `SameSite=None`) | `false` ok on `http://localhost` (`COOKIE_SECURE=false`) |
+
+**CSRF:** With `SameSite=None`, all cookie-authenticated mutating routes (`POST`/`PUT`/`PATCH`/`DELETE`) require a matching `X-CSRF-Token` header and `zugg_csrf` cookie (double-submit). The SPA bootstraps via `GET /api/v1/auth/csrf` on load; login/register also set the CSRF cookie.
+
+Override defaults with `COOKIE_SAMESITE=none|lax|strict` if needed.
+
+## Token encryption rotation
+
+OAuth tokens are stored as `enc:v1:` ciphertext. Legacy rows without the prefix remain readable via dual-read until re-encrypted.
+
+1. Generate a new 64-char hex key.
+2. Set `TOKEN_ENCRYPTION_KEY` to the new key on **both** API and worker.
+3. Set `TOKEN_ENCRYPTION_KEY_PREVIOUS` to the old key on **both** services (dual-read).
+4. Stop the Temporal worker (maintenance window).
+5. Run `node backend/scripts/reencryptTokens.js --dry-run`, then without `--dry-run`.
+6. Verify audit output shows 100% v1 (no `would_update` / `updated` left for v0 rows).
+7. Remove `TOKEN_ENCRYPTION_KEY_PREVIOUS` only after audit confirms all tokens are v1.
+8. Restart the worker.
+
+Rollback: keep `TOKEN_ENCRYPTION_KEY_PREVIOUS` set so old ciphertext remains readable; do not delete the previous key until re-encrypt completes.
+
+## Observability (OTel) and alerts
+
+### OpenTelemetry (Honeycomb free tier)
+
+Set on **both** API and worker when you want traces and the `google_ads.rate_limit.hit` metric:
+
+| Variable | Example |
+|----------|---------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `https://api.honeycomb.io` |
+| `HONEYCOMB_API_KEY` | Honeycomb ingest key (or use `OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=YOUR_KEY`) |
+
+When unset, OTel bootstrap is a no-op (Pino logs only).
+
+### External alerts (not app-emitted)
+
+| Signal | Source |
+|--------|--------|
+| Worker down | Temporal Cloud **no task queue pollers** alert on namespace `setup-run` queue |
+| Worker crash/restart | Railway process restart notification on the **worker** service |
+| Setup failures | Railway log drain (e.g. Logtail/Papertrail) filtered on `level:error` + `setupRunId` |
+| Google Ads 429 rate | Honeycomb dashboard on metric `google_ads.rate_limit.hit` |
+
 ## Environment variables
 
 ### API + Worker (shared)
@@ -88,6 +202,7 @@ firebase deploy --only hosting
 |----------|------------|
 | `MONGODB_URI` | Atlas connection string |
 | `TOKEN_ENCRYPTION_KEY` | 64-char hex (generate once, store in Railway secrets) |
+| `TOKEN_ENCRYPTION_KEY_PREVIOUS` | Optional — previous key for dual-read during rotation (see **Token encryption rotation** below) |
 | `TEMPORAL_ADDRESS` | Temporal Cloud gRPC host |
 | `TEMPORAL_NAMESPACE` | Cloud namespace |
 | `TEMPORAL_TASK_QUEUE` | `setup-run` |
@@ -108,6 +223,10 @@ firebase deploy --only hosting
 | `FRONTEND_ORIGIN` | Firebase hosting URL |
 | `NODE_ENV` | `production` |
 | `LOG_LEVEL` | `info` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional — Honeycomb OTLP base URL |
+| `HONEYCOMB_API_KEY` | Optional — Honeycomb ingest key when using OTel |
+
+Production split hosting uses `SameSite=None; Secure` session cookies automatically when `FRONTEND_ORIGIN` is set. Ensure HTTPS on the API origin. See **Session cookies and CSRF** above.
 
 ### Never set in production
 

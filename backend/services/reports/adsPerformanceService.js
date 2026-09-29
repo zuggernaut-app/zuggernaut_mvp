@@ -8,6 +8,8 @@ const {
   assertBusinessMembershipOrOwnership,
   MembershipCheckError,
 } = require('../../lib/auth/membershipCheck');
+const { isPlatformAdminUser } = require('../../api/v1/lib/platformAdminBusinessAccess');
+const { LEAD_CAMPAIGN_SLOTS } = require('../../constants/leadCampaign');
 
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 
@@ -30,9 +32,11 @@ async function getCampaignPerformanceForBusiness(userId, businessIdRaw) {
 
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
 
-  try {
-    await assertBusinessMembershipOrOwnership(userId, businessIdRaw);
-  } catch (err) {
+  const isAdmin = await isPlatformAdminUser(userId);
+  if (!isAdmin) {
+    try {
+      await assertBusinessMembershipOrOwnership(userId, businessIdRaw);
+    } catch (err) {
     if (err instanceof MembershipCheckError) {
       throw new AdsPerformanceError(
         err.code === 'forbidden'
@@ -41,48 +45,61 @@ async function getCampaignPerformanceForBusiness(userId, businessIdRaw) {
         err.code === 'forbidden' ? 'forbidden' : 'not_found'
       );
     }
-    throw err;
-  }
-
-  const campaignArtifact = await IntegrationArtifact.findOne({
-    businessId,
-    provider: 'google_ads',
-    artifactType: 'ads_campaign',
-  })
-    .sort({ updatedAt: -1 })
-    .lean();
-
-  if (!campaignArtifact?.externalId) {
-    throw new AdsPerformanceError('No campaign artifact found for this business.', 'not_found');
+      throw err;
+    }
   }
 
   const { customerId } = await requireSetupReadyConnection(businessId, 'google_ads', AdsPerformanceError);
+  const slots = {};
 
-  try {
-    const metrics = await fetchCampaignPerformanceMetrics({
+  for (const slot of LEAD_CAMPAIGN_SLOTS) {
+    const campaignArtifact = await IntegrationArtifact.findOne({
       businessId,
-      customerId,
-      campaignResourceName: campaignArtifact.externalId,
-    });
+      provider: 'google_ads',
+      artifactType: 'ads_campaign',
+      'metadata.slot': slot,
+    })
+      .sort({ updatedAt: -1 })
+      .lean();
 
-    return {
-      businessId: businessId.toString(),
-      campaignResourceName: campaignArtifact.externalId,
-      metrics: {
-        impressions: metrics.impressions,
-        clicks: metrics.clicks,
-        costMicros: metrics.costMicros,
-        conversions: metrics.conversions,
-        dateRangeDays: metrics.dateRangeDays,
-      },
-      source: metrics.source,
-    };
-  } catch (err) {
-    if (err instanceof GoogleAdsApiError) {
-      throw new AdsPerformanceError(err.message, err.code);
+    if (!campaignArtifact?.externalId) {
+      slots[slot] = null;
+      continue;
     }
-    throw err;
+
+    try {
+      const metrics = await fetchCampaignPerformanceMetrics({
+        businessId,
+        customerId,
+        campaignResourceName: campaignArtifact.externalId,
+      });
+      slots[slot] = {
+        campaignResourceName: campaignArtifact.externalId,
+        metrics: {
+          impressions: metrics.impressions,
+          clicks: metrics.clicks,
+          costMicros: metrics.costMicros,
+          conversions: metrics.conversions,
+          dateRangeDays: metrics.dateRangeDays,
+        },
+        source: metrics.source,
+      };
+    } catch (err) {
+      if (err instanceof GoogleAdsApiError) {
+        throw new AdsPerformanceError(err.message, err.code);
+      }
+      throw err;
+    }
   }
+
+  if (!slots.recommended && !slots.alternative) {
+    throw new AdsPerformanceError('No campaign artifact found for this business.', 'not_found');
+  }
+
+  return {
+    businessId: businessId.toString(),
+    slots,
+  };
 }
 
 function mapPerformanceRouteError(err, res) {

@@ -10,7 +10,10 @@ import { PasswordResetPage } from '../pages/PasswordResetPage'
 import { BillingPage } from '../pages/BillingPage'
 import { TeamPage } from '../pages/TeamPage'
 import { AdminConsolePage } from '../pages/admin/AdminConsolePage'
+import { AdminBusinessStrategyPage } from '../pages/admin/AdminBusinessStrategyPage'
+import { AdminBusinessWorkspacePage } from '../pages/admin/AdminBusinessWorkspacePage'
 import { BusinessStartPage } from '../pages/BusinessStartPage'
+import { IntakeThankYouPage } from '../pages/IntakeThankYouPage'
 import { WebsiteUrlPage } from '../pages/WebsiteUrlPage'
 import { BusinessReviewPage } from '../pages/BusinessReviewPage'
 import { BusinessContextEditPage } from '../pages/BusinessContextEditPage'
@@ -66,10 +69,38 @@ export function AppRoutes(): ReactElement {
         }
       />
       <Route
+        path="/admin/businesses/:businessId"
+        element={
+          <RequireAuth>
+            <RequirePlatformAdmin>
+              <AdminBusinessWorkspacePage />
+            </RequirePlatformAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/businesses/:businessId/strategy"
+        element={
+          <RequireAuth>
+            <RequirePlatformAdmin>
+              <AdminBusinessStrategyPage />
+            </RequirePlatformAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/onboarding/business"
         element={
           <RequireAuth>
             <BusinessStartPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/onboarding/thank-you"
+        element={
+          <RequireAuth>
+            <IntakeThankYouPage />
           </RequireAuth>
         }
       />
@@ -86,6 +117,14 @@ export function AppRoutes(): ReactElement {
         element={
           <RequireAuth>
             <BusinessReviewPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/onboarding/step-0"
+        element={
+          <RequireAuth>
+            <Navigate to="/onboarding/business" replace />
           </RequireAuth>
         }
       />

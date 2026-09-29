@@ -78,6 +78,15 @@ function normalizeStringList(val, fieldName) {
  * @param {unknown} val
  * @param {string} fieldName
  */
+/** Permissive phone check: allows +, spaces, dashes, parentheses; requires ≥7 digits. */
+function isValidPhone(phone) {
+  if (typeof phone !== 'string') return false;
+  const trimmed = phone.trim();
+  if (!trimmed) return false;
+  const digits = trimmed.replace(/\D/g, '');
+  return digits.length >= 7;
+}
+
 function validateMixedObjectOrNull(val, fieldName) {
   if (val === null) return { ok: true, value: null };
   if (val === undefined) return { ok: true, value: undefined };
@@ -98,6 +107,7 @@ module.exports = {
   MAX_ARRAY_ITEMS,
   MAX_ARRAY_ITEM_LENGTH,
   isValidEmail,
+  isValidPhone,
   validateHttpUrl,
   normalizeStringList,
   validateMixedObjectOrNull,

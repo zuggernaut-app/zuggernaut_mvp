@@ -5,7 +5,9 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const { assertAuthEnvironment } = require('./lib/auth/assertAuthEnvironment');
+const { assertLlmEnvironment } = require('./lib/ai/assertLlmEnvironment');
 assertAuthEnvironment();
+assertLlmEnvironment();
 
 require('./models');
 

@@ -25,7 +25,7 @@ export interface UseIntegrationConnectionsResult {
   loading: boolean
   error: string | null
   refetch: () => Promise<void>
-  connectProvider: (provider: IntegrationProvider) => Promise<void>
+  connectProvider: (provider: IntegrationProvider, returnPath?: string) => Promise<void>
   providerLabels: typeof PROVIDER_LABELS
   statusLabel: (status: IntegrationConnectionStatusDto) => string
   canAttemptSetup: (status: IntegrationConnectionStatusDto | undefined) => boolean
@@ -59,11 +59,11 @@ export function useIntegrationConnections(
   }, [refetch])
 
   const connectProvider = useCallback(
-    async (provider: IntegrationProvider) => {
+    async (provider: IntegrationProvider, returnPath = '/setup') => {
       if (!businessId) return
       setError(null)
       try {
-        const res = await fetchGoogleConnectUrl(provider, businessId)
+        const res = await fetchGoogleConnectUrl(provider, businessId, returnPath)
         window.location.assign(res.url)
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Could not start Google connection.')

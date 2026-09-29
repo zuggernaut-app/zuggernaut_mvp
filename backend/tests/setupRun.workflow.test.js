@@ -27,8 +27,13 @@ const mocks = {
   createAdsCampaignActivity: jest.fn(),
 };
 
+const mockPatched = jest.fn(() => true);
+const mockDeprecatePatch = jest.fn();
+
 jest.mock('@temporalio/workflow', () => ({
   proxyActivities: jest.fn(() => mocks),
+  patched: (...args) => mockPatched(...args),
+  deprecatePatch: (...args) => mockDeprecatePatch(...args),
 }));
 
 const { proxyActivities } = require('@temporalio/workflow');
@@ -87,6 +92,9 @@ function happyPathDefaults() {
 describe('setupRunWorkflow', () => {
   beforeEach(() => {
     Object.values(mocks).forEach((fn) => fn.mockReset());
+    mockPatched.mockReset();
+    mockPatched.mockReturnValue(true);
+    mockDeprecatePatch.mockReset();
     happyPathDefaults();
   });
 
@@ -415,7 +423,26 @@ describe('setupRunWorkflow', () => {
     expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
   });
 
-  it('blocks Ads creation when structural verification needs tracking fix', async () => {
+  it('uses patched lead-campaign-create-before-verify for activity order', async () => {
+    await setupRunWorkflow({ setupRunId: 'run1' });
+
+    expect(mockPatched).toHaveBeenCalledWith('lead-campaign-create-before-verify');
+    const createOrder = mocks.createAdsCampaignActivity.mock.invocationCallOrder[0];
+    const verifyOrder = mocks.runStructuralVerificationActivity.mock.invocationCallOrder[0];
+    expect(createOrder).toBeLessThan(verifyOrder);
+  });
+
+  it('keeps legacy verify-before-create order when patch is absent', async () => {
+    mockPatched.mockReturnValue(false);
+
+    await setupRunWorkflow({ setupRunId: 'run1' });
+
+    const createOrder = mocks.createAdsCampaignActivity.mock.invocationCallOrder[0];
+    const verifyOrder = mocks.runStructuralVerificationActivity.mock.invocationCallOrder[0];
+    expect(verifyOrder).toBeLessThan(createOrder);
+  });
+
+  it('creates Ads before structural verification when tracking needs fix', async () => {
     mocks.runStructuralVerificationActivity.mockResolvedValue({
       outcome: T.NEEDS_TRACKING_FIX,
       detail: { summary: 'snippet' },
@@ -423,12 +450,14 @@ describe('setupRunWorkflow', () => {
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.NEEDS_TRACKING_FIX);
-    expect(out.ads).toBeNull();
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+    expect(mocks.runStructuralVerificationActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
+    expect(out.ads).not.toBeNull();
+    expect(out.verify.outcome).toBe(T.NEEDS_TRACKING_FIX);
   });
 
-  it('blocks Ads creation when structural verification needs snippet install', async () => {
+  it('creates Ads before structural verification when snippet is pending', async () => {
     mocks.runStructuralVerificationActivity.mockResolvedValue({
       outcome: T.SNIPPET_PENDING,
       detail: { summary: 'install snippet' },
@@ -436,12 +465,13 @@ describe('setupRunWorkflow', () => {
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.SNIPPET_PENDING);
-    expect(out.ads).toBeNull();
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
+    expect(out.ads).not.toBeNull();
+    expect(out.verify.outcome).toBe(T.SNIPPET_PENDING);
   });
 
-  it('blocks Ads creation when structural verification needs manual review', async () => {
+  it('creates Ads before structural verification when manual review is needed', async () => {
     mocks.runStructuralVerificationActivity.mockResolvedValue({
       outcome: T.MANUAL_REVIEW,
       detail: { summary: 'cannot fetch website' },
@@ -449,12 +479,13 @@ describe('setupRunWorkflow', () => {
 
     const out = await setupRunWorkflow({ setupRunId: 'x' });
 
-    expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-    expect(out.terminal).toBe(T.MANUAL_REVIEW);
-    expect(out.ads).toBeNull();
+    expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+    expect(out.terminal).toBe(T.SUCCEEDED);
+    expect(out.ads).not.toBeNull();
+    expect(out.verify.outcome).toBe(T.MANUAL_REVIEW);
   });
 
-  it('still creates Ads when structural verification is skipped (optional GTM)', async () => {
+  it('creates Ads before structural verification when verification is skipped (optional GTM)', async () => {
     mocks.runStructuralVerificationActivity.mockResolvedValue({
       outcome: 'pass',
       skipped: true,
@@ -500,7 +531,7 @@ describe('setupRunWorkflow', () => {
     expect(proxyActivities).toHaveBeenCalledTimes(4);
   });
 
-  it('does not create Ads campaign when structural verification has not passed', async () => {
+  it('still creates Ads campaign when structural verification has not passed', async () => {
     const terminals = ['needs_tracking_fix', 'snippet_pending', 'manual_review'];
     for (const terminal of terminals) {
       Object.values(mocks).forEach((fn) => fn.mockReset());
@@ -511,9 +542,10 @@ describe('setupRunWorkflow', () => {
       });
 
       const out = await setupRunWorkflow({ setupRunId: 'run-block' });
-      expect(out.terminal).toBe(terminal);
-      expect(mocks.createAdsCampaignActivity).not.toHaveBeenCalled();
-      expect(out.ads).toBeNull();
+      expect(out.terminal).toBe(T.SUCCEEDED);
+      expect(mocks.createAdsCampaignActivity).toHaveBeenCalled();
+      expect(out.ads).not.toBeNull();
+      expect(out.verify.outcome).toBe(terminal);
     }
   });
 });

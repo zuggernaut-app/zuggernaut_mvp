@@ -17,6 +17,13 @@ const campaignPlanSchema = new mongoose.Schema(
       ref: 'SetupRun',
       required: true,
     },
+    /** Managed MVP slot: recommended | alternative */
+    slot: {
+      type: String,
+      enum: ['recommended', 'alternative'],
+      default: 'recommended',
+      index: true,
+    },
     status: {
       type: String,
       enum: CAMPAIGN_PLAN_STATUS,
@@ -44,6 +51,6 @@ const campaignPlanSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-campaignPlanSchema.index({ setupRunId: 1 }, { unique: true });
+campaignPlanSchema.index({ setupRunId: 1, slot: 1 }, { unique: true });
 
 module.exports = mongoose.model('CampaignPlan', campaignPlanSchema);

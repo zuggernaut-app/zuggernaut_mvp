@@ -31,6 +31,7 @@ const DEFAULT_CONVERSION_ACTION_TEMPLATES = Object.freeze({
     category: 'PHONE_CALL_LEAD',
     type: 'AD_CALL',
     countingType: 'ONE_PER_CLICK',
+    phoneCallDurationSeconds: 60,
     defaultValue: 0,
     alwaysUseDefaultValue: true,
     status: 'ENABLED',

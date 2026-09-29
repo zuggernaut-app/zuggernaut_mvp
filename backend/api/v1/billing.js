@@ -13,6 +13,9 @@ const {
   StripeClientError,
 } = require('../../services/billing/stripeClient');
 const { upsertSubscriptionFromStripe } = require('../../services/billing/subscriptionGate');
+const { applyDowngradeAdjustmentNeeded } = require('../../services/capabilities/leadCampaignManagementService');
+
+const BusinessContext = mongoose.model('BusinessContext');
 
 const router = express.Router();
 
@@ -144,6 +147,13 @@ router.post('/webhook', async (req, res, next) => {
 
     const event = verifyWebhookSignature(rawBody, signature);
 
+    async function resolvePlanTierFromStripeSubscription(sub) {
+      const priceId = sub?.items?.data?.[0]?.price?.id;
+      if (!priceId) return null;
+      const plan = await Plan.findOne({ stripePriceId: priceId }).select('tier').lean();
+      return plan?.tier ?? null;
+    }
+
     if (event.type === 'checkout.session.completed') {
       const session = event.data.object;
       const userId = session.client_reference_id || session.metadata?.userId;
@@ -155,28 +165,33 @@ router.post('/webhook', async (req, res, next) => {
           status: 'active',
           stripeCustomerId,
           stripeSubscriptionId,
-          planTier: 'starter',
         });
       }
     }
 
     if (
+      event.type === 'customer.subscription.created' ||
       event.type === 'customer.subscription.updated' ||
       event.type === 'customer.subscription.deleted'
     ) {
       const sub = event.data.object;
       const stripeCustomerId = sub.customer;
       const existing = await Subscription.findOne({ stripeCustomerId })
-        .select('+stripeCustomerId')
+        .select('+stripeCustomerId orgId userId planId')
+        .populate('planId')
         .lean();
       if (existing) {
         const status =
           event.type === 'customer.subscription.deleted'
             ? 'canceled'
             : mapStripeStatus(sub.status);
+        const planTier = await resolvePlanTierFromStripeSubscription(sub);
+        const priorTier = existing.planId?.tier ?? null;
+
         await upsertSubscriptionFromStripe({
           userId: existing.userId,
           status,
+          planTier: planTier ?? undefined,
           currentPeriodEnd: sub.current_period_end
             ? sub.current_period_end * 1000
             : undefined,
@@ -184,6 +199,38 @@ router.post('/webhook', async (req, res, next) => {
           stripeSubscriptionId: sub.id,
           cancelAtPeriodEnd: Boolean(sub.cancel_at_period_end),
         });
+
+        if (planTier && priorTier && planTier !== priorTier) {
+          const tierOrder = { starter: 1, middle: 2, top: 3 };
+          if ((tierOrder[planTier] ?? 0) < (tierOrder[priorTier] ?? 0)) {
+            const businesses = await BusinessContext.find(
+              existing.orgId ? { orgId: existing.orgId } : { userId: existing.userId }
+            )
+              .select('businessId')
+              .lean();
+            for (const bc of businesses) {
+              try {
+                await applyDowngradeAdjustmentNeeded(bc.businessId, planTier);
+              } catch (err) {
+                console.error(
+                  JSON.stringify({
+                    msg: 'downgrade adjustment failed',
+                    businessId: bc.businessId?.toString?.() ?? bc.businessId,
+                    error: err?.message ?? String(err),
+                  })
+                );
+              }
+            }
+          }
+        } else if (planTier == null && sub?.items?.data?.[0]?.price?.id) {
+          console.error(
+            JSON.stringify({
+              msg: 'Unknown Stripe price id on subscription webhook',
+              priceId: sub.items.data[0].price.id,
+              stripeSubscriptionId: sub.id,
+            })
+          );
+        }
       }
     }
 

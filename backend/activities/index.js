@@ -6,6 +6,7 @@ const {
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  fillFiveAnswersFromScrapeActivity,
 } = require('./scrapeActivities');
 
 const {
@@ -28,6 +29,11 @@ const {
   runStructuralVerificationActivity,
   createAdsCampaignActivity,
 } = require('./setupRunActivities');
+
+const {
+  gracePauseExpiredSubscriptionsActivity,
+  pollAdsDisapprovalsActivity,
+} = require('./leadCampaignScheduleActivities');
 
 /** Activity name → implementation (see `Worker.create` in `scripts/temporal-worker.js`). */
 module.exports = {
@@ -54,4 +60,7 @@ module.exports = {
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  fillFiveAnswersFromScrapeActivity,
+  gracePauseExpiredSubscriptionsActivity,
+  pollAdsDisapprovalsActivity,
 };

@@ -47,6 +47,10 @@ function renderReview(): ReturnType<typeof render> {
               path="/onboarding/business"
               element={<div data-testid="business-target">business</div>}
             />
+            <Route
+              path="/onboarding/step-0"
+              element={<div data-testid="step0-target">step0</div>}
+            />
             <Route path="/setup" element={<div data-testid="setup-target">setup</div>} />
             <Route
               path="/onboarding/suggestions"
@@ -99,9 +103,18 @@ describe('BusinessReviewPage', () => {
         goals: { primary: 'forms' },
         differentiators: null,
         orderValueHint: null,
+        thankYouUrls: [],
+        uvp: null,
+        competitorLandscape: null,
+        businessScope: null,
+        valueComplexity: null,
+        budgetTier: null,
+        susoVersion: 0,
+        susoVersionUpdatedAt: null,
         confirmedAt: new Date().toISOString(),
       },
       adsReadiness: { ok: true },
+      susoMatrix: { cells: [], gates: [], ctaStyle: null },
     })
 
     const user = userEvent.setup()
@@ -213,9 +226,18 @@ describe('BusinessReviewPage', () => {
         goals: { primary: 'forms' },
         differentiators: null,
         orderValueHint: null,
+        thankYouUrls: [],
+        uvp: null,
+        competitorLandscape: null,
+        businessScope: null,
+        valueComplexity: null,
+        budgetTier: null,
+        susoVersion: 0,
+        susoVersionUpdatedAt: null,
         confirmedAt: new Date().toISOString(),
       },
       adsReadiness: { ok: true },
+      susoMatrix: { cells: [], gates: [], ctaStyle: null },
     })
 
     const user = userEvent.setup()

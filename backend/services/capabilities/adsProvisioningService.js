@@ -2,7 +2,10 @@
 
 const mongoose = require('mongoose');
 const { DEFAULT_REQUESTED_RESOURCES_BY_PROVIDER } = require('../../constants/provisioning');
-const { adsProvisioningIdempotencyKey } = require('../../constants/idempotency');
+const {
+  adsProvisioningIdempotencyKey,
+  legacyAdsProvisioningIdempotencyKey,
+} = require('../../constants/idempotency');
 const {
   createCustomerClient,
   getGoogleAdsLoginCustomerId,
@@ -13,6 +16,13 @@ const { getMccGoogleAdsAccessToken } = require('../integrations/googleTokenServi
 const { hasRequiredIdentifiers } = require('../integrations/providerDiscoveryResult');
 const { buildNewlyCreatedUnderMccLink } = require('./googleAdsMccLinkService');
 const { maybeInjectFailure } = require('../../lib/qaFailureInjection');
+const { SUPPORTED_ACCOUNT_CURRENCIES } = require('../../constants/leadCampaign');
+const {
+  claimProviderResource,
+  finalizeProviderResourceClaim,
+  markProviderResourceClaimFailed,
+  isCreatedProviderArtifact,
+} = require('./providerResourceClaim');
 
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
@@ -29,10 +39,9 @@ class AdsProvisioningError extends Error {
 
 /**
  * @param {import('mongoose').Types.ObjectId | string} businessId
- * @param {import('mongoose').Types.ObjectId | string} setupRunId
  */
-function provisioningArtifactIdempotencyKey(businessId, setupRunId) {
-  return adsProvisioningIdempotencyKey(businessId, setupRunId);
+function provisioningArtifactIdempotencyKey(businessId) {
+  return adsProvisioningIdempotencyKey(businessId);
 }
 
 /**
@@ -40,12 +49,47 @@ function provisioningArtifactIdempotencyKey(businessId, setupRunId) {
  */
 async function findProvisioningArtifact(ctx) {
   const { businessId, setupRunId } = ctx;
-  return IntegrationArtifact.findOne({
+  const v2Key = provisioningArtifactIdempotencyKey(businessId);
+  const byV2 = await IntegrationArtifact.findOne({
     businessId,
-    setupRunId,
     provider: 'google_ads',
-    idempotencyKey: provisioningArtifactIdempotencyKey(businessId, setupRunId),
+    artifactType: 'ads_customer',
+    idempotencyKey: v2Key,
   }).lean();
+  if (byV2) return byV2;
+
+  if (setupRunId) {
+    const legacyKey = legacyAdsProvisioningIdempotencyKey(businessId, setupRunId);
+    const byLegacyKey = await IntegrationArtifact.findOne({
+      businessId,
+      provider: 'google_ads',
+      artifactType: 'ads_customer',
+      idempotencyKey: legacyKey,
+    }).lean();
+    if (byLegacyKey) return byLegacyKey;
+  }
+
+  const conn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
+    .select('providerIdentifiers')
+    .lean();
+  const selectedCustomerId = normalizeCustomerId(conn?.providerIdentifiers?.customerId);
+  if (!selectedCustomerId) return null;
+
+  const matches = await IntegrationArtifact.find({
+    businessId,
+    provider: 'google_ads',
+    artifactType: 'ads_customer',
+    externalId: selectedCustomerId,
+  }).lean();
+
+  const distinctIds = new Set(matches.map((row) => String(row.externalId)));
+  if (distinctIds.size > 1) {
+    throw new AdsProvisioningError(
+      'Multiple Google Ads customer artifacts conflict for this business.',
+      'ADS_CUSTOMER_MANUAL_REVIEW'
+    );
+  }
+  return matches[0] ?? null;
 }
 
 /**
@@ -53,19 +97,21 @@ async function findProvisioningArtifact(ctx) {
  */
 async function persistProvisioningArtifact(ctx) {
   const { businessId, setupRunId, externalId, metadata } = ctx;
+  const idempotencyKey = provisioningArtifactIdempotencyKey(businessId);
   await IntegrationArtifact.findOneAndUpdate(
-    {
-      businessId,
-      setupRunId,
-      provider: 'google_ads',
-      artifactType: 'ads_customer',
-      externalId,
-    },
+    { idempotencyKey },
     {
       $setOnInsert: {
-        idempotencyKey: provisioningArtifactIdempotencyKey(businessId, setupRunId),
+        businessId,
+        setupRunId,
+        provider: 'google_ads',
+        artifactType: 'ads_customer',
+        idempotencyKey,
       },
-      $set: { metadata },
+      $set: {
+        externalId,
+        metadata,
+      },
     },
     { upsert: true, setDefaultsOnInsert: true }
   );
@@ -129,10 +175,11 @@ async function resolveCustomerDisplayName(businessId, customerName) {
  * @param {import('mongoose').Types.ObjectId | string} input.setupRunId
  * @param {import('mongoose').Types.ObjectId | string} input.provisioningRequestId
  * @param {string} [input.customerName]
+ * @param {string} [input.currencyCode] — operator-chosen USD or INR for new accounts
  * @param {import('pino').Logger} [input.logger]
  */
 async function provisionGoogleAdsCustomer(input) {
-  const { businessId, setupRunId, provisioningRequestId, customerName, logger } = input;
+  const { businessId, setupRunId, provisioningRequestId, customerName, currencyCode, logger } = input;
 
   maybeInjectFailure('ads_provisioning');
 
@@ -153,6 +200,12 @@ async function provisionGoogleAdsCustomer(input) {
   try {
     let customerResult;
     const existingArtifact = await findProvisioningArtifact({ businessId, setupRunId });
+    if (existingArtifact?.metadata?.claimState === 'failed' && existingArtifact.metadata?.manualReviewRequired) {
+      throw new AdsProvisioningError(
+        'Google Ads account provisioning requires manual review.',
+        'ADS_CUSTOMER_MANUAL_REVIEW'
+      );
+    }
     if (existingArtifact) {
       customerResult = {
         customerId: existingArtifact.externalId,
@@ -205,17 +258,90 @@ async function provisionGoogleAdsCustomer(input) {
       } else {
         const managerCustomerId = getGoogleAdsLoginCustomerId({ required: true });
         const descriptiveName = await resolveCustomerDisplayName(businessId, customerName);
-        const mccAccessToken = await getMccGoogleAdsAccessToken();
-        const created = await createCustomerClient(mccAccessToken, managerCustomerId, { descriptiveName });
-        customerResult = {
-          customerId: created.customerId,
-          loginCustomerId: managerCustomerId,
-          managerCustomerId,
-          accessibleCustomerIds: [created.customerId],
-          provisioningSource: created.provisioningSource,
-          resourceName: created.resourceName,
-          descriptiveName: created.descriptiveName,
-        };
+        const normalizedCurrency = String(currencyCode ?? process.env.GOOGLE_ADS_DEFAULT_CURRENCY_CODE ?? 'USD')
+          .trim()
+          .toUpperCase();
+        if (!SUPPORTED_ACCOUNT_CURRENCIES.includes(normalizedCurrency)) {
+          throw new AdsProvisioningError(
+            `Unsupported account currency ${normalizedCurrency}. Choose USD or INR.`,
+            'ADS_UNSUPPORTED_CURRENCY'
+          );
+        }
+
+        const idempotencyKey = provisioningArtifactIdempotencyKey(businessId);
+        let claim;
+        try {
+          claim = await claimProviderResource({
+            setupRunId,
+            businessId,
+            provider: 'google_ads',
+            artifactType: 'ads_customer',
+            idempotencyKey,
+            pendingExternalId: `pending:ads-customer:${businessId}`,
+            claimMetadata: { currencyCode: normalizedCurrency },
+          });
+        } catch (err) {
+          if (err?.code === 'PROVIDER_RESOURCE_CLAIM_IN_PROGRESS') {
+            throw new AdsProvisioningError(
+              'Google Ads account provisioning requires manual review.',
+              'ADS_CUSTOMER_MANUAL_REVIEW'
+            );
+          }
+          throw err;
+        }
+
+        if (!claim.claimed && isCreatedProviderArtifact(claim.artifact)) {
+          customerResult = {
+            customerId: claim.artifact.externalId,
+            loginCustomerId: claim.artifact.metadata?.loginCustomerId ?? managerCustomerId,
+            managerCustomerId: claim.artifact.metadata?.managerCustomerId ?? managerCustomerId,
+            accessibleCustomerIds: claim.artifact.metadata?.accessibleCustomerIds ?? [
+              claim.artifact.externalId,
+            ],
+            provisioningSource: claim.artifact.metadata?.provisioningSource ?? 'artifact_reuse',
+            resourceName:
+              claim.artifact.metadata?.resourceName ?? `customers/${claim.artifact.externalId}`,
+            currencyCode: claim.artifact.metadata?.currencyCode ?? normalizedCurrency,
+          };
+        } else {
+          const mccAccessToken = await getMccGoogleAdsAccessToken();
+          let created;
+          try {
+            created = await createCustomerClient(mccAccessToken, managerCustomerId, {
+              descriptiveName,
+              currencyCode: normalizedCurrency,
+            });
+            await finalizeProviderResourceClaim({
+              idempotencyKey,
+              externalId: created.customerId,
+              metadataPatch: {
+                loginCustomerId: managerCustomerId,
+                managerCustomerId,
+                accessibleCustomerIds: [created.customerId],
+                provisioningSource: created.provisioningSource,
+                resourceName: created.resourceName,
+                currencyCode: normalizedCurrency,
+              },
+            });
+          } catch (err) {
+            await markProviderResourceClaimFailed({
+              idempotencyKey,
+              errorCode: err?.code ?? 'ADS_CUSTOMER_CREATE_FAILED',
+              errorMessage: err instanceof Error ? err.message : 'create failed',
+            });
+            throw err;
+          }
+          customerResult = {
+            customerId: created.customerId,
+            loginCustomerId: managerCustomerId,
+            managerCustomerId,
+            accessibleCustomerIds: [created.customerId],
+            provisioningSource: created.provisioningSource,
+            resourceName: created.resourceName,
+            descriptiveName: created.descriptiveName,
+            currencyCode: normalizedCurrency,
+          };
+        }
         logger?.info?.(
           { businessId: String(businessId), setupRunId: String(setupRunId), customerId: customerResult.customerId },
           'google ads customer provisioned via mcc'

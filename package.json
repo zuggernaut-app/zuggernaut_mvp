@@ -6,6 +6,7 @@
   "scripts": {
     "check:before-push": "node scripts/check-before-push.js",
     "test": "npm run test --prefix frontend && npm run test --prefix backend",
-    "ci": "npm run ci --prefix frontend && npm run ci --prefix backend"
+    "ci": "npm run ci --prefix frontend && npm run ci --prefix backend",
+    "marketing:build": "node marketing/build.mjs"
   }
 }

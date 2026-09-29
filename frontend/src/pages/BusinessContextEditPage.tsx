@@ -8,6 +8,7 @@ import { adsReadinessIssueMessages } from '../lib/businessContextAdsReadinessUi'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
+import { useAuth } from '../hooks/useAuth'
 
 function splitLines(raw: string): string[] {
   return raw
@@ -24,6 +25,7 @@ function readPrimaryGoal(goals: unknown): string {
 
 export function BusinessContextEditPage(): ReactElement {
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { businessId } = useParams<{ businessId: string }>()
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -232,9 +234,11 @@ export function BusinessContextEditPage(): ReactElement {
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? <InlineLoading label="Saving…" /> : 'Save changes'}
           </button>
-          <Link className="btn btn-secondary" to="/setup">
-            Cancel
-          </Link>
+          {user?.platformAdmin ? (
+            <Link className="btn btn-secondary" to="/onboarding/step-0">
+              Back to Step 0
+            </Link>
+          ) : null}
         </div>
       </form>
     </PageLayout>

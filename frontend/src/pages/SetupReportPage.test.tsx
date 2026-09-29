@@ -1,15 +1,38 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { startSetupRun } from '../api/setupRuns'
 import { OnboardingProvider } from '../hooks/useOnboardingState'
+import { AuthProvider } from '../hooks/useAuth'
 import { TEST_IDS, seedSession } from '../test/pageTestUtils'
 import { SetupReportPage } from './SetupReportPage'
 import type { SetupRunReportResponse } from '../types/api'
 
 const mockUseSetupRunReport = vi.fn()
 
+vi.mock('../api/setupRuns', () => ({
+  startSetupRun: vi.fn(),
+}))
+
 vi.mock('../hooks/useSetupRunReport', () => ({
   useSetupRunReport: (setupRunId: string | null) => mockUseSetupRunReport(setupRunId),
+}))
+
+const hoisted = vi.hoisted(() => ({
+  mockAuthMe: vi.fn(),
+  mockFetchSoftLaunchSettings: vi.fn(),
+}))
+
+vi.mock('../api/auth', () => ({
+  authMe: hoisted.mockAuthMe,
+  authRegister: vi.fn(),
+  authLogin: vi.fn(),
+  authLogout: vi.fn().mockResolvedValue({ ok: true }),
+}))
+
+vi.mock('../api/settings', () => ({
+  fetchSoftLaunchSettings: hoisted.mockFetchSoftLaunchSettings,
 }))
 
 vi.mock('../components/setup/EnableCampaignCard', () => ({
@@ -115,20 +138,30 @@ function fullReport(overrides: Partial<SetupRunReportResponse['report']> = {}): 
         adsConversionLinks: 1,
       },
       steps: [{ id: 's1', stepName: 'ads_campaign_creation', provider: 'google_ads', status: 'success', attemptCount: 1, startedAt: null, endedAt: null, lastErrorSummary: null, details: null }],
+      susoStale: false,
+      susoVersions: { current: 0, artifact: null },
       ...overrides,
     },
   }
 }
 
 function renderReport(path: string): ReturnType<typeof render> {
+  hoisted.mockAuthMe.mockResolvedValue({
+    user: { id: TEST_IDS.user, email: 'whoever@example.com', name: 'Who' },
+  })
+  hoisted.mockFetchSoftLaunchSettings.mockResolvedValue({ softLaunchMode: false })
+
   return render(
     <MemoryRouter initialEntries={[path]}>
-      <OnboardingProvider>
-        <Routes>
-          <Route path="/setup/report/:setupRunId" element={<SetupReportPage />} />
-          <Route path="/setup/report" element={<SetupReportPage />} />
-        </Routes>
-      </OnboardingProvider>
+      <AuthProvider>
+        <OnboardingProvider>
+          <Routes>
+            <Route path="/setup/report/:setupRunId" element={<SetupReportPage />} />
+            <Route path="/setup/report" element={<SetupReportPage />} />
+            <Route path="/setup/progress/:setupRunId" element={<div data-testid="progress-target">progress</div>} />
+          </Routes>
+        </OnboardingProvider>
+      </AuthProvider>
     </MemoryRouter>,
   )
 }
@@ -546,5 +579,69 @@ describe('SetupReportPage', () => {
     expect(screen.getByText('Google Tag Manager')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /Support details/i })).toBeInTheDocument()
     expect(screen.getByText(/provision gtm resources/i)).toBeInTheDocument()
+  })
+
+  it('shows stale SUSO banner when susoStale is true', async () => {
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        susoStale: true,
+        susoVersions: { current: 2, artifact: 1 },
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    expect(
+      await screen.findByText(/campaigns were generated under suso version 1/i),
+    ).toBeInTheDocument()
+  })
+
+  it('does not show stale SUSO banner when susoStale is false', async () => {
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({ susoStale: false }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    await screen.findByRole('heading', { name: /Outcome/i })
+    expect(screen.queryByText(/campaigns were generated under suso version/i)).not.toBeInTheDocument()
+  })
+
+  it('force re-run calls POST /setup-runs with force after confirmation', async () => {
+    vi.mocked(startSetupRun).mockResolvedValueOnce({
+      setupRunId: 'run-force-1',
+      workflowId: 'wf-force',
+      status: 'RUNNING',
+    })
+
+    mockUseSetupRunReport.mockReturnValue({
+      report: fullReport({
+        susoStale: true,
+        susoVersions: { current: 2, artifact: 1 },
+      }).report,
+      loading: false,
+      error: null,
+      lastUpdatedAt: Date.now(),
+      refetch: vi.fn(),
+    })
+
+    const user = userEvent.setup()
+    renderReport(`/setup/report/${TEST_IDS.setupRun}`)
+
+    await user.click(await screen.findByRole('button', { name: /review \/ force re-run/i }))
+    await user.click(screen.getByRole('button', { name: /confirm force re-run/i }))
+
+    await waitFor(() => {
+      expect(startSetupRun).toHaveBeenCalledWith(TEST_IDS.business, { force: true })
+    })
+    expect(await screen.findByTestId('progress-target')).toBeInTheDocument()
   })
 })

@@ -20,6 +20,14 @@ const scrapeRunSchema = new mongoose.Schema(
       index: true,
     },
     websiteUrl: { type: String, trim: true, required: true },
+    /** onboarding | other — onboarding runs are capped at one per business. */
+    purpose: { type: String, trim: true, default: 'other', index: true },
+    claimState: {
+      type: String,
+      enum: ['claiming', 'running', 'dispatch_failed', 'succeeded', 'failed'],
+      index: true,
+    },
+    claimLeaseExpiresAt: { type: Date },
     temporalWorkflowId: { type: String, index: true, sparse: true },
     status: {
       type: String,
@@ -38,5 +46,12 @@ const scrapeRunSchema = new mongoose.Schema(
 );
 
 scrapeRunSchema.index({ businessId: 1, updatedAt: -1 });
+scrapeRunSchema.index(
+  { businessId: 1, purpose: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { purpose: 'onboarding' },
+  }
+);
 
 module.exports = mongoose.model('ScrapeRun', scrapeRunSchema);

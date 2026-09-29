@@ -7,7 +7,10 @@ const {
   inferDefaultCountryFromUrl,
 } = require('./phoneUtils');
 
-const MAX_ADDITIONAL_PAGES = 3;
+const { SCRAPE_MAX_PAGES } = require('../../constants/leadCampaign');
+
+/** Homepage counts as one page; additional fetches are capped at SCRAPE_MAX_PAGES - 1. */
+const MAX_ADDITIONAL_PAGES = Math.max(0, SCRAPE_MAX_PAGES - 1);
 const LIKELY_CONTACT_PATHS = [
   '/contact',
   '/contact-us',
@@ -112,6 +115,7 @@ function getLikelyPageUrls($, baseUrl) {
     if (!normalized || normalized === normalizedBaseUrl || !isSameOrigin(normalized, baseUrl)) {
       return;
     }
+    discovered.add(normalized);
     const haystack = `${href || ''} ${linkText}`.toLowerCase();
     if (PAGE_HINT_PATTERNS.some((pattern) => pattern.test(haystack))) {
       discovered.add(normalized);

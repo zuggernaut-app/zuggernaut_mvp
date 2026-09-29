@@ -3,6 +3,7 @@ import {
   MAX_NAME_LENGTH,
   MAX_URL_LENGTH,
   isValidEmail,
+  isValidPhone,
   validateHttpUrl,
   validateLoginForm,
   validateRegisterForm,
@@ -28,6 +29,20 @@ describe('isValidEmail', () => {
     const email = `${'a'.repeat(MAX_EMAIL_LENGTH)}b@x.co`
     expect(email.length).toBeGreaterThan(MAX_EMAIL_LENGTH)
     expect(isValidEmail(email)).toBe(false)
+  })
+})
+
+describe('isValidPhone', () => {
+  it('accepts common formatted numbers', () => {
+    expect(isValidPhone('+1 (555) 123-4567')).toBe(true)
+    expect(isValidPhone('555-123-4567')).toBe(true)
+    expect(isValidPhone('5551234567')).toBe(true)
+  })
+
+  it('rejects empty or too few digits', () => {
+    expect(isValidPhone('')).toBe(false)
+    expect(isValidPhone('   ')).toBe(false)
+    expect(isValidPhone('123-456')).toBe(false)
   })
 })
 

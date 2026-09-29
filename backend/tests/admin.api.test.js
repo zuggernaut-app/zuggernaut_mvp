@@ -22,6 +22,19 @@ describe('admin API', () => {
     expect(Array.isArray(res.body.users)).toBe(true);
   });
 
+  it('returns 403 for non-admin fact-check', async () => {
+    const BusinessContext = mongoose.model('BusinessContext');
+    const { agent, userId } = await registerAgent(app, 'not-admin-fact@example.com');
+    const bc = await BusinessContext.create({
+      userId: new mongoose.Types.ObjectId(userId),
+      businessName: 'Fact Check Biz',
+    });
+    await agent
+      .patch(`/api/v1/admin/businesses/${bc.businessId.toString()}/fact-check`)
+      .send({ businessName: 'Updated' })
+      .expect(403);
+  });
+
   it('returns setup run report for platform admin', async () => {
     const SetupRun = mongoose.model('SetupRun');
     const BusinessContext = mongoose.model('BusinessContext');

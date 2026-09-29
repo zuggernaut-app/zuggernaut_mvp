@@ -1,9 +1,11 @@
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { RequirePlatformAdmin } from '../../app/RequirePlatformAdmin'
 import { AuthProvider } from '../../hooks/useAuth'
 import { OnboardingProvider } from '../../hooks/useOnboardingState'
+import { getStoredBusinessId } from '../../utils/storage'
 import { AdminConsolePage } from './AdminConsolePage'
 
 const hoisted = vi.hoisted(() => ({
@@ -59,6 +61,7 @@ function renderAdminConsole(initialEntry = '/admin', platformAdmin = true) {
             </AuthProvider>
           }
         />
+        <Route path="/setup" element={<div>Start setup page</div>} />
       </Routes>
     </MemoryRouter>,
   )
@@ -67,6 +70,7 @@ function renderAdminConsole(initialEntry = '/admin', platformAdmin = true) {
 describe('AdminConsolePage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     hoisted.mockListBusinessContexts.mockResolvedValue({ businessContexts: [] })
     hoisted.mockAdminListUsers.mockResolvedValue({
       users: [{ id: 'user-1', email: 'user@example.com', name: 'User', platformAdmin: false }],
@@ -106,6 +110,27 @@ describe('AdminConsolePage', () => {
     expect(await screen.findByRole('heading', { name: /admin console/i })).toBeInTheDocument()
     expect(await screen.findByText(/user@example.com/)).toBeInTheDocument()
     expect(screen.getByText(/Biz One/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /business setup/i })).toHaveAttribute(
+      'href',
+      '/admin/businesses/biz-1',
+    )
+    expect(screen.getByRole('link', { name: /business strategy/i })).toHaveAttribute(
+      'href',
+      '/admin/businesses/biz-1/strategy',
+    )
+    expect(screen.queryByRole('link', { name: /account setup/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /account setup/i })).toBeInTheDocument()
+  })
+
+  it('Account setup sets session business and opens Start setup', async () => {
+    const user = userEvent.setup()
+    renderAdminConsole('/admin', true)
+
+    expect(await screen.findByText(/Biz One/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /account setup/i }))
+
+    expect(getStoredBusinessId()).toBe('biz-1')
+    expect(await screen.findByText('Start setup page')).toBeInTheDocument()
   })
 
   it('redirects non-admin users to home', async () => {

@@ -21,7 +21,7 @@ const {
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 
 const CONVERSION_ACTION_QUERY =
-  "SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric, conversion_action.tag_snippets FROM conversion_action WHERE conversion_action.status != 'REMOVED'";
+  "SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric, conversion_action.phone_call_duration_seconds, conversion_action.tag_snippets FROM conversion_action WHERE conversion_action.status != 'REMOVED'";
 
 /**
  * @param {object} row — Google Ads conversionAction resource or mock row
@@ -62,6 +62,8 @@ function normalizeConversionAction(row) {
     status: row.status ?? null,
     type: row.type ?? null,
     includeInConversionsMetric: row.includeInConversionsMetric === true,
+    phoneCallDurationSeconds:
+      row.phoneCallDurationSeconds ?? row.phone_call_duration_seconds ?? null,
     ...(tagSnippets ? { tagSnippets } : {}),
     ...(measurement
       ? {

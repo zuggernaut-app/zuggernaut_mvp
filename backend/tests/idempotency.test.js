@@ -29,9 +29,7 @@ describe('idempotency contract', () => {
     expect(gtmProvisioningIdempotencyKey(businessId, setupRunId, 'account')).toBe(
       `gtm:account:${businessId}:${setupRunId}`
     );
-    expect(adsProvisioningIdempotencyKey(businessId, setupRunId)).toBe(
-      `ads:customer:${businessId}:${setupRunId}`
-    );
+    expect(adsProvisioningIdempotencyKey(businessId)).toBe(`ads:customer:v2:${businessId}`);
   });
 
   it('documents every provider-changing setup step', () => {

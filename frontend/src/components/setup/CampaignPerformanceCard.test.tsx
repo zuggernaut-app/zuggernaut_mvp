@@ -17,15 +17,20 @@ describe('CampaignPerformanceCard', () => {
     hoisted.mockGetPerformance.mockResolvedValue({
       performance: {
         businessId: 'biz1',
-        campaignResourceName: 'customers/1/campaigns/2',
-        metrics: {
-          impressions: 500,
-          clicks: 40,
-          costMicros: 12_000_000,
-          conversions: 3,
-          dateRangeDays: 30,
+        slots: {
+          recommended: {
+            campaignResourceName: 'customers/1/campaigns/2',
+            metrics: {
+              impressions: 500,
+              clicks: 40,
+              costMicros: 12_000_000,
+              conversions: 3,
+              dateRangeDays: 30,
+            },
+            source: 'google_ads_api_mock',
+          },
+          alternative: null,
         },
-        source: 'google_ads_api_mock',
       },
     })
   })
@@ -36,7 +41,7 @@ describe('CampaignPerformanceCard', () => {
       expect(screen.getByText(/500/)).toBeInTheDocument()
     })
     expect(screen.getByText(/40/)).toBeInTheDocument()
-    expect(screen.getByText(/3/)).toBeInTheDocument()
+    expect(screen.getByText(/Conversions:/)).toHaveTextContent('3')
   })
 
   it('shows error on ApiError', async () => {

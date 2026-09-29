@@ -115,6 +115,82 @@ async function fetchCampaignPerformanceMetrics(ctx) {
   };
 }
 
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.customerId
+ * @param {string} ctx.adResourceName
+ */
+async function fetchAdPolicyStatus(ctx) {
+  const { businessId, customerId, adResourceName } = ctx;
+  const normalizedCustomerId = normalizeCustomerId(customerId);
+  if (!normalizedCustomerId || !adResourceName) {
+    throw new GoogleAdsApiError('Invalid ad policy query input.', 'GOOGLE_ADS_INVALID_AD');
+  }
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      approvalStatus: 'APPROVED',
+      policyTopic: null,
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError('Google Ads API is not enabled.', 'GOOGLE_ADS_API_NOT_ENABLED');
+  }
+
+  const escaped = String(adResourceName).replace(/'/g, "\\'");
+  const query = `
+    SELECT
+      ad_group_ad.policy_summary.approval_status,
+      ad_group_ad.policy_summary.policy_topic_entries
+    FROM ad_group_ad
+    WHERE ad_group_ad.resource_name = '${escaped}'
+    LIMIT 1
+  `;
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, normalizedCustomerId);
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedCustomerId}/googleAds:search`);
+  const res = await withProviderRateLimit('google_ads', () =>
+    googleAdsPost(
+      url,
+      { query },
+      {
+        headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+        timeout: getGoogleAdsRequestTimeoutMs(),
+        validateStatus: () => true,
+      }
+    )
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw await createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_POLICY_QUERY_FAILED',
+      { label: 'Google Ads ad policy', action: 'googleAds:search' }
+    );
+  }
+
+  const row = Array.isArray(res.data?.results) ? res.data.results[0] : null;
+  const summary = row?.adGroupAd?.policySummary ?? row?.ad_group_ad?.policy_summary ?? {};
+  const approvalStatus = summary.approvalStatus ?? summary.approval_status ?? 'UNKNOWN';
+  const topics = summary.policyTopicEntries ?? summary.policy_topic_entries ?? [];
+  const firstTopic = Array.isArray(topics) && topics.length > 0 ? topics[0] : null;
+  const policyTopic =
+    typeof firstTopic === 'string'
+      ? firstTopic
+      : firstTopic?.topic ?? firstTopic?.policyTopic ?? null;
+
+  return {
+    approvalStatus,
+    policyTopic: policyTopic ? String(policyTopic) : null,
+    source: 'google_ads_api',
+  };
+}
+
 module.exports = {
   fetchCampaignPerformanceMetrics,
+  fetchAdPolicyStatus,
 };

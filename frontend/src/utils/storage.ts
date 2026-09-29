@@ -9,6 +9,20 @@ export const STORAGE_KEYS = {
   SETUP_RUN_ID: `${PREFIX}setupRunId`,
 } as const
 
+const INTAKE_DRAFT_PREFIX = `${PREFIX}intakeDraft:`
+
+export type IntakeDraftFields = {
+  websiteUrl: string
+  businessName: string
+  primaryOffer: string
+  whoBuysToday: string
+  serviceArea: string
+  orderValueHint: string
+  howBuyersContact: string
+  phone: string
+  email: string
+}
+
 function readJson<T>(raw: string | null): T | null {
   if (!raw) return null
   try {
@@ -60,6 +74,19 @@ export function setScrapePreview(preview: ScrapePreviewState): void {
 
 export function clearScrapePreview(): void {
   localStorage.removeItem(STORAGE_KEYS.SCRAPE_PREVIEW)
+}
+
+/** Survives OAuth redirect in the same tab; scoped per businessId. */
+export function getIntakeDraft(businessId: string): IntakeDraftFields | null {
+  return readJson<IntakeDraftFields>(sessionStorage.getItem(`${INTAKE_DRAFT_PREFIX}${businessId}`))
+}
+
+export function setIntakeDraft(businessId: string, fields: IntakeDraftFields): void {
+  sessionStorage.setItem(`${INTAKE_DRAFT_PREFIX}${businessId}`, JSON.stringify(fields))
+}
+
+export function clearIntakeDraft(businessId: string): void {
+  sessionStorage.removeItem(`${INTAKE_DRAFT_PREFIX}${businessId}`)
 }
 
 /** Clear onboarding session data (keep userId for signed-in dev flow if desired). */

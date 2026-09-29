@@ -149,6 +149,7 @@ Tests are broad and mock-first (MongoMemoryServer). Several suites **encode bad 
 | [`PHASE13_TESTING.md`](./PHASE13_TESTING.md) | E2E / embedded Temporal |
 | [`PHASE14_DEPLOYMENT.md`](./PHASE14_DEPLOYMENT.md) | Operator checklist |
 | [`V1_REMEDIATION_EXECUTION.md`](./V1_REMEDIATION_EXECUTION.md) | Earlier remediation phases (distinct from this backlog) |
+| [`CUSTOMER_ONBOARDING_HARDENING.md`](./CUSTOMER_ONBOARDING_HARDENING.md) | Tier 0–3 customer-readiness plan (RCA + one-shot checklist) |
 
 ---
 

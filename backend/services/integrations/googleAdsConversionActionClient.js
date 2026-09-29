@@ -115,6 +115,10 @@ function buildConversionActionCreatePayload(config) {
 
   // includeInConversionsMetric is immutable on create; primary_for_goal is set separately.
   // valueSettings must be nested — flat defaultValue/alwaysUseDefaultValue are rejected.
+  if (config.type === 'AD_CALL' && config.phoneCallDurationSeconds != null) {
+    payload.phoneCallDurationSeconds = config.phoneCallDurationSeconds;
+  }
+
   if (VALUE_SETTINGS_TYPES.has(config.type)) {
     const valueSettings = {};
     if (config.defaultValue !== undefined) {
@@ -248,8 +252,64 @@ async function createConversionAction(ctx) {
   };
 }
 
+/**
+ * Update phone_call_duration_seconds when existing value is not 60.
+ *
+ * @param {object} ctx
+ */
+async function updateConversionActionPhoneDuration(ctx) {
+  const { businessId, customerId, resourceName, phoneCallDurationSeconds = 60 } = ctx;
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return { resourceName, phoneCallDurationSeconds, source: 'google_ads_api_mock' };
+  }
+
+  if (!isConversionActionCreationEnabled()) {
+    throw new GoogleAdsApiError(
+      'Google Ads conversion action updates are disabled.',
+      'GOOGLE_ADS_CONVERSION_CREATION_DISABLED'
+    );
+  }
+
+  const normalizedCustomerId = normalizeCustomerId(customerId);
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, normalizedCustomerId);
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedCustomerId}/conversionActions:mutate`);
+  const res = await googleAdsPost(
+    url,
+    {
+      operations: [
+        {
+          update: {
+            resourceName,
+            phoneCallDurationSeconds,
+          },
+          updateMask: 'phoneCallDurationSeconds',
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_CONVERSION_ACTION_UPDATE_FAILED',
+      { label: 'Google Ads conversion action update', action: 'conversionActions:mutate' }
+    );
+  }
+
+  return { resourceName, phoneCallDurationSeconds, source: 'google_ads_api' };
+}
+
 module.exports = {
   createConversionAction: (ctx) => withProviderRateLimit('google_ads', () => createConversionAction(ctx)),
+  updateConversionActionPhoneDuration: (ctx) =>
+    withProviderRateLimit('google_ads', () => updateConversionActionPhoneDuration(ctx)),
   createConversionActionMock,
   mockExternalIdFromIdempotencyKey,
   buildConversionActionCreatePayload,

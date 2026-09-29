@@ -19,6 +19,8 @@ function assertWorkerEnvironment() {
   const nodeEnv = process.env.NODE_ENV || 'development';
   if (nodeEnv === 'test') return;
   verifyTokenEncryptionConfigured();
+  const { assertLlmEnvironment } = require('../ai/assertLlmEnvironment');
+  assertLlmEnvironment();
 }
 
 module.exports = { assertAuthEnvironment, assertWorkerEnvironment };

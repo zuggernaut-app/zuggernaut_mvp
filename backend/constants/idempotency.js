@@ -99,10 +99,21 @@ function gtmProvisioningIdempotencyKey(businessId, setupRunId, resource) {
 }
 
 /**
+ * Business-scoped Ads customer provisioning key (v2).
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ */
+function adsProvisioningIdempotencyKey(businessId) {
+  return `ads:customer:v2:${businessId}`;
+}
+
+/**
+ * Legacy setup-run-scoped key retained for migration lookups.
+ *
  * @param {import('mongoose').Types.ObjectId | string} businessId
  * @param {import('mongoose').Types.ObjectId | string} setupRunId
  */
-function adsProvisioningIdempotencyKey(businessId, setupRunId) {
+function legacyAdsProvisioningIdempotencyKey(businessId, setupRunId) {
   return `ads:customer:${businessId}:${setupRunId}`;
 }
 
@@ -124,7 +135,7 @@ const PROVIDER_MUTATION_CONTRACT = Object.freeze([
     provider: 'google_ads',
     service: 'adsProvisioningService',
     artifactTypes: ['ads_customer'],
-    idempotencyKey: (ctx) => adsProvisioningIdempotencyKey(ctx.businessId, ctx.setupRunId),
+    idempotencyKey: (ctx) => adsProvisioningIdempotencyKey(ctx.businessId),
   },
   {
     stepName: SETUP_STEP_NAMES.GTM_CONVERSION_SETUP,
@@ -178,5 +189,6 @@ module.exports = {
   adsConversionActionCreationIdempotencyKey,
   gtmProvisioningIdempotencyKey,
   adsProvisioningIdempotencyKey,
+  legacyAdsProvisioningIdempotencyKey,
   PROVIDER_MUTATION_CONTRACT,
 };

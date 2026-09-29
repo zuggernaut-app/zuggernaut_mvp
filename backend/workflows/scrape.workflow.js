@@ -8,6 +8,7 @@ const {
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  fillFiveAnswersFromScrapeActivity,
 } = proxyActivities({
   startToCloseTimeout: '4 minutes',
   retry: {
@@ -68,6 +69,10 @@ async function scrapeWorkflow(input) {
     suggested,
     rawPayload,
   });
+
+  if (safe.purpose === 'onboarding' && status === 'SUCCEEDED') {
+    await fillFiveAnswersFromScrapeActivity({ businessId, suggested });
+  }
 
   return {
     workflow: 'scrapeWorkflow',

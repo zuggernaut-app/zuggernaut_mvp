@@ -16,6 +16,7 @@ const {
   assertBusinessMembershipOrOwnership,
   MembershipCheckError,
 } = require('../../lib/auth/membershipCheck');
+const { isPlatformAdminUser } = require('../../api/v1/lib/platformAdminBusinessAccess');
 
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 const BusinessContext = mongoose.model('BusinessContext');
@@ -52,6 +53,9 @@ class AdsCampaignManagementError extends Error {
  * @param {import('mongoose').Types.ObjectId} businessId
  */
 async function assertUserOwnsBusiness(userId, businessId) {
+  if (await isPlatformAdminUser(userId)) {
+    return;
+  }
   try {
     await assertBusinessMembershipOrOwnership(userId, businessId.toString());
   } catch (err) {

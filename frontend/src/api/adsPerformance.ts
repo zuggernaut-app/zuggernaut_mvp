@@ -8,12 +8,22 @@ export type CampaignPerformanceMetrics = {
   dateRangeDays: number
 }
 
+export type SlotPerformanceEntry = {
+  campaignResourceName: string
+  metrics: CampaignPerformanceMetrics
+  source: string
+} | null
+
 export type CampaignPerformanceResponse = {
   performance: {
     businessId: string
-    campaignResourceName: string
-    metrics: CampaignPerformanceMetrics
-    source: string
+    slots?: {
+      recommended: SlotPerformanceEntry
+      alternative: SlotPerformanceEntry
+    }
+    campaignResourceName?: string
+    metrics?: CampaignPerformanceMetrics
+    source?: string
   }
 }
 

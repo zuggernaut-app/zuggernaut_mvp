@@ -15,6 +15,7 @@ require('./ProviderSnapshot');
 require('./IntegrationArtifact');
 require('./AuditReport');
 require('./CampaignPlan');
+require('./LeadCampaignSet');
 require('./Plan');
 require('./Subscription');
 require('./Org');
@@ -34,6 +35,7 @@ module.exports = {
   IntegrationArtifact: require('./IntegrationArtifact'),
   AuditReport: require('./AuditReport'),
   CampaignPlan: require('./CampaignPlan'),
+  LeadCampaignSet: require('./LeadCampaignSet'),
   Plan: require('./Plan'),
   Subscription: require('./Subscription'),
   Org: require('./Org'),

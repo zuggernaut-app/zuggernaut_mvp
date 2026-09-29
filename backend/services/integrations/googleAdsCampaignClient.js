@@ -33,14 +33,122 @@ function mockResourceName(customerId, collection, logicalKey) {
 }
 
 /**
+ * @param {string} prefix
+ * @param {string} setupRunId
+ * @param {'recommended' | 'alternative' | undefined | null} [slot]
+ */
+function providerLogicalKey(prefix, setupRunId, slot = 'recommended') {
+  if (!slot || slot === 'recommended') {
+    return `${prefix}-${setupRunId}`;
+  }
+  return `${prefix}-${setupRunId}-${slot}`;
+}
+
+/**
+ * @param {string} setupRunId
+ * @param {'recommended' | 'alternative' | undefined | null} [slot]
+ * @param {number | null | undefined} [regenerationNumber]
+ */
+function responsiveSearchAdLogicalKey(setupRunId, slot = 'recommended', regenerationNumber) {
+  const regenSuffix = regenerationNumber != null ? `-regen-${regenerationNumber}` : '';
+  if (!slot || slot === 'recommended') {
+    return `zug-ad-${setupRunId}${regenSuffix}`;
+  }
+  return `zug-ad-${setupRunId}-${slot}${regenSuffix}`;
+}
+
+/**
+ * @param {string} setupRunId
+ * @param {number} keywordIndex
+ * @param {'recommended' | 'alternative' | undefined | null} [slot]
+ */
+function keywordLogicalKey(setupRunId, keywordIndex, slot = 'recommended') {
+  if (!slot || slot === 'recommended') {
+    return `zug-kw-${setupRunId}-${keywordIndex}`;
+  }
+  return `zug-kw-${setupRunId}-${slot}-${keywordIndex}`;
+}
+
+/**
+ * @param {string} setupRunId
+ * @param {number} geoIndex
+ * @param {'recommended' | 'alternative' | undefined | null} [slot]
+ */
+function geoLogicalKey(setupRunId, geoIndex, slot = 'recommended') {
+  if (!slot || slot === 'recommended') {
+    return `zug-geo-${setupRunId}-${geoIndex}`;
+  }
+  return `zug-geo-${setupRunId}-${slot}-${geoIndex}`;
+}
+
+/**
+ * GAQL to find a campaign budget by exact name.
+ *
+ * @param {string} budgetName
+ */
+function buildFindBudgetByNameQuery(budgetName) {
+  const escaped = escapeGaqlLiteral(budgetName);
+  return [
+    'SELECT campaign_budget.resource_name, campaign_budget.name',
+    'FROM campaign_budget',
+    `WHERE campaign_budget.name = '${escaped}'`,
+    'LIMIT 1',
+  ].join('\n');
+}
+
+/**
+ * @param {object} ctx
+ * @param {import('mongoose').Types.ObjectId | string} ctx.businessId
+ * @param {string} ctx.customerId
+ * @param {string} ctx.budgetName
+ * @returns {Promise<string | null>}
+ */
+async function findExistingBudgetResourceNameByName(ctx) {
+  const { businessId, customerId: customerIdInput, budgetName } = ctx;
+  const customerId = normalizeCustomerId(customerIdInput);
+  if (!customerId || !String(budgetName ?? '').trim()) {
+    return null;
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
+  const res = await googleAdsPost(
+    url,
+    { query: buildFindBudgetByNameQuery(budgetName) },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_BUDGET_SEARCH_FAILED',
+      {
+        label: 'Google Ads budget search by name',
+        action: 'googleAds:search',
+        customerIds: [customerId],
+      }
+    );
+  }
+
+  const results = Array.isArray(res.data?.results) ? res.data.results : [];
+  const resourceName = results[0]?.campaignBudget?.resourceName;
+  return typeof resourceName === 'string' && resourceName.trim() ? resourceName.trim() : null;
+}
+
+/**
  * @param {object} ctx
  * @param {string} ctx.customerId
  * @param {string} ctx.setupRunId
  * @param {object} ctx.intent
  */
 async function createCampaignBudget(ctx) {
-  const { customerId, setupRunId, intent } = ctx;
-  const logicalKey = `zug-budget-${setupRunId}`;
+  const { customerId, setupRunId, intent, slot = 'recommended' } = ctx;
+  const logicalKey = providerLogicalKey('zug-budget', setupRunId, slot);
   const budget = intent.campaign?.budget ?? intent.budget;
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
@@ -57,9 +165,20 @@ async function createCampaignBudget(ctx) {
     );
   }
 
-  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(ctx.businessId, customerId);
+  const normalizedCustomerId = normalizeCustomerId(customerId);
+  const budgetName = budget?.name;
+  const existingResourceName = await findExistingBudgetResourceNameByName({
+    businessId: ctx.businessId,
+    customerId: normalizedCustomerId,
+    budgetName,
+  });
+  if (existingResourceName) {
+    return { resourceName: existingResourceName, source: 'google_ads_api_reused' };
+  }
 
-  const url = buildGoogleAdsApiUrl(`customers/${customerId}/campaignBudgets:mutate`);
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(ctx.businessId, normalizedCustomerId);
+
+  const url = buildGoogleAdsApiUrl(`customers/${normalizedCustomerId}/campaignBudgets:mutate`);
   const res = await googleAdsPost(
     url,
     {
@@ -410,8 +529,8 @@ async function findExistingAdGroupResourceNameByName(ctx) {
  * @param {object} ctx
  */
 async function createCampaign(ctx) {
-  const { customerId, setupRunId, intent, budgetResourceName } = ctx;
-  const logicalKey = `zug-campaign-${setupRunId}`;
+  const { customerId, setupRunId, intent, budgetResourceName, slot = 'recommended' } = ctx;
+  const logicalKey = providerLogicalKey('zug-campaign', setupRunId, slot);
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -479,8 +598,8 @@ async function createCampaign(ctx) {
  * @param {object} ctx
  */
 async function createAdGroup(ctx) {
-  const { customerId, setupRunId, intent, campaignResourceName } = ctx;
-  const logicalKey = `zug-adgroup-${setupRunId}`;
+  const { customerId, setupRunId, intent, campaignResourceName, slot = 'recommended' } = ctx;
+  const logicalKey = providerLogicalKey('zug-adgroup', setupRunId, slot);
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -707,8 +826,9 @@ async function createAdGroupKeyword(ctx) {
     keywordText,
     matchType,
     keywordIndex,
+    slot = 'recommended',
   } = ctx;
-  const logicalKey = `zug-kw-${setupRunId}-${keywordIndex}`;
+  const logicalKey = keywordLogicalKey(setupRunId, keywordIndex, slot);
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -895,8 +1015,8 @@ function isDuplicateCampaignGeoTargetError(err) {
  * @param {number} ctx.geoIndex
  */
 async function createCampaignGeoTarget(ctx) {
-  const { customerId, setupRunId, campaignResourceName, geoTargetConstant, geoIndex } = ctx;
-  const logicalKey = `zug-geo-${setupRunId}-${geoIndex}`;
+  const { customerId, setupRunId, campaignResourceName, geoTargetConstant, geoIndex, slot = 'recommended' } = ctx;
+  const logicalKey = geoLogicalKey(setupRunId, geoIndex, slot);
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -964,8 +1084,8 @@ async function createCampaignGeoTarget(ctx) {
  * @param {object} ctx
  */
 async function createResponsiveSearchAd(ctx) {
-  const { customerId, setupRunId, intent, adGroupResourceName } = ctx;
-  const logicalKey = `zug-ad-${setupRunId}`;
+  const { customerId, setupRunId, intent, adGroupResourceName, regenerationNumber, slot = 'recommended' } = ctx;
+  const logicalKey = responsiveSearchAdLogicalKey(setupRunId, slot, regenerationNumber);
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -1505,8 +1625,8 @@ async function findExistingCustomConversionGoalResourceNameByName(ctx) {
  * @param {string[]} ctx.conversionActionResourceNames
  */
 async function createCustomConversionGoal(ctx) {
-  const { customerId, setupRunId, name, conversionActionResourceNames } = ctx;
-  const logicalKey = `zug-custom-goal-${setupRunId}`;
+  const { customerId, setupRunId, name, conversionActionResourceNames, slot = 'recommended' } = ctx;
+  const logicalKey = providerLogicalKey('zug-custom-goal', setupRunId, slot);
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -1577,9 +1697,9 @@ async function createCustomConversionGoal(ctx) {
  * @param {string} ctx.customConversionGoalResourceName
  */
 async function linkCampaignToCustomConversionGoal(ctx) {
-  const { customerId, setupRunId, campaignResourceName, customConversionGoalResourceName } = ctx;
+  const { customerId, setupRunId, campaignResourceName, customConversionGoalResourceName, slot = 'recommended' } = ctx;
   const campaignId = extractCampaignIdFromResourceName(campaignResourceName);
-  const logicalKey = `zug-goal-config-${setupRunId}-${campaignId}`;
+  const logicalKey = providerLogicalKey(`zug-goal-config-${campaignId}`, setupRunId, slot);
 
   if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
     return {
@@ -1619,6 +1739,194 @@ async function linkCampaignToCustomConversionGoal(ctx) {
   return { resourceName, source: 'google_ads_api' };
 }
 
+/**
+ * Production call asset linked to AD_CALL conversion action.
+ *
+ * @param {object} ctx
+ */
+async function createCallAsset(ctx) {
+  const {
+    businessId,
+    customerId,
+    setupRunId,
+    campaignResourceName,
+    phoneNumber,
+    countryCode = 'US',
+    conversionActionResourceName,
+    slot = 'recommended',
+  } = ctx;
+
+  if (!conversionActionResourceName) {
+    throw new GoogleAdsApiError(
+      'Call conversion action resource is required before creating call asset.',
+      'ADS_CALL_CONVERSION_REQUIRED'
+    );
+  }
+
+  const resourceLabel = providerLogicalKey('zug-call', setupRunId, slot);
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    const assetResourceName = mockResourceName(customerId, 'assets', resourceLabel);
+    return {
+      assetResourceName,
+      campaignAssetResourceName: mockResourceName(customerId, 'campaignAssets', `${resourceLabel}-link`),
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError('Google Ads API is not enabled.', 'GOOGLE_ADS_API_NOT_ENABLED');
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
+
+  const assetRes = await googleAdsPost(
+    buildGoogleAdsApiUrl(`customers/${customerId}/assets:mutate`),
+    {
+      operations: [
+        {
+          create: {
+            callAsset: {
+              countryCode,
+              phoneNumber,
+              callConversionAction: conversionActionResourceName,
+            },
+          },
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  const assetResourceName = extractMutateResourceName(assetRes, 'call asset', customerId);
+  const linkResult = await linkCallAssetToCampaign({
+    businessId,
+    customerId,
+    campaignResourceName,
+    assetResourceName,
+    setupRunId,
+    slot,
+  });
+
+  return {
+    assetResourceName,
+    campaignAssetResourceName: linkResult.campaignAssetResourceName,
+    source: 'google_ads_api',
+  };
+}
+
+/**
+ * Create call asset only (no campaign link).
+ *
+ * @param {object} ctx
+ */
+async function createCallAssetOnly(ctx) {
+  const {
+    businessId,
+    customerId,
+    setupRunId,
+    phoneNumber,
+    countryCode = 'US',
+    conversionActionResourceName,
+    slot = 'recommended',
+  } = ctx;
+
+  if (!conversionActionResourceName) {
+    throw new GoogleAdsApiError(
+      'Call conversion action resource is required before creating call asset.',
+      'ADS_CALL_CONVERSION_REQUIRED'
+    );
+  }
+
+  const resourceLabel = providerLogicalKey('zug-call', setupRunId, slot);
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      assetResourceName: mockResourceName(customerId, 'assets', resourceLabel),
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError('Google Ads API is not enabled.', 'GOOGLE_ADS_API_NOT_ENABLED');
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
+  const assetRes = await googleAdsPost(
+    buildGoogleAdsApiUrl(`customers/${customerId}/assets:mutate`),
+    {
+      operations: [
+        {
+          create: {
+            callAsset: {
+              countryCode,
+              phoneNumber,
+              callConversionAction: conversionActionResourceName,
+            },
+          },
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  const assetResourceName = extractMutateResourceName(assetRes, 'call asset', customerId);
+  return { assetResourceName, source: 'google_ads_api' };
+}
+
+/**
+ * Link an existing call asset to a campaign.
+ *
+ * @param {object} ctx
+ */
+async function linkCallAssetToCampaign(ctx) {
+  const { businessId, customerId, campaignResourceName, assetResourceName, setupRunId, slot = 'recommended' } =
+    ctx;
+  const resourceLabel = providerLogicalKey('zug-call', setupRunId, slot);
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      campaignAssetResourceName: mockResourceName(customerId, 'campaignAssets', `${resourceLabel}-link`),
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError('Google Ads API is not enabled.', 'GOOGLE_ADS_API_NOT_ENABLED');
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(businessId, customerId);
+  await googleAdsPost(
+    buildGoogleAdsApiUrl(`customers/${customerId}/campaignAssets:mutate`),
+    {
+      operations: [
+        {
+          create: {
+            campaign: campaignResourceName,
+            asset: assetResourceName,
+            fieldType: 'CALL',
+          },
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  return { campaignAssetResourceName: null, source: 'google_ads_api' };
+}
+
 module.exports = {
   mockResourceName,
   escapeGaqlLiteral,
@@ -1650,5 +1958,8 @@ module.exports = {
   getAdsCampaignLiveState: (ctx) =>
     withProviderRateLimit('google_ads', () => getAdsCampaignLiveState(ctx)),
   updateCampaignBudget: (ctx) => withProviderRateLimit('google_ads', () => updateCampaignBudget(ctx)),
+  createCallAsset: (ctx) => withProviderRateLimit('google_ads', () => createCallAsset(ctx)),
+  createCallAssetOnly: (ctx) => withProviderRateLimit('google_ads', () => createCallAssetOnly(ctx)),
+  linkCallAssetToCampaign: (ctx) => withProviderRateLimit('google_ads', () => linkCallAssetToCampaign(ctx)),
   isCampaignBudgetResourceName,
 };

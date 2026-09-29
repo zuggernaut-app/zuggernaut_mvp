@@ -222,10 +222,99 @@ async function persistScrapeResultActivity(input) {
   }
 }
 
+const AI_FILL_FIELDS = [
+  { field: 'services', sourceKey: 'services' },
+  { field: 'whoBuysToday', sourceKey: 'whoBuysToday' },
+  { field: 'serviceAreas', sourceKey: 'serviceAreas' },
+  { field: 'orderValueHint', sourceKey: 'orderValueHint' },
+  { field: 'howBuyersContact', sourceKey: 'howBuyersContact' },
+];
+
+/**
+ * Task 11b — fill only unset intake fields from scrape + LLM; never overwrite customer values.
+ *
+ * @param {{ businessId: string, suggested: object }} input
+ */
+const { generateFiveAnswersFromScrape } = require('../services/capabilities/leadCampaignContentService');
+
+async function fillFiveAnswersFromScrapeActivity(input) {
+  const businessIdRaw = typeof input?.businessId === 'string' ? input.businessId.trim() : '';
+  if (!businessIdRaw || !mongoose.Types.ObjectId.isValid(businessIdRaw)) {
+    throw ApplicationFailure.nonRetryable('Invalid businessId', 'AiFillValidation');
+  }
+  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  const suggested = input?.suggested && typeof input.suggested === 'object' ? input.suggested : {};
+
+  const doc = await BusinessContext.findOne({ businessId });
+  if (!doc) {
+    throw ApplicationFailure.nonRetryable('BusinessContext not found', 'BusinessContextNotFound');
+  }
+
+  const llmSuggested = await generateFiveAnswersFromScrape({
+    businessName: doc.businessName,
+    websiteUrl: doc.websiteUrl,
+    suggested,
+  });
+  const mergedSuggested = { ...suggested, ...llmSuggested };
+
+  const sources = { ...(doc.intakeFieldSources ?? {}) };
+  const updates = {};
+
+  for (const { field, sourceKey } of AI_FILL_FIELDS) {
+    const existingSource = sources[sourceKey] ?? sources[field];
+    if (existingSource === 'customer' || existingSource === 'operator') {
+      continue;
+    }
+
+    const current =
+      field === 'services' || field === 'serviceAreas'
+        ? Array.isArray(doc[field]) ? doc[field] : []
+        : String(doc[field] ?? '').trim();
+
+    const hasValue =
+      field === 'services' || field === 'serviceAreas'
+        ? current.length > 0
+        : Boolean(current);
+
+    if (hasValue) {
+      continue;
+    }
+
+    const fromSuggested = mergedSuggested[sourceKey] ?? mergedSuggested[field];
+    if (fromSuggested == null || fromSuggested === '') {
+      continue;
+    }
+
+    if (field === 'services' || field === 'serviceAreas') {
+      const list = Array.isArray(fromSuggested)
+        ? fromSuggested
+        : String(fromSuggested)
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+      if (list.length === 0) continue;
+      updates[field] = list;
+    } else {
+      updates[field] = String(fromSuggested).trim();
+    }
+    sources[sourceKey] = 'ai_guess';
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { filled: false, idempotent: true };
+  }
+
+  doc.set({ ...updates, intakeFieldSources: sources });
+  await doc.save();
+
+  return { filled: true, fields: Object.keys(updates) };
+}
+
 module.exports = {
   checkRobotsActivity,
   scrapeStaticActivity,
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  fillFiveAnswersFromScrapeActivity,
 };

@@ -16,6 +16,14 @@ export function isValidEmail(email: string): boolean {
   return e.length > 0 && e.length <= MAX_EMAIL_LENGTH && EMAIL_REGEX.test(e)
 }
 
+/** Permissive phone check: allows +, spaces, dashes, parentheses; requires ≥7 digits. */
+export function isValidPhone(phone: string): boolean {
+  const trimmed = phone.trim()
+  if (!trimmed) return false
+  const digits = trimmed.replace(/\D/g, '')
+  return digits.length >= 7
+}
+
 export type HttpUrlResult =
   | { ok: true; value: string }
   | { ok: false; message: string }

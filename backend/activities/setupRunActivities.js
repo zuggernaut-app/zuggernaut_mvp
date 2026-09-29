@@ -1734,6 +1734,10 @@ async function manageAdsConversionActionsActivity(input) {
           created: result.created,
           reused: result.reused,
           resolvedPrimaryGoal: result.strategy?.resolvedPrimaryGoal ?? null,
+          ...(Array.isArray(result.callDurationUpdateFailures) &&
+          result.callDurationUpdateFailures.length > 0
+            ? { callDurationUpdateFailures: result.callDurationUpdateFailures }
+            : {}),
         },
         logger,
       });
@@ -1744,6 +1748,10 @@ async function manageAdsConversionActionsActivity(input) {
           conversionActionSlotsResolved: result.slotsResolved,
           conversionActionsCreated: result.created,
           conversionActionsReused: result.reused,
+          ...(Array.isArray(result.callDurationUpdateFailures) &&
+          result.callDurationUpdateFailures.length > 0
+            ? { callDurationUpdateFailures: result.callDurationUpdateFailures }
+            : {}),
         },
         logger
       );

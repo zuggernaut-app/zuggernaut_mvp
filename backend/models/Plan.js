@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const PLAN_TIERS = ['starter', 'growth'];
+const PLAN_TIERS = ['starter', 'middle', 'top'];
 
 const planSchema = new mongoose.Schema(
   {

@@ -166,6 +166,9 @@ async function finalizeConversionActionCreation(ctx) {
     resourceName,
     template,
     source,
+    ...(template?.phoneCallDurationSeconds != null
+      ? { phoneCallDurationSeconds: template.phoneCallDurationSeconds }
+      : {}),
     ...(measurement?.conversionId ? { conversionId: measurement.conversionId } : {}),
     ...(measurement?.conversionLabel ? { conversionLabel: measurement.conversionLabel } : {}),
     ...(measurement?.tagSnippets ? { tagSnippets: measurement.tagSnippets } : {}),
