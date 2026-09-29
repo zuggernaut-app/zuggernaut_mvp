@@ -11,6 +11,10 @@ const {
   sanitizeStepErrorSummary,
 } = require('../../lib/setupUserErrorMessages');
 const { buildSupportPlaybook } = require('../../lib/setupSupportPlaybook');
+const {
+  findLatestSucceededAdsCampaignArtifact,
+  resolveSusoStaleState,
+} = require('../setup/susoStaleService');
 const BusinessContext = mongoose.model('BusinessContext');
 const SetupRun = mongoose.model('SetupRun');
 const SetupStepExecution = mongoose.model('SetupStepExecution');
@@ -737,7 +741,7 @@ async function countArtifacts(setupRunId, businessId) {
  * @param {object} adsCampaign
  */
 function buildRecommendations(meta, steps, structuralVerification, gtmSetup, setupRunStatus, adsCampaign) {
-  if (setupRunStatus !== 'SUCCEEDED' || adsCampaign.status !== 'campaigns_recorded') {
+  if (adsCampaign.status !== 'campaigns_recorded') {
     return [];
   }
 
@@ -913,6 +917,9 @@ async function buildSetupRunReport(setupRunId) {
     conversionActions,
   });
 
+  const { artifact: latestCampaignArtifact } = await findLatestSucceededAdsCampaignArtifact(businessId);
+  const susoState = resolveSusoStaleState(businessContext, latestCampaignArtifact);
+
   return {
     setupRun: {
       id: setupRun._id.toString(),
@@ -948,6 +955,11 @@ async function buildSetupRunReport(setupRunId) {
     recommendations,
     artifactCounts,
     steps,
+    susoStale: susoState.susoStale,
+    susoVersions: {
+      current: susoState.currentSusoVersion,
+      artifact: susoState.artifactSusoVersion,
+    },
   };
 }
 

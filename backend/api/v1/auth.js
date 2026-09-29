@@ -74,11 +74,14 @@ function userResponse(doc) {
     throw new TypeError('userResponse expects a persisted user document');
   }
   const name = doc.name === undefined ? null : doc.name ?? null;
+  const primaryBusinessId =
+    doc.primaryBusinessId != null ? doc.primaryBusinessId.toString() : null;
   return {
     id,
     email: doc.email,
     name,
     platformAdmin: Boolean(doc.platformAdmin),
+    primaryBusinessId,
     createdAt: doc.createdAt,
   };
 }

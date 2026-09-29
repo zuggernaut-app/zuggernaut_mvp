@@ -77,16 +77,24 @@ function throwCampaignPlanValidationError(firstIssue, issues, bucketValidation, 
  * @param {object} bucketValidation
  * @param {string} status
  */
-async function persistCampaignPlanValidation(setupRunId, businessId, intent, bucketValidation, status) {
+async function persistCampaignPlanValidation(
+  setupRunId,
+  businessId,
+  intent,
+  bucketValidation,
+  status,
+  slot = 'recommended'
+) {
   if (!setupRunId) {
     return null;
   }
 
   return CampaignPlan.findOneAndUpdate(
-    { setupRunId },
+    { setupRunId, slot },
     {
       $set: {
         businessId,
+        slot,
         intent,
         bucketValidation,
         status,
@@ -105,12 +113,25 @@ async function persistCampaignPlanValidation(setupRunId, businessId, intent, buc
  *   customerId: string,
  *   normalized: import('./businessContextAdsReadinessService').AdsReadinessNormalized,
  *   conversionArtifacts: object[],
+ *   budgetAmountMicros?: number,
  * }} ctx
  * @returns {Promise<{ intent: object, bucketValidation: object, plan: object | null }>}
  */
 async function prepareCompliantCampaignPlan(ctx) {
-  const { setupRunId, businessId, customerId, normalized, conversionArtifacts } = ctx;
-  const intent = adsCampaignIntentService.buildCampaignIntentFromNormalized(normalized, conversionArtifacts);
+  const {
+    setupRunId,
+    businessId,
+    customerId,
+    normalized,
+    conversionArtifacts,
+    budgetAmountMicros,
+    slot = 'recommended',
+  } = ctx;
+  const intent = adsCampaignIntentService.buildCampaignIntentFromNormalized(
+    normalized,
+    conversionArtifacts,
+    { budgetAmountMicros }
+  );
   const primaryLabel = intent.geoTargetLabels[0];
 
   try {
@@ -148,7 +169,8 @@ async function prepareCompliantCampaignPlan(ctx) {
       businessId,
       intent,
       bucketValidation,
-      'failed_validation'
+      'failed_validation',
+      slot
     );
     throwCampaignPlanValidationError(
       geoIssue,
@@ -168,7 +190,8 @@ async function prepareCompliantCampaignPlan(ctx) {
       businessId,
       intent,
       bucketValidation,
-      'failed_validation'
+      'failed_validation',
+      slot
     );
     throwCampaignPlanValidationError(
       intentValidation.issues[0],
@@ -200,13 +223,21 @@ async function prepareCompliantCampaignPlan(ctx) {
       businessId,
       intent,
       bucketValidation,
-      'failed_compliance'
+      'failed_compliance',
+      slot
     );
     throwCampaignPlanValidationError(complianceIssues[0], complianceIssues, bucketValidation);
   }
 
   const bucketValidation = adsCampaignIntentService.buildBucketValidationFromIssues([]);
-  const plan = await persistCampaignPlanValidation(setupRunId, businessId, intent, bucketValidation, 'ready');
+  const plan = await persistCampaignPlanValidation(
+    setupRunId,
+    businessId,
+    intent,
+    bucketValidation,
+    'ready',
+    slot
+  );
 
   return { intent, bucketValidation, plan };
 }
@@ -253,34 +284,69 @@ function adsIdempotencyKey(setupRunId, logicalKey) {
  * @param {object} ctx
  */
 async function findExistingAdsArtifact(ctx) {
-  const { setupRunId, businessId, logicalKey, intentFingerprint } = ctx;
-  const currentRun = await IntegrationArtifact.findOne({
-    setupRunId,
-    businessId,
-    provider: 'google_ads',
-    idempotencyKey: adsIdempotencyKey(setupRunId, logicalKey),
-  }).lean();
-  if (currentRun) return currentRun;
+  const { setupRunId, businessId, logicalKey, intentFingerprint, currentSusoVersion } = ctx;
+  const keysToTry = [logicalKey];
+  if (logicalKey.startsWith('recommended:')) {
+    keysToTry.push(logicalKey.slice('recommended:'.length));
+  }
 
-  if (intentFingerprint) {
-    return findReusableArtifact({
+  for (const key of keysToTry) {
+    const currentRun = await IntegrationArtifact.findOne({
+      setupRunId,
       businessId,
       provider: 'google_ads',
-      logicalKey,
+      idempotencyKey: adsIdempotencyKey(setupRunId, key),
+    }).lean();
+    if (currentRun) return currentRun;
+  }
+
+  if (intentFingerprint) {
+    const candidate = await findReusableArtifact({
+      businessId,
+      provider: 'google_ads',
+      logicalKey: keysToTry[0],
       fingerprint: intentFingerprint,
     });
+    if (!candidate) return null;
+
+    if (susoVersionBlocksCrossRunReuse(candidate.metadata?.susoVersion, currentSusoVersion)) {
+      return null;
+    }
+
+    return candidate;
   }
   return null;
+}
+
+/**
+ * @param {number | null | undefined} artifactVersion
+ * @param {number} currentSusoVersion
+ */
+function susoVersionBlocksCrossRunReuse(artifactVersion, currentSusoVersion) {
+  return (
+    artifactVersion !== null &&
+    artifactVersion !== undefined &&
+    Number.isFinite(Number(artifactVersion)) &&
+    Number(artifactVersion) !== currentSusoVersion
+  );
 }
 
 /**
  * @param {object} ctx
  */
 async function persistAdsArtifact(ctx) {
-  const { setupRunId, businessId, artifactType, logicalKey, externalId, metadata, intentFingerprint } =
-    ctx;
+  const {
+    setupRunId,
+    businessId,
+    artifactType,
+    logicalKey,
+    externalId,
+    metadata,
+    intentFingerprint,
+    crossRunReuseBlocked = false,
+  } = ctx;
   const idempotencyKey =
-    intentFingerprint
+    intentFingerprint && !crossRunReuseBlocked
       ? businessScopedIdempotencyKey(businessId, 'google_ads', logicalKey, intentFingerprint)
       : adsIdempotencyKey(setupRunId, logicalKey);
   await IntegrationArtifact.findOneAndUpdate(
@@ -357,276 +423,67 @@ async function createAdsAutoCampaign(ctx) {
     );
   }
 
-  const { intent, plan: planRow } = await prepareCompliantCampaignPlan({
+  const { createLeadCampaignsForSetupRun } = require('./leadCampaignCreationService');
+  const result = await createLeadCampaignsForSetupRun({
     setupRunId,
     businessId,
     customerId,
-    normalized: readiness.normalized,
+    bc,
     conversionArtifacts,
+    logger,
   });
 
-  if (!planRow) {
-    throw new AdsProviderPreconditionError('Campaign plan not persisted.', 'ADS_PLAN_PERSIST_FAILED');
-  }
-
-  const intentFingerprint = computeBusinessIntentFingerprint(bc);
-
-  let newArtifacts = 0;
-  let reusedArtifacts = 0;
-  let source = process.env.GOOGLE_ADS_API_MOCK === 'true' ? 'google_ads_api_mock' : 'google_ads_api';
-
-  const clientCtx = { businessId, customerId, setupRunId: setupRunId.toString(), intent };
-
-  async function ensureResource(logicalKey, artifactType, createFn, metadataBuilder) {
-    const existing = await findExistingAdsArtifact({
-      setupRunId,
-      businessId,
-      logicalKey,
-      intentFingerprint,
-    });
-    if (existing) {
-      reusedArtifacts += 1;
-      logger.info(
-        {
-          setupRunId: setupRunId.toString(),
-          businessId: businessId.toString(),
-          logicalKey,
-          artifactType,
-          externalId: existing.externalId,
-        },
-        'ads artifact reused (idempotent skip)'
-      );
-      return existing.externalId;
-    }
-
-    let created;
-    try {
-      created = await createFn();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Google Ads mutation failed';
-      const code = err instanceof GoogleAdsApiError ? err.code : 'GOOGLE_ADS_MUTATE_FAILED';
-      const googleAdsDetails = err instanceof GoogleAdsApiError ? err.details : undefined;
-      logger.error(
-        {
-          setupRunId: setupRunId.toString(),
-          businessId: businessId.toString(),
-          logicalKey,
-          artifactType,
-          code,
-          fieldViolations: googleAdsDetails?.fieldViolations ?? [],
-          googleAdsErrors: googleAdsDetails?.googleAdsErrors ?? [],
-          requestId: googleAdsDetails?.requestId ?? null,
-        },
-        'ads provider mutation failed'
-      );
-      throw new AdsProviderPreconditionError(msg, code, googleAdsDetails);
-    }
-
-    newArtifacts += 1;
-    source = created.source ?? source;
-    await persistAdsArtifact({
-      setupRunId,
-      businessId,
-      artifactType,
-      logicalKey,
-      externalId: created.resourceName,
-      intentFingerprint,
-      metadata: metadataBuilder(created.resourceName),
-    });
-    return created.resourceName;
-  }
-
-  const budgetResourceName = await ensureResource(
-    'campaign_budget',
-    'ads_campaign_budget',
-    () => createCampaignBudget(clientCtx),
-    (resourceName) => ({
-      planId: planRow._id.toString(),
-      name: intent.campaign.budget.name,
-      amountMicros: intent.campaign.budget.amountMicros,
-      createdBy: 'ads_auto_campaign_v1',
-      source,
-    })
-  );
-
-  const campaignResourceName = await ensureResource(
-    'campaign',
-    'ads_campaign',
-    () => createCampaign({ ...clientCtx, budgetResourceName }),
-    (resourceName) => ({
-      planId: planRow._id.toString(),
-      name: intent.campaign.name,
-      budgetResourceName,
-      bidding: intent.campaign.bidding,
-      createdBy: 'ads_auto_campaign_v1',
-      source,
-    })
-  );
-
-  const geoExternalIds = [];
-  for (let index = 0; index < intent.geoTargets.length; index += 1) {
-    const geo = intent.geoTargets[index];
-    const logicalKey = `geo_${index}`;
-    const geoResourceName = await ensureResource(
-      logicalKey,
-      'ads_campaign_criterion',
-      () =>
-        createCampaignGeoTarget({
-          ...clientCtx,
-          campaignResourceName,
-          geoTargetConstant: geo.resourceName,
-          geoIndex: index,
-        }),
-      () => ({
-        planId: planRow._id.toString(),
-        campaignResourceName,
-        geoTargetConstant: geo.resourceName,
-        label: geo.label,
-        createdBy: 'ads_auto_campaign_v1',
-        source,
-      })
-    );
-    geoExternalIds.push(geoResourceName);
-  }
-
-  const adGroupResourceName = await ensureResource(
-    'ad_group',
-    'ads_ad_group',
-    () => createAdGroup({ ...clientCtx, campaignResourceName }),
-    (resourceName) => ({
-      planId: planRow._id.toString(),
-      name: intent.adGroup.name,
-      campaignResourceName,
-      keywordPlan: intent.keywords,
-      createdBy: 'ads_auto_campaign_v1',
-      source,
-    })
-  );
-
-  const keywordExternalIds = [];
-  for (let index = 0; index < intent.keywords.length; index += 1) {
-    const keyword = intent.keywords[index];
-    const logicalKey = `keyword_${index}`;
-    const keywordResourceName = await ensureResource(
-      logicalKey,
-      'ads_keyword',
-      () =>
-        createAdGroupKeyword({
-          ...clientCtx,
-          adGroupResourceName,
-          keywordText: keyword.text,
-          matchType: keyword.matchType,
-          keywordIndex: index,
-        }),
-      () => ({
-        planId: planRow._id.toString(),
-        adGroupResourceName,
-        keywordText: keyword.text,
-        matchType: keyword.matchType,
-        createdBy: 'ads_auto_campaign_v1',
-        source,
-      })
-    );
-    keywordExternalIds.push(keywordResourceName);
-  }
-
-  const adResourceName = await ensureResource(
-    'ad',
-    'ads_ad',
-    () => createResponsiveSearchAd({ ...clientCtx, adGroupResourceName }),
-    (resourceName) => ({
-      planId: planRow._id.toString(),
-      campaignResourceName,
-      adGroupResourceName,
-      finalUrl: intent.ad.finalUrl,
-      createdBy: 'ads_auto_campaign_v1',
-      source,
-    })
-  );
-
-  const conversionActionResourceNames = conversionArtifacts.map((conv) =>
-    resolveConversionActionResourceName(customerId, conv.metadata?.resourceName ?? null, conv.externalId)
-  );
-
-  const customGoalResourceName = await ensureResource(
-    'custom_conversion_goal',
-    'ads_custom_conversion_goal',
-    () =>
-      createCustomConversionGoal({
-        businessId,
-        customerId,
-        setupRunId: setupRunId.toString(),
-        name: `${intent.businessName} — Zuggernaut Conversions`,
-        conversionActionResourceNames,
-      }),
-    () => ({
-      planId: planRow._id.toString(),
-      campaignResourceName,
-      conversionActionResourceNames,
-      selectedConversionIds: intent.selectedConversionIds,
-      createdBy: 'ads_auto_campaign_v1',
-      source,
-    })
-  );
-
-  await ensureResource(
-    'conversion_goal_campaign_config',
-    'ads_conversion_goal_campaign_config',
-    () =>
-      linkCampaignToCustomConversionGoal({
-        businessId,
-        customerId,
-        setupRunId: setupRunId.toString(),
-        campaignResourceName,
-        customConversionGoalResourceName: customGoalResourceName,
-      }),
-    () => ({
-      planId: planRow._id.toString(),
-      campaignResourceName,
-      customConversionGoalResourceName: customGoalResourceName,
-      conversionActionResourceNames,
-      selectedConversionIds: intent.selectedConversionIds,
-      createdBy: 'ads_auto_campaign_v1',
-      source,
-    })
-  );
-
-  await CampaignPlan.updateOne({ setupRunId }, { $set: { status: 'applied' } });
-
+  const primary = result.slotSummaries[0];
+  const keywordCount = await IntegrationArtifact.countDocuments({
+    setupRunId,
+    businessId,
+    provider: 'google_ads',
+    artifactType: 'ads_keyword',
+  });
+  const geoCount = await IntegrationArtifact.countDocuments({
+    setupRunId,
+    businessId,
+    provider: 'google_ads',
+    artifactType: 'ads_campaign_criterion',
+  });
   const summary = {
-    campaignCreated: true,
-    geoTargetsCreated: geoExternalIds.length,
-    adGroupCreated: true,
-    adCreated: true,
-    keywordsCreated: keywordExternalIds.length,
-    reusedArtifacts,
-    campaignExternalId: campaignResourceName,
-    geoExternalIds,
-    adGroupExternalId: adGroupResourceName,
-    adExternalId: adResourceName,
-    keywordExternalIds,
-    budgetExternalId: budgetResourceName,
+    campaignCreated: result.slotSummaries.length > 0,
+    slotsCreated: result.slotSummaries.length,
+    reusedArtifacts: result.reusedArtifacts,
+    campaignExternalId: primary?.campaignResourceName ?? null,
+    adGroupExternalId: primary?.adGroupResourceName ?? null,
+    adExternalId: primary?.adResourceName ?? null,
+    budgetExternalId: primary?.budgetResourceName ?? null,
+    slotSummaries: result.slotSummaries,
+    geoTargetsCreated: geoCount,
+    adGroupCreated: Boolean(primary?.adGroupResourceName),
+    adCreated: Boolean(primary?.adResourceName),
+    keywordsCreated: keywordCount,
     conversionLinkCount: conversionArtifacts.length,
-    conversionGoalLinked: true,
-    customConversionGoalExternalId: customGoalResourceName,
-    source,
+    conversionGoalLinked: result.slotSummaries.length > 0,
+    geoExternalIds: await IntegrationArtifact.find({
+      setupRunId,
+      businessId,
+      provider: 'google_ads',
+      artifactType: 'ads_campaign_criterion',
+    })
+      .lean()
+      .then((rows) => rows.map((r) => r.externalId)),
+    keywordExternalIds: await IntegrationArtifact.find({
+      setupRunId,
+      businessId,
+      provider: 'google_ads',
+      artifactType: 'ads_keyword',
+    })
+      .lean()
+      .then((rows) => rows.map((r) => r.externalId)),
+    source: result.source,
   };
 
-  logger.info(
-    {
-      setupRunId: setupRunId.toString(),
-      businessId: businessId.toString(),
-      stepName: SETUP_STEP_NAMES.ADS_CAMPAIGN_CREATION,
-      provider: 'google_ads',
-      ...summary,
-    },
-    'ads campaign artifacts recorded'
-  );
-
   return {
-    idempotent: newArtifacts === 0,
+    idempotent: result.idempotent,
     summary,
-    source,
+    source: result.source,
   };
 }
 
@@ -635,4 +492,8 @@ module.exports = {
   AdsProviderPreconditionError,
   buildCampaignIntent,
   adsIdempotencyKey,
+  prepareCompliantCampaignPlan,
+  findExistingAdsArtifact,
+  persistAdsArtifact,
+  susoVersionBlocksCrossRunReuse,
 };

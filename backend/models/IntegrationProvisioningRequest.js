@@ -72,6 +72,8 @@ const integrationProvisioningRequestSchema = new mongoose.Schema(
       default: null,
     },
     lastAttemptedAt: { type: Date, default: null },
+    /** Operator-chosen currency for MCC-created Google Ads accounts (immutable after create). */
+    currencyCode: { type: String, enum: ['USD', 'INR'], trim: true },
   },
   { timestamps: true }
 );

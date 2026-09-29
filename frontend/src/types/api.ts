@@ -24,6 +24,7 @@ export interface UserDto {
   email: string
   name: string | null
   platformAdmin?: boolean
+  primaryBusinessId?: string | null
   createdAt?: string
 }
 
@@ -97,19 +98,78 @@ export interface BusinessContextDto {
   goals: unknown
   differentiators: string | null
   orderValueHint: string | null
+  whoBuysToday?: string | null
+  howBuyersContact?: string | null
+  businessCountry?: string | null
+  intakeFieldSources?: Record<string, string> | null
+  setupCallConfirmedAt?: string | null
   thankYouUrls: string[]
+  nameKey?: string | null
+  uvp: string | null
+  competitorLandscape: SusoCompetitorLandscape | null
+  businessScope: SusoBusinessScope | null
+  valueComplexity: SusoValueComplexity | null
+  budgetTier: SusoBudgetTier | null
+  susoVersion: number
+  susoVersionUpdatedAt: string | null
   confirmedAt: string | null
   updatedAt?: string
+}
+
+export type SusoBusinessScope = 'local_service' | 'regional' | 'national_online'
+
+export type SusoValueComplexity =
+  | 'low_value_low_complexity'
+  | 'low_value_high_complexity'
+  | 'high_value_low_complexity'
+  | 'high_value_high_complexity'
+
+export type SusoBudgetTier = 'starter' | 'growth' | 'scale'
+
+export interface SusoCompetitorEntry {
+  name: string
+  differentiation?: string
+}
+
+export interface SusoCompetitorLandscape {
+  competitors?: SusoCompetitorEntry[]
+  differentiationAngle?: string
+}
+
+export type SusoMatrixCellStatus = 'eligible' | 'trimmed' | 'gated'
+
+export interface SusoMatrixCell {
+  objective: string
+  stage: string
+  segment: string
+  label: string
+  status: SusoMatrixCellStatus
+  gateReason?: string
+}
+
+export interface SusoFeasibilityGate {
+  gate: string
+  state: string
+  label: string
+  detail?: string
+}
+
+export interface SusoMatrixPreview {
+  cells: SusoMatrixCell[]
+  gates: SusoFeasibilityGate[]
+  ctaStyle: string | null
 }
 
 export interface GetBusinessContextResponse {
   businessContext: BusinessContextDto
   adsReadiness: AdsReadinessResult
+  susoMatrix: SusoMatrixPreview
 }
 
 export interface PutBusinessContextResponse {
   businessContext: BusinessContextDto
   adsReadiness: AdsReadinessResult
+  susoMatrix: SusoMatrixPreview
 }
 
 /** Subset matching backend EDITABLE_FIELDS */
@@ -125,6 +185,11 @@ export interface BusinessContextUpdateBody {
   differentiators?: string | null
   orderValueHint?: string | null
   thankYouUrls?: string[]
+  uvp?: string | null
+  competitorLandscape?: SusoCompetitorLandscape | null
+  businessScope?: SusoBusinessScope | null
+  valueComplexity?: SusoValueComplexity | null
+  budgetTier?: SusoBudgetTier | null
 }
 
 export interface SetupRunDto {
@@ -384,6 +449,11 @@ export interface SetupRunReport {
   recommendations: SetupRunReportRecommendation[]
   artifactCounts: SetupRunReportArtifactCounts
   steps: SetupStepDto[]
+  susoStale: boolean
+  susoVersions: {
+    current: number
+    artifact: number | null
+  }
 }
 
 export interface SetupRunReportResponse {

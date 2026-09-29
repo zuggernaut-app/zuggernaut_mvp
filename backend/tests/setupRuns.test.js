@@ -11,7 +11,6 @@ const { registerAgent } = require('./helpers');
 const { getTemporalClient } = require('../lib/temporalClient');
 const {
   SETUP_RUN_WORKFLOW_NAME,
-  SCRAPE_WORKFLOW_NAME,
   resolveTemporalTaskQueue,
 } = require('../constants/temporalDefaults');
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
@@ -41,10 +40,6 @@ describe('setup-runs API', () => {
     const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
     await agent
-      .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .send({ websiteUrl: 'https://example.com' })
-      .expect(202);
-    await agent
       .put(`/api/v1/business-contexts/${bid}`)
       .send({
         businessName: 'Co',
@@ -52,8 +47,16 @@ describe('setup-runs API', () => {
         services: ['Example service'],
         serviceAreas: ['San Francisco'],
         goals: { primary: 'both' },
+        uvp: 'Reliable local services',
+        businessScope: 'local_service',
+        valueComplexity: 'low_value_low_complexity',
+        budgetTier: 'growth',
       })
       .expect(200);
+    await mongoose.model('BusinessContext').findOneAndUpdate(
+      { businessId: new mongoose.Types.ObjectId(bid) },
+      { $set: { setupCallConfirmedAt: new Date() } }
+    );
     return { agent, bid };
   }
 
@@ -90,14 +93,58 @@ describe('setup-runs API', () => {
     const { agent } = await registerAgent(app, 'sr_unconfirmed@test.com');
     const draft = await agent.post('/api/v1/onboarding/business').expect(201);
     const bid = draft.body.businessId;
-    await agent
-      .post(`/api/v1/onboarding/business/${bid}/scrape`)
-      .send({ websiteUrl: 'https://example.com' })
-      .expect(202);
 
     const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
 
     expect(res.body.error).toBe('precondition_failed');
+  });
+
+  it('409 when confirmation call is not complete', async () => {
+    const { agent } = await registerAgent(app, 'sr_no_call@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+    const bid = draft.body.businessId;
+    await agent
+      .put(`/api/v1/business-contexts/${bid}`)
+      .send({
+        businessName: 'Co',
+        websiteUrl: 'https://example.com',
+        services: ['Example service'],
+        serviceAreas: ['San Francisco'],
+        goals: { primary: 'both' },
+        uvp: 'Reliable local services',
+        businessScope: 'local_service',
+        valueComplexity: 'low_value_low_complexity',
+        budgetTier: 'growth',
+      })
+      .expect(200);
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+
+    expect(res.body.error).toBe('precondition_failed');
+  });
+
+  it('409 when step 0 is incomplete', async () => {
+    const { agent } = await registerAgent(app, 'sr_step0@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+    const bid = draft.body.businessId;
+    await agent
+      .put(`/api/v1/business-contexts/${bid}`)
+      .send({
+        businessName: 'Co',
+        websiteUrl: 'https://example.com',
+        services: ['Example service'],
+        serviceAreas: ['San Francisco'],
+        goals: { primary: 'both' },
+      })
+      .expect(200);
+    await mongoose.model('BusinessContext').findOneAndUpdate(
+      { businessId: new mongoose.Types.ObjectId(bid) },
+      { $set: { setupCallConfirmedAt: new Date() } }
+    );
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+
+    expect(res.body.error).toBe('step0_incomplete');
   });
 
   it('400 when confirmed business context is not ads-ready', async () => {
@@ -106,8 +153,18 @@ describe('setup-runs API', () => {
     const bid = draft.body.businessId;
     await agent
       .put(`/api/v1/business-contexts/${bid}`)
-      .send({ businessName: 'Co' })
+      .send({
+        businessName: 'Co',
+        uvp: 'Reliable local services',
+        businessScope: 'local_service',
+        valueComplexity: 'low_value_low_complexity',
+        budgetTier: 'starter',
+      })
       .expect(200);
+    await mongoose.model('BusinessContext').findOneAndUpdate(
+      { businessId: new mongoose.Types.ObjectId(bid) },
+      { $set: { setupCallConfirmedAt: new Date() } }
+    );
 
     const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(400);
 
@@ -131,9 +188,8 @@ describe('setup-runs API', () => {
 
     expect(res.body.setupRunId).toMatch(/^[a-f0-9]{24}$/);
     expect(res.body.status).toBe('RUNNING');
-    expect(workflowStart.mock.calls[0][0]).toBe(SCRAPE_WORKFLOW_NAME);
-    expect(workflowStart.mock.calls[1][0]).toBe(SETUP_RUN_WORKFLOW_NAME);
-    expect(workflowStart.mock.calls[1][1]).toEqual(
+    expect(workflowStart.mock.calls[0][0]).toBe(SETUP_RUN_WORKFLOW_NAME);
+    expect(workflowStart.mock.calls[0][1]).toEqual(
       expect.objectContaining({
         taskQueue: resolveTemporalTaskQueue(),
         args: [{ setupRunId: res.body.setupRunId, message: 'setup-started' }],
@@ -329,10 +385,7 @@ describe('setup-runs API', () => {
   });
 
   it('503 preserves setupRunId when Temporal workflow start fails', async () => {
-    const workflowStart = jest
-      .fn()
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error('broker down'));
+    const workflowStart = jest.fn().mockRejectedValueOnce(new Error('broker down'));
     getTemporalClient.mockResolvedValue({
       workflow: { start: workflowStart },
     });
@@ -600,10 +653,6 @@ describe('setup-runs API', () => {
       const draft = await agent.post('/api/v1/onboarding/business').expect(201);
       const bid = draft.body.businessId;
       await agent
-        .post(`/api/v1/onboarding/business/${bid}/scrape`)
-        .send({ websiteUrl: 'https://example.com' })
-        .expect(202);
-      await agent
         .put(`/api/v1/business-contexts/${bid}`)
         .send({
           businessName: 'Co',
@@ -611,8 +660,16 @@ describe('setup-runs API', () => {
           services: ['Example service'],
           serviceAreas: ['San Francisco'],
           goals: { primary: 'forms' },
+          uvp: 'Reliable local services',
+          businessScope: 'local_service',
+          valueComplexity: 'low_value_low_complexity',
+          budgetTier: 'growth',
         })
         .expect(200);
+      await mongoose.model('BusinessContext').findOneAndUpdate(
+        { businessId: new mongoose.Types.ObjectId(bid) },
+        { $set: { setupCallConfirmedAt: new Date() } }
+      );
 
       const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
 
@@ -638,10 +695,17 @@ describe('setup-runs API', () => {
           services: ['Plumbing'],
           serviceAreas: ['Oakland'],
           goals: { primary: 'forms' },
+          uvp: 'Fast plumbing',
+          businessScope: 'local_service',
+          valueComplexity: 'low_value_low_complexity',
+          budgetTier: 'growth',
         })
         .expect(200);
 
-      await BusinessContext.updateOne({ businessId: bid }, { $unset: { nameKey: 1 } });
+      await BusinessContext.updateOne(
+        { businessId: bid },
+        { $unset: { nameKey: 1 }, $set: { setupCallConfirmedAt: new Date() } }
+      );
 
       await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
 
@@ -709,5 +773,33 @@ describe('setup-runs API', () => {
       })
     );
     expect(report.outcome.kind).toBe('snippet_pending');
+  });
+
+  it('409 suso_version_mismatch rejects setup without force after prior succeeded run', async () => {
+    const BusinessContext = mongoose.model('BusinessContext');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const { agent, bid } = await confirmedBusiness('sr-suso-mismatch@test.com');
+    const created = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
+    await markBusinessSetupSucceeded(bid, created.body.setupRunId);
+
+    await IntegrationArtifact.create({
+      setupRunId: created.body.setupRunId,
+      businessId: bid,
+      provider: 'google_ads',
+      artifactType: 'ads_campaign',
+      externalId: 'customers/1/campaigns/1',
+      idempotencyKey: `ads-${created.body.setupRunId}-campaign`,
+      metadata: { susoVersion: 0 },
+    });
+
+    await BusinessContext.updateOne({ businessId: bid }, { $set: { susoVersion: 1 } });
+
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    expect(res.body.error).toBe('suso_version_mismatch');
+  });
+
+  it('allows setup without force when no prior campaign artifact susoVersion exists', async () => {
+    const { agent, bid } = await confirmedBusiness('sr-suso-first@test.com');
+    await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(201);
   });
 });

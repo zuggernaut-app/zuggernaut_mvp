@@ -228,6 +228,50 @@ describe('setupRunReportService', () => {
     expect(report.recommendations[0].title).toMatch(/Google Tag Manager/i);
   });
 
+  it('buildSetupRunReport surfaces tracking recommendations when campaigns recorded but run is not SUCCEEDED', async () => {
+    const { run } = await seedReportFixtures({
+      email: 'report-reco-non-success@test.com',
+      status: 'SETUP_NEEDS_TRACKING_FIX',
+      meta: {
+        catalog: 'ready',
+        conversionActionManagement: 'ok',
+        structuralVerification: { gtmOptional: true, reason: 'missing_connection' },
+        structuralVerificationSummary: 'GTM is not configured; structural verification skipped.',
+        ads: 'campaigns_recorded',
+        adsCampaignSummary: {
+          campaignCreated: true,
+          adGroupCreated: true,
+          adCreated: true,
+          reusedArtifacts: 0,
+          campaignExternalId: 'customers/123/campaigns/zug-campaign',
+          conversionLinkCount: 2,
+        },
+      },
+      withAuditReport: false,
+    });
+
+    const SetupStepExecution = mongoose.model('SetupStepExecution');
+    await SetupStepExecution.create({
+      setupRunId: run._id,
+      businessId: run.businessId,
+      stepName: SETUP_STEP_NAMES.STRUCTURAL_VERIFICATION,
+      status: 'skipped',
+      provider: 'gtm',
+      attemptCount: 1,
+      details: {
+        optional: true,
+        evidence: { gtmOptional: true, reason: 'missing_connection' },
+        summary: 'GTM is not configured; structural verification skipped.',
+      },
+    });
+
+    const report = await buildSetupRunReport(run._id);
+    expect(report.setupRun.status).toBe('SETUP_NEEDS_TRACKING_FIX');
+    expect(report.adsCampaign.status).toBe('campaigns_recorded');
+    expect(report.recommendations.length).toBeGreaterThanOrEqual(1);
+    expect(report.recommendations[0].id).toBe('connect_gtm');
+  });
+
   it('buildSetupRunReport handles GBP skipped and snippet pending states', async () => {
     const { run } = await seedReportFixtures({
       email: 'report-snippet@test.com',
@@ -261,7 +305,7 @@ describe('setupRunReportService', () => {
     expect(report.outcome.kind).toBe('snippet_pending');
     expect(report.gbpAudit.status).toBe('skipped');
     expect(report.gbpAudit.findings).toBeNull();
-    expect(report.outcome.recovery?.steps.join(' ')).toContain('GTM-X');
+    expect(report.outcome.recovery?.steps.map((step) => step.text).join(' ')).toContain('GTM-X');
     expect(report.structuralVerification.status).toBe('snippet_pending');
   });
 
@@ -560,5 +604,12 @@ describe('setupRunReportService', () => {
     expect(report.adsCampaign.failure?.recommendedAction).toBe(
       'Remove unsupported symbols or adjust business/service wording.'
     );
+  });
+
+  it('buildSetupRunReport sets susoStale false when artifact metadata.susoVersion is absent', async () => {
+    const { run } = await seedReportFixtures({ email: 'report-suso@test.com' });
+    const report = await buildSetupRunReport(run._id);
+    expect(report.susoStale).toBe(false);
+    expect(report.susoVersions.artifact).toBeNull();
   });
 });

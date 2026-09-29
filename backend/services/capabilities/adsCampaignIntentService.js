@@ -100,8 +100,9 @@ function buildKeywordsFromSeeds(keywordSeeds) {
 /**
  * @param {import('./businessContextAdsReadinessService').AdsReadinessNormalized} normalized
  * @param {object[]} conversionArtifacts
+ * @param {{ budgetAmountMicros?: number }} [options]
  */
-function buildCampaignIntentFromNormalized(normalized, conversionArtifacts) {
+function buildCampaignIntentFromNormalized(normalized, conversionArtifacts, options = {}) {
   const {
     businessName,
     websiteUrl,
@@ -111,6 +112,11 @@ function buildCampaignIntentFromNormalized(normalized, conversionArtifacts) {
     keywordSeeds,
     adCopySeeds,
   } = normalized;
+
+  const amountMicros =
+    Number.isFinite(options.budgetAmountMicros) && options.budgetAmountMicros > 0
+      ? options.budgetAmountMicros
+      : DEFAULT_DAILY_BUDGET_MICROS;
 
   return {
     version: CAMPAIGN_INTENT_VERSION,
@@ -126,7 +132,7 @@ function buildCampaignIntentFromNormalized(normalized, conversionArtifacts) {
       bidding: BIDDING_STRATEGY.MANUAL_CPC,
       budget: {
         name: `${businessName} — Daily Budget`,
-        amountMicros: DEFAULT_DAILY_BUDGET_MICROS,
+        amountMicros,
       },
       networkSettings: { ...DEFAULT_NETWORK_SETTINGS },
     },

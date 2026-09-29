@@ -200,6 +200,27 @@ describe('adsProvisioningService', () => {
     expect(artifact.metadata.provisioningSource).toBe('discovery_selected_customer');
   });
 
+  it('uses stored INR currency on MCC create', async () => {
+    const { bc, run, request } = await seedApprovedProvisioning({
+      providerIdentifiers: { accessibleCustomerIds: [], discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
+      requestFields: { currencyCode: 'INR' },
+    });
+
+    await provisionGoogleAdsCustomer({
+      businessId: bc.businessId,
+      setupRunId: run._id,
+      provisioningRequestId: request._id,
+      currencyCode: request.currencyCode,
+      logger,
+    });
+
+    expect(createCustomerClient).toHaveBeenCalledWith(
+      'test-mcc-token',
+      '9999999999',
+      expect.objectContaining({ currencyCode: 'INR' })
+    );
+  });
+
   it('creates a customer via MCC when none are accessible', async () => {
     const { bc, run, request } = await seedApprovedProvisioning({
       providerIdentifiers: { accessibleCustomerIds: [], discoveryReason: 'ADS_PROVISIONING_REQUIRED' },
@@ -301,7 +322,7 @@ describe('adsProvisioningService', () => {
     const businessId = new mongoose.Types.ObjectId();
     const setupRunId = new mongoose.Types.ObjectId();
     expect(provisioningArtifactIdempotencyKey(businessId, setupRunId)).toBe(
-      `ads:customer:${businessId}:${setupRunId}`
+      `ads:customer:v2:${businessId}`
     );
   });
 });

@@ -3,6 +3,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const BusinessContext = mongoose.model('BusinessContext');
+const User = mongoose.model('User');
 const { requireAuth } = require('./middleware/requireAuth');
 const {
   normalizeStringList,
@@ -14,16 +15,56 @@ const { BUSINESS_CONTEXT_CONFIRM_REQUIRED } = require('../../constants/onboardin
 const {
   validateBusinessContextAdsReadiness,
 } = require('../../services/capabilities/businessContextAdsReadinessService');
+const { listOrgIdsForUser, MembershipCheckError } = require('../../lib/auth/membershipCheck');
 const {
-  assertBusinessMembershipOrOwnership,
-  listOrgIdsForUser,
-  MembershipCheckError,
-} = require('../../lib/auth/membershipCheck');
+  assertBusinessMembershipOrPlatformAdmin,
+} = require('./lib/platformAdminBusinessAccess');
 const { isSoftLaunchMode } = require('../../constants/softLaunch');
 const { deriveBusinessNameKey } = require('../../lib/businessNameKey');
 const { resolvePrimaryGoal } = require('../../services/capabilities/adsConversionCatalogService');
+const { buildSusoMatrix } = require('../../services/capabilities/susoMatrixService');
+const {
+  validateCompetitorLandscape,
+  validateStep0Put,
+  snapshotStep0Fields,
+  step0FieldsChanged,
+} = require('../../lib/susoStep0Validation');
+const {
+  BUSINESS_SCOPE,
+  VALUE_COMPLEXITY,
+  BUDGET_TIER,
+} = require('../../constants/suso');
+
+const SOFT_LAUNCH_DEFAULT_UVP = 'Soft-launch default — operator to refine';
 
 const router = express.Router();
+
+/**
+ * Fill missing Step 0 fields on confirm during soft launch so setup is not blocked
+ * before an operator refines strategy. Never overwrites non-empty values.
+ *
+ * @param {import('mongoose').Document} doc
+ */
+function applySoftLaunchStep0Defaults(doc) {
+  if (!isSoftLaunchMode()) return;
+
+  const uvpTrimmed = typeof doc.uvp === 'string' ? doc.uvp.trim() : '';
+  if (!uvpTrimmed) {
+    const fromDifferentiators =
+      typeof doc.differentiators === 'string' ? doc.differentiators.trim() : '';
+    doc.uvp = fromDifferentiators || SOFT_LAUNCH_DEFAULT_UVP;
+  }
+
+  if (!doc.businessScope) {
+    doc.businessScope = BUSINESS_SCOPE.LOCAL_SERVICE;
+  }
+  if (!doc.valueComplexity) {
+    doc.valueComplexity = VALUE_COMPLEXITY.LOW_LOW;
+  }
+  if (!doc.budgetTier) {
+    doc.budgetTier = BUDGET_TIER.STARTER;
+  }
+}
 
 function serializeBusinessContext(doc) {
   return {
@@ -41,6 +82,18 @@ function serializeBusinessContext(doc) {
     orderValueHint: doc.orderValueHint ?? null,
     thankYouUrls: Array.isArray(doc.thankYouUrls) ? doc.thankYouUrls : [],
     nameKey: doc.nameKey ?? null,
+    uvp: doc.uvp ?? null,
+    competitorLandscape: doc.competitorLandscape ?? null,
+    businessScope: doc.businessScope ?? null,
+    valueComplexity: doc.valueComplexity ?? null,
+    budgetTier: doc.budgetTier ?? null,
+    susoVersion: typeof doc.susoVersion === 'number' ? doc.susoVersion : 0,
+    susoVersionUpdatedAt: doc.susoVersionUpdatedAt ?? null,
+    businessCountry: doc.businessCountry ?? null,
+    setupCallConfirmedAt: doc.setupCallConfirmedAt ?? null,
+    whoBuysToday: doc.whoBuysToday ?? null,
+    howBuyersContact: doc.howBuyersContact ?? null,
+    intakeFieldSources: doc.intakeFieldSources ?? null,
     confirmedAt: doc.confirmedAt ?? null,
     updatedAt: doc.updatedAt,
   };
@@ -59,6 +112,11 @@ const EDITABLE_FIELDS = new Set([
   'differentiators',
   'orderValueHint',
   'thankYouUrls',
+  'uvp',
+  'competitorLandscape',
+  'businessScope',
+  'valueComplexity',
+  'budgetTier',
 ]);
 
 router.get('/', requireAuth, async (req, res) => {
@@ -85,7 +143,7 @@ router.get('/:businessId', requireAuth, async (req, res) => {
   }
 
   try {
-    await assertBusinessMembershipOrOwnership(req.user.id, businessIdRaw);
+    await assertBusinessMembershipOrPlatformAdmin(req.user.id, businessIdRaw);
   } catch (err) {
     if (err instanceof MembershipCheckError) {
       const status = err.code === 'forbidden' ? 403 : 404;
@@ -106,6 +164,7 @@ router.get('/:businessId', requireAuth, async (req, res) => {
   return res.status(200).json({
     businessContext: serializeBusinessContext(doc),
     adsReadiness: await validateBusinessContextAdsReadiness(doc),
+    susoMatrix: buildSusoMatrix(doc),
   });
 });
 
@@ -117,7 +176,7 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
 
   try {
-    await assertBusinessMembershipOrOwnership(req.user.id, businessIdRaw);
+    await assertBusinessMembershipOrPlatformAdmin(req.user.id, businessIdRaw);
   } catch (err) {
     if (err instanceof MembershipCheckError) {
       const status = err.code === 'forbidden' ? 403 : 404;
@@ -144,9 +203,33 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
   }
 
   const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const step0Before = snapshotStep0Fields(doc);
   for (const key of EDITABLE_FIELDS) {
     if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
     const val = body[key];
+    if (key === 'competitorLandscape') {
+      const mixed = validateCompetitorLandscape(val);
+      if (!mixed.ok) {
+        return res.status(400).json({ error: 'validation_error', message: mixed.message });
+      }
+      if (mixed.value === undefined) continue;
+      doc[key] = mixed.value;
+      continue;
+    }
+    if (key === 'businessScope' || key === 'valueComplexity' || key === 'budgetTier') {
+      if (val === null || val === undefined || val === '') {
+        doc[key] = undefined;
+        continue;
+      }
+      if (typeof val !== 'string') {
+        return res.status(400).json({
+          error: 'validation_error',
+          message: `${key} must be a string or null`,
+        });
+      }
+      doc[key] = val.trim();
+      continue;
+    }
     if (key === 'services' || key === 'serviceAreas' || key === 'thankYouUrls') {
       const list = normalizeStringList(val, key);
       if (!list.ok) {
@@ -207,6 +290,16 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
     }
   }
 
+  applySoftLaunchStep0Defaults(doc);
+
+  const step0Validation = validateStep0Put(body, doc);
+  if (!step0Validation.ok) {
+    return res.status(400).json({
+      error: 'validation_error',
+      message: step0Validation.message,
+    });
+  }
+
   for (const field of BUSINESS_CONTEXT_CONFIRM_REQUIRED) {
     const value = doc[field];
     if (typeof value !== 'string' || !value.trim()) {
@@ -231,9 +324,18 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
     doc.nameKey = deriveBusinessNameKey(doc.businessName, doc.businessId);
   }
 
+  const step0After = snapshotStep0Fields(doc);
+  if (step0FieldsChanged(step0Before, step0After)) {
+    doc.susoVersion = (typeof doc.susoVersion === 'number' ? doc.susoVersion : 0) + 1;
+    doc.susoVersionUpdatedAt = new Date();
+  }
+
   doc.confirmedAt = new Date();
   try {
     await doc.save();
+    await User.findByIdAndUpdate(doc.userId, {
+      $set: { primaryBusinessId: doc.businessId },
+    });
   } catch (err) {
     if (err?.name === 'ValidationError') {
       const msg =
@@ -246,6 +348,7 @@ router.put('/:businessId', requireAuth, async (req, res, next) => {
   return res.status(200).json({
     businessContext: serializeBusinessContext(doc),
     adsReadiness: await validateBusinessContextAdsReadiness(doc.toObject()),
+    susoMatrix: buildSusoMatrix(doc.toObject()),
   });
 });
 

@@ -7,6 +7,7 @@ const ScrapeRun = mongoose.model('ScrapeRun');
 const User = mongoose.model('User');
 const { requireAuth } = require('./middleware/requireAuth');
 const { validateHttpUrl } = require('../../lib/validation');
+const { validateIntakeBody } = require('../../lib/intakeValidation');
 const { getTemporalClient } = require('../../lib/temporalClient');
 const {
   SCRAPE_WORKFLOW_NAME,
@@ -19,9 +20,53 @@ const router = express.Router();
 
 const TERMINAL_SCRAPE_STATUSES = new Set(SCRAPE_TERMINAL_STATUSES);
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function findExistingBusinessContextForUser(userId) {
+  return BusinessContext.findOne({ userId })
+    .sort({ confirmedAt: -1, updatedAt: -1 })
+    .lean();
+}
+
 router.post('/business', requireAuth, async (req, res, next) => {
   const userId = new mongoose.Types.ObjectId(req.user.id);
   const Membership = mongoose.model('Membership');
+
+  const existingBusinessContext = await findExistingBusinessContextForUser(userId);
+  if (existingBusinessContext) {
+    return res.status(200).json({
+      businessId: existingBusinessContext.businessId.toString(),
+    });
+  }
+
+  let claimedSoftLaunch = false;
+  if (isSoftLaunchMode()) {
+    const claim = await User.findOneAndUpdate(
+      {
+        _id: userId,
+        softLaunchClaim: { $exists: false },
+      },
+      { $set: { softLaunchClaim: true } }
+    );
+    if (!claim) {
+      for (let i = 0; i < 3; i++) {
+        await sleep(100);
+        const foundExisting = await findExistingBusinessContextForUser(userId);
+        if (foundExisting) {
+          return res.status(200).json({
+            businessId: foundExisting.businessId.toString(),
+          });
+        }
+      }
+      return res.status(409).json({
+        error: 'soft_launch_single_business',
+        message: 'Soft launch supports one business per user.',
+      });
+    }
+    claimedSoftLaunch = true;
+  }
 
   let orgId;
   const membership = await Membership.findOne({ userId, role: 'owner' }).lean();
@@ -41,24 +86,6 @@ router.post('/business', requireAuth, async (req, res, next) => {
       await Membership.create({ orgId, userId, role: 'owner' });
       await User.findByIdAndUpdate(userId, { $set: { primaryOrgId: orgId } });
     }
-  }
-
-  let claimedSoftLaunch = false;
-  if (isSoftLaunchMode()) {
-    const claim = await User.findOneAndUpdate(
-      {
-        _id: userId,
-        softLaunchClaim: { $exists: false },
-      },
-      { $set: { softLaunchClaim: true } }
-    );
-    if (!claim) {
-      return res.status(409).json({
-        error: 'soft_launch_single_business',
-        message: 'Soft launch supports one business per user.',
-      });
-    }
-    claimedSoftLaunch = true;
   }
 
   let draft;
@@ -91,7 +118,7 @@ router.post('/business', requireAuth, async (req, res, next) => {
   });
 });
 
-router.post('/business/:businessId/scrape', requireAuth, async (req, res) => {
+router.post('/business/:businessId/intake', requireAuth, async (req, res, next) => {
   const businessIdRaw = req.params.businessId;
   if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
     return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
@@ -99,22 +126,12 @@ router.post('/business/:businessId/scrape', requireAuth, async (req, res) => {
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
   const userId = new mongoose.Types.ObjectId(req.user.id);
 
-  const urlCheck = validateHttpUrl(
-    typeof req.body?.websiteUrl === 'string' ? req.body.websiteUrl : ''
-  );
-  if (!urlCheck.ok) {
-    return res.status(400).json({
-      error: 'validation_error',
-      message: urlCheck.message,
-    });
+  const parsed = validateIntakeBody(req.body);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: 'validation_error', message: parsed.message });
   }
-  const websiteUrl = urlCheck.value;
 
-  const doc = await BusinessContext.findOne({
-    businessId,
-    userId,
-  });
-
+  const doc = await BusinessContext.findOne({ businessId, userId });
   if (!doc) {
     return res.status(404).json({
       error: 'not_found',
@@ -122,65 +139,24 @@ router.post('/business/:businessId/scrape', requireAuth, async (req, res) => {
     });
   }
 
-  doc.websiteUrl = websiteUrl;
-  await doc.save();
-
-  const scrapeRun = await ScrapeRun.create({
-    businessId: doc.businessId,
-    userId,
-    websiteUrl,
-    status: 'QUEUED',
-  });
-
-  const workflowId = `scrape-${scrapeRun._id.toString()}`;
-  const taskQueue = resolveTemporalTaskQueue();
-  const startedAt = new Date().toISOString();
-
+  Object.assign(doc, parsed.value);
   try {
-    const client = await getTemporalClient();
-    await client.workflow.start(SCRAPE_WORKFLOW_NAME, {
-      taskQueue,
-      workflowId,
-      args: [
-        {
-          scrapeRunId: scrapeRun._id.toString(),
-          businessId: doc.businessId.toString(),
-          userId: userId.toString(),
-          websiteUrl,
-          startedAt,
-        },
-      ],
-    });
-
-    scrapeRun.temporalWorkflowId = workflowId;
-    scrapeRun.status = 'RUNNING';
-    await scrapeRun.save();
-
-    return res.status(202).json({
-      businessId: doc.businessId.toString(),
-      websiteUrl,
-      scrapeRunId: scrapeRun._id.toString(),
-      workflowId,
-      status: scrapeRun.status,
-    });
+    await doc.save();
   } catch (err) {
-    scrapeRun.status = 'FAILED';
-    scrapeRun.lastErrorSummary =
-      typeof err?.message === 'string' ? err.message : 'Temporal workflow start failed';
-    await scrapeRun.save();
-
-    return res.status(503).json({
-      error: 'temporal_unavailable',
-      message:
-        'Scrape was queued but Temporal workflow could not be started. Check Temporal address and worker.',
-      businessId: doc.businessId.toString(),
-      websiteUrl,
-      scrapeRunId: scrapeRun._id.toString(),
-      workflowId: null,
-      status: scrapeRun.status,
-      detail: scrapeRun.lastErrorSummary,
-    });
+    return next(err);
   }
+
+  return res.status(200).json({
+    businessId: doc.businessId.toString(),
+    saved: true,
+  });
+});
+
+router.post('/business/:businessId/scrape', requireAuth, async (req, res) => {
+  return res.status(403).json({
+    error: 'forbidden',
+    message: 'Customer onboarding scrape is disabled. An operator starts onboarding scrape.',
+  });
 });
 
 router.get('/business/:businessId/scrape-runs/:scrapeRunId', requireAuth, async (req, res) => {

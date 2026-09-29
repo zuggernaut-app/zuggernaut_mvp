@@ -51,6 +51,46 @@ const businessContextSchema = new mongoose.Schema(
     thankYouUrls: [{ type: String, trim: true }],
     /** Frozen slug5-id6 key set at first context confirm; used for deterministic Ads/GTM resource names. */
     nameKey: { type: String, trim: true },
+    /** SUSO Step 0 — internal business foundation (versioned). */
+    uvp: { type: String, trim: true },
+    /** { competitors: [{ name, differentiation? }], differentiationAngle? } */
+    competitorLandscape: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    businessScope: {
+      type: String,
+      enum: ['local_service', 'regional', 'national_online'],
+      trim: true,
+    },
+    valueComplexity: {
+      type: String,
+      enum: [
+        'low_value_low_complexity',
+        'low_value_high_complexity',
+        'high_value_low_complexity',
+        'high_value_high_complexity',
+      ],
+      trim: true,
+    },
+    /** User-stated budget input for SUSO budget viability gate. */
+    budgetTier: {
+      type: String,
+      enum: ['starter', 'growth', 'scale'],
+      trim: true,
+    },
+    susoVersion: { type: Number, default: 0 },
+    susoVersionUpdatedAt: { type: Date },
+    /** ISO 3166-1 alpha-2; operator-recorded; drives call-campaign eligibility. */
+    businessCountry: { type: String, trim: true, uppercase: true },
+    /** Set when the operator completes the confirmation call (distinct from customer context confirm). */
+    setupCallConfirmedAt: { type: Date },
+    /** Intake: who buys today. */
+    whoBuysToday: { type: String, trim: true },
+    /** Intake: how buyers contact the business today. */
+    howBuyersContact: { type: String, trim: true },
+    /**
+     * Per-field answer provenance: customer | operator | ai_guess.
+     * Keys align with intake field names (businessName, services, …).
+     */
+    intakeFieldSources: { type: mongoose.Schema.Types.Mixed, default: undefined },
     /** Raw scrape output — never map into confirmed fields without explicit user save */
     rawScrapeOutput: { type: mongoose.Schema.Types.Mixed, select: false },
     confirmedAt: { type: Date },

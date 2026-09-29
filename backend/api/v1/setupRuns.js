@@ -23,6 +23,11 @@ const {
   formatAdsReadinessSummary,
 } = require('../../services/capabilities/businessContextAdsReadinessService');
 const { resolvePrimaryGoal } = require('../../services/capabilities/adsConversionCatalogService');
+const { isStep0Complete } = require('../../lib/susoStep0Validation');
+const {
+  findLatestSucceededAdsCampaignArtifact,
+  resolveSusoStaleState,
+} = require('../../services/setup/susoStaleService');
 const { isSoftLaunchMode } = require('../../constants/softLaunch');
 const { deriveBusinessNameKey } = require('../../lib/businessNameKey');
 const {
@@ -43,10 +48,11 @@ const {
   assertActivePlan,
   SubscriptionGateError,
 } = require('../../services/billing/subscriptionGate');
+const { MembershipCheckError } = require('../../lib/auth/membershipCheck');
 const {
-  assertBusinessMembershipOrOwnership,
-  MembershipCheckError,
-} = require('../../lib/auth/membershipCheck');
+  assertBusinessMembershipOrPlatformAdmin,
+  isPlatformAdminUser,
+} = require('./lib/platformAdminBusinessAccess');
 const { createLogger } = require('../../lib/observability/logger');
 
 const router = express.Router();
@@ -66,11 +72,26 @@ function membershipErrorResponse(err, res) {
  */
 async function assertSetupBusinessAccess(res, userId, businessId) {
   try {
-    await assertBusinessMembershipOrOwnership(userId, businessId.toString());
+    await assertBusinessMembershipOrPlatformAdmin(userId, businessId.toString());
     return true;
   } catch (err) {
     const handled = membershipErrorResponse(err, res);
     return handled ? false : Promise.reject(err);
+  }
+}
+
+async function userCanAccessSetupRun(userId, setupRun) {
+  if (await isPlatformAdminUser(userId)) {
+    return true;
+  }
+  try {
+    await assertBusinessMembershipOrPlatformAdmin(userId, setupRun.businessId.toString());
+    return true;
+  } catch (err) {
+    if (err instanceof MembershipCheckError) {
+      return false;
+    }
+    throw err;
   }
 }
 
@@ -148,13 +169,11 @@ router.post('/', requireAuth, async (req, res) => {
     bc.nameKey = nameKey;
   }
 
-  try {
-    await assertActivePlan(userId, 'setup_start');
-  } catch (err) {
-    if (err instanceof SubscriptionGateError) {
-      return res.status(403).json({ error: err.code, message: err.message });
-    }
-    throw err;
+  if (!bc.setupCallConfirmedAt) {
+    return res.status(409).json({
+      error: 'precondition_failed',
+      message: 'Confirmation call must be completed before starting setup.',
+    });
   }
 
   if (!bc.confirmedAt) {
@@ -162,6 +181,26 @@ router.post('/', requireAuth, async (req, res) => {
       error: 'precondition_failed',
       message:
         'Business context must be confirmed (PUT /business-contexts/:businessId) before starting setup.',
+    });
+  }
+
+  if (!isStep0Complete(bc)) {
+    return res.status(409).json({
+      error: 'step0_incomplete',
+      message:
+        'Complete Step 0 business foundation (UVP, scope, value×complexity, budget tier) before starting setup.',
+    });
+  }
+
+  const { artifact: priorCampaignArtifact } = await findLatestSucceededAdsCampaignArtifact(businessId);
+  const staleState = resolveSusoStaleState(bc, priorCampaignArtifact);
+  if (staleState.susoStale && !force) {
+    return res.status(409).json({
+      error: 'suso_version_mismatch',
+      message:
+        'Campaigns were generated under a prior SUSO version. Review Step 0 changes and start setup with force: true to regenerate.',
+      currentSusoVersion: staleState.currentSusoVersion,
+      artifactSusoVersion: staleState.artifactSusoVersion,
     });
   }
 
@@ -342,14 +381,7 @@ router.get('/:setupRunId/report', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'not_found', message: 'Setup run not found' });
     }
 
-    const ownsBusiness = await assertBusinessMembershipOrOwnership(
-      setupUserId,
-      setupRun.businessId.toString()
-    ).then(() => true).catch((err) => {
-      if (err instanceof MembershipCheckError) return false;
-      throw err;
-    });
-    if (!ownsBusiness) {
+    if (!(await userCanAccessSetupRun(setupUserId, setupRun))) {
       return res.status(404).json({
         error: 'not_found',
         message: 'Setup run not found for this user',
@@ -387,14 +419,7 @@ router.get('/:setupRunId', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'not_found', message: 'Setup run not found' });
     }
 
-    const ownsBusiness = await assertBusinessMembershipOrOwnership(
-      setupUserId,
-      setupRun.businessId.toString()
-    ).then(() => true).catch((err) => {
-      if (err instanceof MembershipCheckError) return false;
-      throw err;
-    });
-    if (!ownsBusiness) {
+    if (!(await userCanAccessSetupRun(setupUserId, setupRun))) {
       return res.status(404).json({
         error: 'not_found',
         message: 'Setup run not found for this user',

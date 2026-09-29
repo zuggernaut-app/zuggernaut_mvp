@@ -11,6 +11,8 @@ const { mockResourceName } = require('../services/integrations/googleAdsCampaign
 const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { SETUP_STEP_NAMES } = require('../constants/setupWorkflow');
 const { createLogger } = require('../lib/observability/logger');
+const { businessScopedIdempotencyKey } = require('../constants/idempotency');
+const { computeBusinessIntentFingerprint } = require('../lib/idempotency/businessIntentFingerprint');
 
 describe('adsAutoCampaignService', () => {
   const logger = createLogger({ level: 'silent' });
@@ -32,7 +34,14 @@ describe('adsAutoCampaignService', () => {
       industry: 'plumbing',
       services: opts.services ?? ['Emergency plumbing'],
       serviceAreas: ['Springfield'],
-      goals: opts.goals ?? { primary: 'calls' },
+      goals: opts.goals ?? { primary: 'forms' },
+      businessCountry: opts.businessCountry ?? 'GB',
+      contactMethods: opts.contactMethods ?? {},
+      uvp: opts.uvp ?? 'Fast emergency plumbing',
+      businessScope: opts.businessScope ?? 'local_service',
+      valueComplexity: opts.valueComplexity ?? 'low_value_low_complexity',
+      budgetTier: opts.budgetTier ?? 'growth',
+      susoVersion: opts.susoVersion ?? 0,
     });
     const run = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
 
@@ -58,7 +67,7 @@ describe('adsAutoCampaignService', () => {
     }
 
     const convRows = opts.conversions ?? [
-      { externalId: '1001', logicalCategory: 'call', name: 'Call conv' },
+      { externalId: '1002', logicalCategory: 'form', name: 'Form conv' },
     ];
 
     for (const row of convRows) {
@@ -149,19 +158,30 @@ describe('adsAutoCampaignService', () => {
       setupRunId: run._id,
       artifactType: 'ads_campaign_budget',
     }).lean();
-    expect(budget?.idempotencyKey).toBe(adsIdempotencyKey(run._id, 'campaign_budget'));
+    const intentFingerprint = computeBusinessIntentFingerprint(bc);
+    expect(budget?.idempotencyKey).toBe(
+      businessScopedIdempotencyKey(
+        bc.businessId,
+        'google_ads',
+        'recommended:campaign_budget',
+        intentFingerprint
+      )
+    );
 
     const campaign = await IntegrationArtifact.findOne({
       setupRunId: run._id,
       artifactType: 'ads_campaign',
     }).lean();
     expect(campaign?.metadata?.budgetResourceName).toBeTruthy();
+    expect(campaign?.metadata?.susoVersion).toBe(0);
 
     const geo = await IntegrationArtifact.findOne({
       setupRunId: run._id,
       artifactType: 'ads_campaign_criterion',
     }).lean();
-    expect(geo?.idempotencyKey).toBe(adsIdempotencyKey(run._id, 'geo_0'));
+    expect(geo?.idempotencyKey).toBe(
+      businessScopedIdempotencyKey(bc.businessId, 'google_ads', 'recommended:geo_0', intentFingerprint)
+    );
     expect(geo?.metadata?.geoTargetConstant).toBe('geoTargetConstants/mock-geo-springfield');
     expect(result.summary.geoExternalIds).toHaveLength(1);
 
@@ -333,7 +353,7 @@ describe('adsAutoCampaignService', () => {
     const originalBuild = intentService.buildCampaignIntentFromNormalized;
     const complianceSpy = jest.spyOn(complianceService, 'assertGoogleAdsCampaignCompliance');
 
-    jest.spyOn(intentService, 'buildCampaignIntentFromNormalized').mockImplementationOnce((...args) => ({
+    jest.spyOn(intentService, 'buildCampaignIntentFromNormalized').mockImplementation((...args) => ({
       ...originalBuild(...args),
       keywords: [{ text: 'bad#keyword', matchType: 'PHRASE' }],
     }));
@@ -483,6 +503,8 @@ describe('adsAutoCampaignService', () => {
   it('links multiple conversions when both goal conversions exist', async () => {
     const IntegrationArtifact = mongoose.model('IntegrationArtifact');
     const { bc, run } = await seedAdsCampaignRun('ads-both@test.com', {
+      businessCountry: 'US',
+      contactMethods: { phones: ['+12025550123'] },
       goals: { primary: 'both' },
       conversions: [
         { externalId: '1001', logicalCategory: 'call', name: 'Call conv' },
@@ -498,18 +520,27 @@ describe('adsAutoCampaignService', () => {
 
     expect(result.summary.conversionLinkCount).toBe(2);
     expect(result.summary.conversionGoalLinked).toBe(true);
+    expect(result.summary.slotsCreated).toBe(2);
+    expect(result.summary.geoTargetsCreated).toBe(2);
+    expect(result.summary.keywordsCreated).toBe(6);
 
-    const customGoal = await IntegrationArtifact.findOne({
+    const customGoals = await IntegrationArtifact.find({
       setupRunId: run._id,
       artifactType: 'ads_custom_conversion_goal',
     }).lean();
-    expect(customGoal?.metadata?.conversionActionResourceNames).toHaveLength(2);
+    expect(customGoals).toHaveLength(2);
+    for (const goal of customGoals) {
+      expect(goal.metadata?.conversionActionResourceNames).toHaveLength(1);
+    }
 
-    const goalConfig = await IntegrationArtifact.findOne({
+    const goalConfigs = await IntegrationArtifact.find({
       setupRunId: run._id,
       artifactType: 'ads_conversion_goal_campaign_config',
     }).lean();
-    expect(goalConfig?.metadata?.customConversionGoalResourceName).toBe(customGoal?.externalId);
+    expect(goalConfigs).toHaveLength(2);
+    for (const goalConfig of goalConfigs) {
+      expect(goalConfig.metadata?.customConversionGoalResourceName).toBeTruthy();
+    }
   });
 
   it('resumes from existing budget and campaign artifacts on partial retry', async () => {
@@ -521,8 +552,8 @@ describe('adsAutoCampaignService', () => {
       businessId: bc.businessId,
       provider: 'google_ads',
       artifactType: 'ads_campaign_budget',
-      externalId: `customers/${customerId}/campaignBudgets/zug-budget-${run._id}`,
-      idempotencyKey: adsIdempotencyKey(run._id, 'campaign_budget'),
+      externalId: mockResourceName(customerId, 'campaignBudgets', `zug-budget-${run._id}`),
+      idempotencyKey: adsIdempotencyKey(run._id, 'recommended:campaign_budget'),
       metadata: { createdBy: 'ads_auto_campaign_v1' },
     });
     await IntegrationArtifact.create({
@@ -530,8 +561,8 @@ describe('adsAutoCampaignService', () => {
       businessId: bc.businessId,
       provider: 'google_ads',
       artifactType: 'ads_campaign',
-      externalId: `customers/${customerId}/campaigns/zug-campaign-${run._id}`,
-      idempotencyKey: adsIdempotencyKey(run._id, 'campaign'),
+      externalId: mockResourceName(customerId, 'campaigns', `zug-campaign-${run._id}`),
+      idempotencyKey: adsIdempotencyKey(run._id, 'recommended:campaign'),
       metadata: { createdBy: 'ads_auto_campaign_v1' },
     });
 
@@ -548,5 +579,47 @@ describe('adsAutoCampaignService', () => {
     expect(
       await IntegrationArtifact.countDocuments({ setupRunId: run._id, artifactType: 'ads_ad' })
     ).toBe(1);
+  });
+
+  it('does not reuse cross-run artifacts when metadata.susoVersion mismatches', async () => {
+    const BusinessContext = mongoose.model('BusinessContext');
+    const SetupRun = mongoose.model('SetupRun');
+    const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+    const { bc, run } = await seedAdsCampaignRun('ads-suso-mismatch@test.com', { susoVersion: 1 });
+
+    await createAdsAutoCampaign({ setupRunId: run._id, businessId: bc.businessId, logger });
+
+    await BusinessContext.updateOne({ businessId: bc.businessId }, { $set: { susoVersion: 2 } });
+
+    const run2 = await SetupRun.create({ businessId: bc.businessId, status: 'RUNNING' });
+    await IntegrationArtifact.create({
+      setupRunId: run2._id,
+      businessId: bc.businessId,
+      provider: 'google_ads',
+      artifactType: 'ads_conversion_action',
+      externalId: '1001',
+      idempotencyKey: `ads-ca-${run2._id}-call`,
+      metadata: { logicalCategory: 'call', name: 'Call conv' },
+    });
+
+    const second = await createAdsAutoCampaign({
+      setupRunId: run2._id,
+      businessId: bc.businessId,
+      logger,
+    });
+
+    expect(second.summary.campaignCreated).toBe(true);
+    expect(
+      await IntegrationArtifact.countDocuments({
+        setupRunId: run2._id,
+        artifactType: 'ads_campaign',
+      })
+    ).toBe(1);
+    const run2Campaign = await IntegrationArtifact.findOne({
+      setupRunId: run2._id,
+      artifactType: 'ads_campaign',
+    }).lean();
+    expect(run2Campaign?.metadata?.susoVersion).toBe(2);
+    expect(run2Campaign?.idempotencyKey).toBe(adsIdempotencyKey(run2._id, 'recommended:campaign'));
   });
 });

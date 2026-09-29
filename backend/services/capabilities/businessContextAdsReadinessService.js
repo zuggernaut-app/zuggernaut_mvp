@@ -6,6 +6,8 @@ const { ADS_READINESS_CODES } = require('../../constants/businessContextAdsReadi
 const { SCRAPE_RUN_STATUS } = require('../../constants/enums');
 const { resolvePrimaryGoal } = require('./adsConversionCatalogService');
 const { truncateRsaText } = require('../integrations/googleAdsCampaignClient');
+const { extractCompetitorNames } = require('../../lib/susoStep0Validation');
+const { isSalesObjectiveAllowed } = require('../../constants/suso');
 
 /** Max length for business name used in Ads copy (before RSA field limits). */
 const BUSINESS_NAME_FOR_ADS_MAX_CHARS = 50;
@@ -162,22 +164,52 @@ function buildKeywordSeeds(businessName, primaryService, area) {
 }
 
 /**
+ * Strip named competitors from ad copy — named-competitor usage default-off for V1.
+ *
+ * @param {string} text
+ * @param {string[]} competitorNames
+ * @returns {string}
+ */
+function stripCompetitorNamesFromCopy(text, competitorNames) {
+  let out = text;
+  for (const name of competitorNames) {
+    if (!name) continue;
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(escaped, 'gi'), '').replace(/\s+/g, ' ').trim();
+  }
+  return out;
+}
+
+/**
  * @param {string} businessName
  * @param {string} primaryService
  * @param {string} area
+ * @param {{ competitorLandscape?: unknown, valueComplexity?: string | null }} [options]
  */
-function buildAdCopySeeds(businessName, primaryService, area) {
+function buildAdCopySeeds(businessName, primaryService, area, options = {}) {
   const cleanName = normalizeBusinessNameForAds(businessName);
+  const competitorNames = extractCompetitorNames(options.competitorLandscape);
+  const useGenericComparison = isSalesObjectiveAllowed(options.valueComplexity);
+
+  const headlines = [
+    truncateRsaText(cleanName, 30),
+    truncateRsaText(`${primaryService} in ${area}`, 30),
+    useGenericComparison ? 'Compare Local Providers' : 'Get a Free Quote Today',
+  ].map((h) => stripCompetitorNamesFromCopy(h, competitorNames));
+
+  const descriptions = [
+    truncateRsaText(`Trusted ${primaryService} serving ${area}. Contact ${cleanName} today.`, 90),
+    useGenericComparison
+      ? truncateRsaText(
+          `Unlike typical ${primaryService} providers in our category — see how we compare.`,
+          90
+        )
+      : truncateRsaText(`Professional ${primaryService}. Visit our website to learn more.`, 90),
+  ].map((d) => stripCompetitorNamesFromCopy(d, competitorNames));
+
   return {
-    headlines: [
-      truncateRsaText(cleanName, 30),
-      truncateRsaText(`${primaryService} in ${area}`, 30),
-      'Get a Free Quote Today',
-    ],
-    descriptions: [
-      truncateRsaText(`Trusted ${primaryService} serving ${area}. Contact ${cleanName} today.`, 90),
-      truncateRsaText(`Professional ${primaryService}. Visit our website to learn more.`, 90),
-    ],
+    headlines,
+    descriptions,
   };
 }
 
@@ -307,7 +339,10 @@ function validateBusinessContextAdsReadinessSync(businessContext) {
   }
 
   const keywordSeeds = buildKeywordSeeds(adsBusinessName, primaryService, primaryServiceArea);
-  const adCopySeeds = buildAdCopySeeds(adsBusinessName, primaryService, primaryServiceArea);
+  const adCopySeeds = buildAdCopySeeds(adsBusinessName, primaryService, primaryServiceArea, {
+    competitorLandscape: bc.competitorLandscape,
+    valueComplexity: bc.valueComplexity,
+  });
 
   return {
     ok: true,

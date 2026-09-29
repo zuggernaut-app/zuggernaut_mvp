@@ -3,7 +3,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const { requireAuth } = require('./middleware/requireAuth');
-const { assertBusinessAccess } = require('./lib/assertBusinessAccess');
+const { assertBusinessAccessOrPlatformAdmin } = require('./lib/platformAdminBusinessAccess');
 const {
   PROVISIONING_PROVIDERS,
   ProvisioningServiceError,
@@ -63,7 +63,7 @@ function mapProvisioningError(err, res) {
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -91,7 +91,7 @@ router.post('/:provider/requests', requireAuth, async (req, res, next) => {
     }
 
     const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -109,6 +109,8 @@ router.post('/:provider/requests', requireAuth, async (req, res, next) => {
       provider,
       requestedByUserId: req.user.id,
       setupRunId,
+      currencyCode:
+        typeof req.body?.currencyCode === 'string' ? req.body.currencyCode.trim() : undefined,
     });
 
     return res.status(result.created ? 201 : 200).json(result);
@@ -123,7 +125,7 @@ router.post('/requests/:requestId/approve', requireAuth, async (req, res, next) 
   try {
     const requestId = req.params.requestId;
     const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -139,6 +141,8 @@ router.post('/requests/:requestId/approve', requireAuth, async (req, res, next) 
         typeof req.body?.provisioningIntent === 'string'
           ? req.body.provisioningIntent.trim()
           : undefined,
+      currencyCode:
+        typeof req.body?.currencyCode === 'string' ? req.body.currencyCode.trim() : undefined,
     });
 
     return res.status(200).json({ request });
@@ -163,7 +167,7 @@ router.post('/requests/:requestId/execute', requireAuth, async (req, res, next) 
       });
     }
 
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -190,7 +194,7 @@ router.post('/requests/:requestId/cancel', requireAuth, async (req, res, next) =
   try {
     const requestId = req.params.requestId;
     const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',

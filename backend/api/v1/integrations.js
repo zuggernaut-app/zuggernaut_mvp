@@ -3,7 +3,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const { requireAuth } = require('./middleware/requireAuth');
-const { assertBusinessAccess } = require('./lib/assertBusinessAccess');
+const { assertBusinessAccessOrPlatformAdmin } = require('./lib/platformAdminBusinessAccess');
 const { assertProviderSelectionNotLocked } = require('./lib/assertProviderSelectionLocked');
 const { isGoogleOAuthProvider } = require('../../constants/googleOAuth');
 const {
@@ -58,9 +58,16 @@ const {
 } = require('../../services/integrations/metaOAuthClient');
 const { runMetaSetup } = require('../../services/capabilities/metaSetupService');
 const {
-  assertActivePlan,
+  assertActivePlanForBusinessOwner,
   SubscriptionGateError,
 } = require('../../services/billing/subscriptionGate');
+const {
+  getLeadCampaignDashboard,
+  enableCampaignSlotForBusiness,
+  pauseCampaignSlotForBusiness,
+  updateBudgetSlotForBusiness,
+  confirmBudgetSlotForBusiness,
+} = require('../../services/capabilities/leadCampaignManagementService');
 const IntegrationConnection = mongoose.model('IntegrationConnection');
 const {
   ProviderResourceExclusiveError,
@@ -138,7 +145,7 @@ function mccLinkResponse(mccLink, extra = {}) {
 router.get('/status', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -171,7 +178,7 @@ router.get('/google/:provider/connect-url', requireAuth, async (req, res, next) 
     }
 
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -204,7 +211,7 @@ router.get('/google/:provider/connect-url', requireAuth, async (req, res, next) 
 router.get('/gtm/resource-options', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -231,7 +238,7 @@ router.put('/gtm/selection', requireAuth, async (req, res, next) => {
       });
     }
 
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -259,7 +266,7 @@ router.put('/gtm/selection', requireAuth, async (req, res, next) => {
 router.get('/gtm/accounts', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -293,7 +300,7 @@ router.put('/gtm/account-selection', requireAuth, async (req, res, next) => {
       });
     }
 
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -317,7 +324,7 @@ router.put('/gtm/account-selection', requireAuth, async (req, res, next) => {
 router.get('/google_ads/resource-options', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -350,7 +357,7 @@ router.put('/google_ads/selection', requireAuth, async (req, res, next) => {
       });
     }
 
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -390,7 +397,7 @@ router.put('/google_ads/provisioning-intent', requireAuth, async (req, res, next
       });
     }
 
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -410,7 +417,7 @@ router.put('/google_ads/provisioning-intent', requireAuth, async (req, res, next
 router.get('/google_ads/mcc-link-status', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -452,7 +459,7 @@ router.get('/google_ads/mcc-link-status', requireAuth, async (req, res, next) =>
 router.post('/google_ads/mcc-link/invite', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -477,7 +484,7 @@ router.post('/google_ads/mcc-link/invite', requireAuth, async (req, res, next) =
 router.post('/google_ads/mcc-link/accept', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({
         error: 'not_found',
@@ -563,8 +570,12 @@ router.get('/google_ads/campaign/performance', requireAuth, async (req, res, nex
 
 router.post('/google_ads/campaign/enable', requireAuth, async (req, res, next) => {
   try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    if (!bidRaw) {
+      return res.status(400).json({ error: 'validation_error', message: 'businessId is required' });
+    }
     try {
-      await assertActivePlan(req.user.id, 'campaign_enable');
+      await assertActivePlanForBusinessOwner(bidRaw);
     } catch (err) {
       if (err instanceof SubscriptionGateError) {
         return res.status(403).json({ error: err.code, message: err.message });
@@ -572,7 +583,6 @@ router.post('/google_ads/campaign/enable', requireAuth, async (req, res, next) =
       throw err;
     }
 
-    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
     const result = await enableCampaignForBusiness(req.user.id, bidRaw);
     return res.status(200).json(result);
   } catch (err) {
@@ -594,6 +604,86 @@ router.post('/google_ads/campaign/pause', requireAuth, async (req, res, next) =>
     if (mapped) return mapped;
     const providerMapped = mapMccLinkError(err, res);
     if (providerMapped) return providerMapped;
+    next(err);
+  }
+});
+
+router.get('/google_ads/lead-campaigns', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
+    const dashboard = await getLeadCampaignDashboard(req.user.id, bidRaw);
+    return res.status(200).json(dashboard);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/lead-campaigns/:slot/enable', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const slot = req.params.slot;
+    if (!bidRaw) {
+      return res.status(400).json({ error: 'validation_error', message: 'businessId is required' });
+    }
+    try {
+      await assertActivePlanForBusinessOwner(bidRaw);
+    } catch (err) {
+      if (err instanceof SubscriptionGateError) {
+        return res.status(403).json({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
+    const result = await enableCampaignSlotForBusiness(req.user.id, bidRaw, slot);
+    return res.status(200).json(result);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/lead-campaigns/:slot/pause', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const slot = req.params.slot;
+    const result = await pauseCampaignSlotForBusiness(req.user.id, bidRaw, slot);
+    return res.status(200).json(result);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.patch('/google_ads/lead-campaigns/:slot/budget', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const slot = req.params.slot;
+    const result = await updateBudgetSlotForBusiness(req.user.id, bidRaw, slot, req.body?.amountMicros);
+    return res.status(200).json(result);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/lead-campaigns/:slot/confirm-budget', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const slot = req.params.slot;
+    const result = await confirmBudgetSlotForBusiness(
+      req.user.id,
+      bidRaw,
+      slot,
+      req.body?.amountMicros
+    );
+    return res.status(200).json(result);
+  } catch (err) {
+    const mapped = mapManagementRouteError(err, res);
+    if (mapped) return mapped;
     next(err);
   }
 });
@@ -637,7 +727,7 @@ router.get('/meta/connect-url', requireAuth, async (_req, res) => {
 router.get('/meta/status', requireAuth, async (req, res, next) => {
   try {
     const bidRaw = typeof req.query.businessId === 'string' ? req.query.businessId.trim() : '';
-    const access = await assertBusinessAccess(req.user.id, bidRaw);
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
     if (!access) {
       return res.status(404).json({ error: 'not_found', message: 'Business context not found' });
     }
@@ -700,7 +790,7 @@ router.get('/google/callback', async (req, res) => {
     return res.redirect(302, redirect);
   }
 
-  const access = await assertBusinessAccess(payload.userId, payload.businessId);
+  const access = await assertBusinessAccessOrPlatformAdmin(payload.userId, payload.businessId);
   if (!access) {
     const redirect = buildFrontendRedirectUrl({
       provider: payload.provider,

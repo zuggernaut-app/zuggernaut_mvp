@@ -18,6 +18,7 @@ beforeAll(async () => {
   process.env.GTM_API_MOCK = process.env.GTM_API_MOCK || 'true';
   process.env.FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
   process.env.STRIPE_MOCK = process.env.STRIPE_MOCK || 'true';
+  process.env.BILLING_FREE_PLAN_TEST = process.env.BILLING_FREE_PLAN_TEST || 'true';
   mongoServer = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongoServer.getUri();
   await mongoose.connect(process.env.MONGODB_URI);

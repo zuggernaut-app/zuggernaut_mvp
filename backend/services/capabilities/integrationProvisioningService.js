@@ -62,9 +62,25 @@ function serializeProvisioningRequest(doc) {
         })
       : doc.errorMessage ?? null,
     setupRunId: doc.setupRunId ? doc.setupRunId.toString() : null,
+    currencyCode: doc.currencyCode ?? null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
+}
+
+/**
+ * @param {string | null | undefined} currencyCode
+ */
+function normalizeProvisioningCurrencyCode(currencyCode) {
+  const normalized = String(currencyCode ?? '').trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized !== 'USD' && normalized !== 'INR') {
+    throw new ProvisioningServiceError(
+      'currencyCode must be USD or INR.',
+      'PROVISIONING_INVALID_CURRENCY'
+    );
+  }
+  return normalized;
 }
 
 /**
@@ -173,19 +189,28 @@ async function assertProvisioningEligible(businessId, provider) {
  * @param {import('mongoose').Types.ObjectId | string | null | undefined} [input.setupRunId]
  */
 async function createProvisioningRequest(input) {
-  const { businessId, provider, requestedByUserId, setupRunId } = input;
+  const { businessId, provider, requestedByUserId, setupRunId, currencyCode } = input;
   assertProvisioningProvider(provider);
   await assertProvisioningEligible(businessId, provider);
+  const normalizedCurrency = normalizeProvisioningCurrencyCode(currencyCode);
 
   const existing = await findActiveProvisioningRequest(businessId, provider);
   if (existing) {
+    const updates = {};
     if (setupRunId && String(existing.setupRunId ?? '') !== String(setupRunId)) {
-      await IntegrationProvisioningRequest.findByIdAndUpdate(existing._id, { setupRunId });
+      updates.setupRunId = setupRunId;
+    }
+    if (normalizedCurrency) {
+      updates.currencyCode = normalizedCurrency;
+    }
+    if (Object.keys(updates).length > 0) {
+      await IntegrationProvisioningRequest.findByIdAndUpdate(existing._id, { $set: updates });
     }
     return {
       request: serializeProvisioningRequest({
         ...existing,
         setupRunId: setupRunId ?? existing.setupRunId,
+        currencyCode: normalizedCurrency ?? existing.currencyCode,
       }),
       created: false,
     };
@@ -203,6 +228,7 @@ async function createProvisioningRequest(input) {
     requestedByUserId,
     setupRunId: setupRunId ?? null,
     status: 'pending_approval',
+    ...(normalizedCurrency ? { currencyCode: normalizedCurrency } : {}),
   });
 
   return { request: serializeProvisioningRequest(request.toObject()), created: true };
@@ -229,8 +255,9 @@ async function assertSetupRunForBusiness(setupRunId, businessId) {
  * @param {import('mongoose').Types.ObjectId | string} input.approvedByUserId
  */
 async function approveProvisioningRequest(input) {
-  const { requestId, businessId, approvedByUserId, provisioningIntent } = input;
+  const { requestId, businessId, approvedByUserId, provisioningIntent, currencyCode } = input;
   const request = await loadOwnedProvisioningRequest(requestId, businessId);
+  const normalizedCurrency = normalizeProvisioningCurrencyCode(currencyCode);
 
   if (request.status !== 'pending_approval') {
     throw new ProvisioningServiceError(
@@ -252,6 +279,7 @@ async function approveProvisioningRequest(input) {
         status: 'approved',
         approvedByUserId,
         approvedAt,
+        ...(normalizedCurrency ? { currencyCode: normalizedCurrency } : {}),
       },
     },
     { new: true }
@@ -293,6 +321,7 @@ async function executeProvisioningRequest(input) {
       businessId,
       setupRunId,
       provisioningRequestId: request._id,
+      currencyCode: request.currencyCode,
       logger,
     });
   }

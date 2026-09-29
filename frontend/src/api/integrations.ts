@@ -62,6 +62,7 @@ export interface ProvisioningRequestDto {
   errorCode: string | null
   errorMessage: string | null
   setupRunId: string | null
+  currencyCode?: 'USD' | 'INR' | null
   createdAt?: string
   updatedAt?: string
 }
@@ -82,6 +83,7 @@ export interface ProvisioningOverviewResponse {
 export interface CreateProvisioningRequestBody {
   businessId: string
   setupRunId?: string
+  currencyCode?: 'USD' | 'INR'
 }
 
 export interface CreateProvisioningRequestResponse {
@@ -119,10 +121,18 @@ export async function createProvisioningRequest(
 export async function approveProvisioningRequest(
   requestId: string,
   businessId: string,
+  options?: { currencyCode?: 'USD' | 'INR'; provisioningIntent?: 'mcc_create' },
 ): Promise<ApproveProvisioningRequestResponse> {
   return apiRequest<ApproveProvisioningRequestResponse>(
     `/integrations/provisioning/requests/${requestId}/approve`,
-    { method: 'POST', body: { businessId } },
+    {
+      method: 'POST',
+      body: {
+        businessId,
+        ...(options?.currencyCode ? { currencyCode: options.currencyCode } : {}),
+        ...(options?.provisioningIntent ? { provisioningIntent: options.provisioningIntent } : {}),
+      },
+    },
   )
 }
 

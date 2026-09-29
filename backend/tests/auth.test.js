@@ -27,6 +27,15 @@ describe('/api/v1/auth', () => {
     const me = await agent.get('/api/v1/auth/me').expect(200);
     expect(me.body.user.id).toMatch(/^[a-f0-9]{24}$/);
     expect(me.body.user.email).toBe('cookie_me@example.com');
+    expect(me.body.user.primaryBusinessId).toBeNull();
+  });
+
+  it('/me includes primaryBusinessId when set', async () => {
+    const { agent } = await registerAgent(app, 'primary_biz@example.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+
+    const me = await agent.get('/api/v1/auth/me').expect(200);
+    expect(me.body.user.primaryBusinessId).toBe(draft.body.businessId);
   });
 
   it('duplicate register returns conflict', async () => {
