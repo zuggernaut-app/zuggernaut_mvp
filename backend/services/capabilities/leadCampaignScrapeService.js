@@ -30,6 +30,170 @@ function onboardingScrapeWorkflowId(businessId) {
 }
 
 /**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ */
+function signupScrapeWorkflowId(businessId) {
+  return `signup-scrape-${businessId.toString()}`;
+}
+
+/**
+ * Atomic claim for customer signup scrape (independent of operator onboarding scrape).
+ *
+ * @param {object} ctx
+ */
+async function claimSignupScrape(ctx) {
+  const { businessId, userId, websiteUrl } = ctx;
+  const now = new Date();
+  const leaseUntil = new Date(now.getTime() + ONBOARDING_CLAIM_LEASE_MS);
+
+  let scrapeRun;
+  try {
+    scrapeRun = await ScrapeRun.findOneAndUpdate(
+      {
+        businessId,
+        purpose: 'signup',
+        $or: [
+          { claimState: { $exists: false } },
+          { claimState: 'dispatch_failed' },
+          {
+            claimState: 'claiming',
+            claimLeaseExpiresAt: { $lte: now },
+          },
+        ],
+      },
+      {
+        $setOnInsert: {
+          businessId,
+          userId,
+          websiteUrl,
+          purpose: 'signup',
+          status: 'QUEUED',
+        },
+        $set: {
+          claimState: 'claiming',
+          claimLeaseExpiresAt: leaseUntil,
+          websiteUrl,
+          userId,
+          status: 'QUEUED',
+          lastErrorSummary: null,
+        },
+      },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+    );
+  } catch (err) {
+    if (err?.code === 11000) {
+      const existing = await ScrapeRun.findOne({ businessId, purpose: 'signup' }).lean();
+      if (existing?.claimState === 'running' || existing?.claimState === 'succeeded') {
+        return { claimed: false, scrapeRun: existing, idempotent: true };
+      }
+      if (
+        existing?.claimState === 'claiming' &&
+        existing.claimLeaseExpiresAt &&
+        new Date(existing.claimLeaseExpiresAt) > now
+      ) {
+        throw new LeadCampaignScrapeError(
+          'Signup scrape already in progress.',
+          'SCRAPE_CLAIM_IN_PROGRESS'
+        );
+      }
+    }
+    throw err;
+  }
+
+  if (!scrapeRun) {
+    throw new LeadCampaignScrapeError('Failed to claim signup scrape.', 'SCRAPE_CLAIM_FAILED');
+  }
+
+  return { claimed: true, scrapeRun, idempotent: false };
+}
+
+/**
+ * Start signup scrape after account creation (no operator fact-check gate).
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {import('mongoose').Types.ObjectId | string} userId
+ * @param {string} websiteUrl
+ */
+async function startSignupScrape(businessId, userId, websiteUrl) {
+  const biz =
+    businessId instanceof mongoose.Types.ObjectId
+      ? businessId
+      : new mongoose.Types.ObjectId(businessId);
+  const uid =
+    userId instanceof mongoose.Types.ObjectId ? userId : new mongoose.Types.ObjectId(userId);
+
+  const claim = await claimSignupScrape({ businessId: biz, userId: uid, websiteUrl });
+  if (!claim.claimed && claim.idempotent) {
+    return {
+      idempotent: true,
+      scrapeRunId: claim.scrapeRun._id.toString(),
+      workflowId: claim.scrapeRun.temporalWorkflowId ?? signupScrapeWorkflowId(biz),
+      status: claim.scrapeRun.status,
+      claimState: claim.scrapeRun.claimState,
+    };
+  }
+
+  const scrapeRun = claim.scrapeRun;
+  const workflowId = signupScrapeWorkflowId(biz);
+  const taskQueue = resolveTemporalTaskQueue();
+  const startedAt = new Date().toISOString();
+
+  try {
+    const client = await getTemporalClient();
+    await client.workflow.start(SCRAPE_WORKFLOW_NAME, {
+      taskQueue,
+      workflowId,
+      workflowIdReusePolicy: 'REJECT_DUPLICATE',
+      args: [
+        {
+          scrapeRunId: scrapeRun._id.toString(),
+          businessId: biz.toString(),
+          userId: uid.toString(),
+          websiteUrl,
+          startedAt,
+          purpose: 'signup',
+        },
+      ],
+    });
+
+    await ScrapeRun.updateOne(
+      { _id: scrapeRun._id },
+      {
+        $set: {
+          temporalWorkflowId: workflowId,
+          status: 'RUNNING',
+          claimState: 'running',
+          claimLeaseExpiresAt: null,
+        },
+      }
+    );
+
+    return {
+      idempotent: false,
+      scrapeRunId: scrapeRun._id.toString(),
+      workflowId,
+      status: 'RUNNING',
+      claimState: 'running',
+    };
+  } catch (err) {
+    const summary =
+      typeof err?.message === 'string' ? err.message : 'Temporal workflow start failed';
+    await ScrapeRun.updateOne(
+      { _id: scrapeRun._id },
+      {
+        $set: {
+          status: 'FAILED',
+          claimState: 'dispatch_failed',
+          claimLeaseExpiresAt: null,
+          lastErrorSummary: summary,
+        },
+      }
+    );
+    throw new LeadCampaignScrapeError(summary, 'temporal_unavailable');
+  }
+}
+
+/**
  * Task 9b — atomic claim for onboarding scrape.
  *
  * @param {object} ctx
@@ -209,6 +373,9 @@ async function startOperatorOnboardingScrape(businessId, operatorUserId) {
 module.exports = {
   LeadCampaignScrapeError,
   onboardingScrapeWorkflowId,
+  signupScrapeWorkflowId,
   claimOnboardingScrape,
+  claimSignupScrape,
+  startSignupScrape,
   startOperatorOnboardingScrape,
 };

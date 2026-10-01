@@ -17,6 +17,13 @@ function isValidEmail(email) {
   return e.length > 0 && e.length <= MAX_EMAIL_LENGTH && EMAIL_REGEX.test(e);
 }
 
+function validateOptionalHttpUrl(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: true, value: undefined };
+  }
+  return validateHttpUrl(raw);
+}
+
 function validateHttpUrl(raw) {
   if (typeof raw !== 'string') {
     return { ok: false, message: 'websiteUrl must be a non-empty string' };
@@ -108,6 +115,7 @@ module.exports = {
   MAX_ARRAY_ITEM_LENGTH,
   isValidEmail,
   isValidPhone,
+  validateOptionalHttpUrl,
   validateHttpUrl,
   normalizeStringList,
   validateMixedObjectOrNull,

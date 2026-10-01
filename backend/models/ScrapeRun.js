@@ -53,5 +53,13 @@ scrapeRunSchema.index(
     partialFilterExpression: { purpose: 'onboarding' },
   }
 );
+scrapeRunSchema.index(
+  { businessId: 1, purpose: 1 },
+  {
+    name: 'businessId_1_purpose_1_signup',
+    unique: true,
+    partialFilterExpression: { purpose: 'signup' },
+  }
+);
 
 module.exports = mongoose.model('ScrapeRun', scrapeRunSchema);

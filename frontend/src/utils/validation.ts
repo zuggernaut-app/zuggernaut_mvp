@@ -111,17 +111,34 @@ export function validatePasswordField(raw: string): PasswordFormResult {
 }
 
 export type RegisterWithPasswordResult =
-  | { ok: true; email: string; name?: string; password: string }
+  | { ok: true; email: string; name?: string; phone: string; websiteUrl?: string; password: string }
   | { ok: false; message: string }
 
 export function validateRegisterWithPasswordForm(
   emailRaw: string,
   nameRaw: string,
+  phoneRaw: string,
+  websiteRaw: string,
   passwordRaw: string,
   confirmRaw: string
 ): RegisterWithPasswordResult {
   const basic = validateRegisterForm(emailRaw, nameRaw)
   if (!basic.ok) return basic
+
+  const phone = phoneRaw.trim()
+  if (!phone || !isValidPhone(phone)) {
+    return { ok: false, message: 'A valid phone number is required.' }
+  }
+
+  const websiteTrimmed = websiteRaw.trim()
+  let websiteUrl: string | undefined
+  if (websiteTrimmed) {
+    const urlCheck = validateHttpUrl(websiteTrimmed)
+    if (!urlCheck.ok) {
+      return { ok: false, message: urlCheck.message }
+    }
+    websiteUrl = urlCheck.value
+  }
 
   const pw = validatePasswordField(passwordRaw)
   if (!pw.ok) return pw
@@ -134,6 +151,8 @@ export function validateRegisterWithPasswordForm(
     ok: true,
     email: basic.email,
     name: basic.name,
+    phone,
+    websiteUrl,
     password: pw.password,
   }
 }

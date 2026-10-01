@@ -129,19 +129,28 @@ describe('validateRegisterForm', () => {
 
 describe('validateRegisterWithPasswordForm', () => {
   const okPw = '1234567890ab'
+  const okPhone = '555-123-4567'
 
   it('requires matching confirmation', () => {
-    const result = validateRegisterWithPasswordForm('a@example.com', '', okPw, 'nomatch')
+    const result = validateRegisterWithPasswordForm(
+      'a@example.com',
+      '',
+      okPhone,
+      '',
+      okPw,
+      'nomatch',
+    )
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.message).toMatch(/match/i)
   })
 
-  it('returns trimmed email and password bundle', () => {
+  it('returns trimmed email, phone, and password bundle', () => {
     expect(
-      validateRegisterWithPasswordForm('  Hi@Example.com ', '', okPw, okPw),
+      validateRegisterWithPasswordForm('  Hi@Example.com ', '', okPhone, '', okPw, okPw),
     ).toMatchObject({
       ok: true,
       email: 'hi@example.com',
+      phone: okPhone,
       password: okPw,
     })
   })

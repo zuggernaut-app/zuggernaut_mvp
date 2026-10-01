@@ -113,6 +113,8 @@ export interface BusinessContextDto {
   susoVersion: number
   susoVersionUpdatedAt: string | null
   confirmedAt: string | null
+  accountLinksCompletedAt?: string | null
+  questionsCompletedAt?: string | null
   updatedAt?: string
 }
 

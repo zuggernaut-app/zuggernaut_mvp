@@ -4,10 +4,13 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 const User = mongoose.model('User');
+const BusinessContext = mongoose.model('BusinessContext');
 const {
   isValidEmail,
+  isValidPhone,
   MAX_EMAIL_LENGTH,
   MAX_NAME_LENGTH,
+  validateOptionalHttpUrl,
 } = require('../../lib/validation');
 const { hashPassword, verifyPassword } = require('../../lib/auth/passwordHash');
 const { signAccessToken } = require('../../lib/auth/tokens');
@@ -28,6 +31,8 @@ const {
 const { sendEmail } = require('../../lib/notifications/emailTransport');
 const { issueCsrfCookie } = require('../../lib/auth/csrf');
 const { requireAuth } = require('./middleware/requireAuth');
+const { createBusinessDraftForUser } = require('../../services/onboarding/businessDraftService');
+const { startSignupScrape } = require('../../services/capabilities/leadCampaignScrapeService');
 
 const router = express.Router();
 
@@ -97,6 +102,38 @@ function attachSessionCookie(res, user) {
   issueCsrfCookie(res);
 }
 
+async function bootstrapRegistrationBusiness(user) {
+  const { businessId } = await createBusinessDraftForUser(user._id);
+  const websiteCheck = validateOptionalHttpUrl(user.websiteUrl ?? '');
+  const websiteUrl = websiteCheck.ok ? websiteCheck.value : undefined;
+
+  const update = {
+    websiteUrl: websiteUrl ?? undefined,
+    contactMethods: {
+      emails: [user.email],
+      phones: user.phone ? [user.phone] : [],
+    },
+    intakeFieldSources: {
+      phone: 'customer',
+      email: 'customer',
+      ...(websiteUrl ? { websiteUrl: 'customer' } : {}),
+    },
+  };
+
+  await BusinessContext.updateOne({ businessId }, { $set: update });
+  await User.findByIdAndUpdate(user._id, { $set: { primaryBusinessId: businessId } });
+
+  if (websiteUrl) {
+    try {
+      await startSignupScrape(businessId, user._id, websiteUrl);
+    } catch {
+      // Signup scrape is best-effort; registration must still succeed.
+    }
+  }
+
+  return businessId;
+}
+
 router.get('/csrf', (_req, res) => {
   const csrfToken = issueCsrfCookie(res);
   res.status(200).json({ csrfToken });
@@ -106,6 +143,8 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
   const emailRaw =
     typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const nameRaw = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const phoneRaw = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
+  const websiteRaw = typeof req.body?.websiteUrl === 'string' ? req.body.websiteUrl.trim() : '';
   const pwdRaw = typeof req.body?.password === 'string' ? req.body.password : '';
 
   if (!emailRaw) {
@@ -121,6 +160,13 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
     return res.status(400).json({
       error: 'validation_error',
       message: 'email format is invalid',
+    });
+  }
+
+  if (!phoneRaw || !isValidPhone(phoneRaw)) {
+    return res.status(400).json({
+      error: 'validation_error',
+      message: 'A valid phone number is required',
     });
   }
 
@@ -140,13 +186,20 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
     name = nameRaw;
   }
 
+  const websiteCheck = validateOptionalHttpUrl(websiteRaw);
+  const websiteUrl = websiteCheck.ok ? websiteCheck.value : undefined;
+
   try {
     const passwordHash = await hashPassword(pwdRaw);
     const user = await User.create({
       email: emailRaw,
       name: name || undefined,
+      phone: phoneRaw,
+      websiteUrl: websiteUrl || undefined,
       passwordHash,
     });
+
+    const primaryBusinessId = await bootstrapRegistrationBusiness(user);
 
     attachSessionCookie(res, user);
 
@@ -155,6 +208,7 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
         _id: user._id,
         email: user.email,
         name: user.name,
+        primaryBusinessId,
         createdAt: user.createdAt,
       }),
     });
@@ -163,6 +217,12 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
       return res.status(409).json({
         error: 'conflict',
         message: 'A user with this email already exists',
+      });
+    }
+    if (err?.code === 'soft_launch_single_business') {
+      return res.status(409).json({
+        error: 'soft_launch_single_business',
+        message: err.message,
       });
     }
     return next(err);
@@ -204,6 +264,7 @@ router.post('/login', authWriteLimiter, async (req, res, next) => {
         _id: user._id,
         email: user.email,
         name: user.name,
+        primaryBusinessId: user.primaryBusinessId,
         createdAt: user.createdAt,
       }),
     });

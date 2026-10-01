@@ -22,6 +22,14 @@ vi.mock('../api/auth', () => ({
   authLogout: hoisted.mockAuthLogout,
 }))
 
+vi.mock('../api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/client')>()
+  return {
+    ...actual,
+    ensureCsrfCookie: vi.fn().mockResolvedValue(undefined),
+  }
+})
+
 function renderRegister(): ReturnType<typeof render> {
   return render(
     <MemoryRouter initialEntries={['/register']}>
@@ -30,8 +38,8 @@ function renderRegister(): ReturnType<typeof render> {
           <Routes>
             <Route path="/register" element={<RegisterPage />} />
             <Route
-              path="/onboarding/business"
-              element={<div data-testid="business-target">business ok</div>}
+              path="/onboarding/accounts"
+              element={<div data-testid="accounts-target">accounts ok</div>}
             />
           </Routes>
         </OnboardingProvider>
@@ -51,6 +59,7 @@ describe('RegisterPage', () => {
         id: TEST_IDS.user,
         email: 'new@example.com',
         name: null,
+        primaryBusinessId: TEST_IDS.business,
       },
     })
   })
@@ -60,6 +69,7 @@ describe('RegisterPage', () => {
     renderRegister()
 
     await user.type(screen.getByLabelText(/^email$/i), 'not-an-email')
+    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
     await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
 
@@ -78,6 +88,7 @@ describe('RegisterPage', () => {
     renderRegister()
 
     await user.type(screen.getByLabelText(/^email$/i), 'taken@example.com')
+    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
     await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
     await user.click(screen.getByRole('button', { name: /continue/i }))
@@ -90,39 +101,45 @@ describe('RegisterPage', () => {
     renderRegister()
 
     await user.type(screen.getByLabelText(/^email$/i), 'new@example.com')
+    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
     await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('business-target')).toBeInTheDocument()
+      expect(screen.getByTestId('accounts-target')).toBeInTheDocument()
     })
 
     expect(localStorage.getItem('zuggernaut:userId')).toBe(TEST_IDS.user)
     expect(hoisted.mockAuthRegister).toHaveBeenCalledWith({
       email: 'new@example.com',
       password: 'SecurePass12',
+      phone: '555-123-4567',
     })
   })
 
-  it('sends optional name when provided', async () => {
+  it('sends optional name and website when provided', async () => {
     const user = userEvent.setup()
     renderRegister()
 
     await user.type(screen.getByLabelText(/^email$/i), 'u@example.com')
+    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
     await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/name \(optional\)/i), 'Pat')
+    await user.type(screen.getByLabelText(/website \(optional\)/i), 'https://pat.example')
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('business-target')).toBeInTheDocument()
+      expect(screen.getByTestId('accounts-target')).toBeInTheDocument()
     })
 
     expect(hoisted.mockAuthRegister).toHaveBeenCalledWith({
       email: 'u@example.com',
       password: 'SecurePass12',
+      phone: '555-123-4567',
       name: 'Pat',
+      websiteUrl: 'https://pat.example',
     })
   })
 
@@ -131,6 +148,7 @@ describe('RegisterPage', () => {
     renderRegister()
 
     await user.type(screen.getByLabelText(/^email$/i), 'pw@example.com')
+    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
     await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/confirm password/i), 'OtherPass999')
     await user.click(screen.getByRole('button', { name: /continue/i }))

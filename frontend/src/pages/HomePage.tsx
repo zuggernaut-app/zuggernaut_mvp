@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { listBusinessContexts } from '../api/businessContexts'
 import { getLeadCampaignDashboard } from '../api/leadCampaigns'
 import { LeadCampaignDashboard } from '../components/dashboard/LeadCampaignDashboard'
@@ -7,6 +7,7 @@ import { PageLayout } from '../components/layout/PageLayout'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { useAuth } from '../hooks/useAuth'
 import { useOnboardingState } from '../hooks/useOnboardingState'
+import { isQuestionsComplete, resolveOnboardingPath } from '../lib/onboardingRouting'
 import type { BusinessContextDto } from '../types/api'
 
 function resolveActiveBusinessContext(
@@ -16,29 +17,28 @@ function resolveActiveBusinessContext(
 ): BusinessContextDto | null {
   if (contexts.length === 0) return null
 
-  const confirmedContexts = contexts
-    .filter((ctx) => ctx.confirmedAt)
+  const completedContexts = contexts
+    .filter((ctx) => isQuestionsComplete(ctx))
     .sort(
       (a, b) =>
-        Date.parse(b.confirmedAt ?? '') - Date.parse(a.confirmedAt ?? ''),
+        Date.parse(b.questionsCompletedAt ?? b.confirmedAt ?? '') -
+        Date.parse(a.questionsCompletedAt ?? a.confirmedAt ?? ''),
     )
 
-  if (confirmedContexts.length > 0) {
+  if (completedContexts.length > 0) {
     if (storedBusinessId) {
-      const storedConfirmed = confirmedContexts.find(
-        (ctx) => ctx.businessId === storedBusinessId,
-      )
-      if (storedConfirmed) return storedConfirmed
+      const storedCompleted = completedContexts.find((ctx) => ctx.businessId === storedBusinessId)
+      if (storedCompleted) return storedCompleted
     }
 
     if (primaryBusinessId) {
-      const primaryConfirmed = confirmedContexts.find(
+      const primaryCompleted = completedContexts.find(
         (ctx) => ctx.businessId === primaryBusinessId,
       )
-      if (primaryConfirmed) return primaryConfirmed
+      if (primaryCompleted) return primaryCompleted
     }
 
-    return confirmedContexts[0]
+    return completedContexts[0]
   }
 
   if (storedBusinessId) {
@@ -88,9 +88,9 @@ export function HomePage(): ReactElement {
         if (!cancelled) {
           if (resolved) setBusinessId(resolved.businessId)
           setActiveContext(resolved)
-          if (resolved?.confirmedAt) {
+          if (isQuestionsComplete(resolved)) {
             try {
-              const dashboard = await getLeadCampaignDashboard(resolved.businessId)
+              const dashboard = await getLeadCampaignDashboard(resolved!.businessId)
               const anySlot =
                 dashboard.slots.recommended != null || dashboard.slots.alternative != null
               setHasLeadCampaigns(anySlot)
@@ -146,7 +146,12 @@ export function HomePage(): ReactElement {
     )
   }
 
-  if (activeContext?.confirmedAt && hasLeadCampaigns) {
+  const onboardingPath = resolveOnboardingPath(activeContext)
+  if (onboardingPath) {
+    return <Navigate to={onboardingPath} replace />
+  }
+
+  if (activeContext && isQuestionsComplete(activeContext) && hasLeadCampaigns) {
     return (
       <PageLayout
         title={activeContext.businessName ?? 'Your campaigns'}
@@ -157,12 +162,12 @@ export function HomePage(): ReactElement {
     )
   }
 
-  if (activeContext?.confirmedAt) {
+  if (activeContext && isQuestionsComplete(activeContext)) {
     return (
       <PageLayout title="Thank you" lead="We'll take it from here.">
         <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-          Your details are saved. Our team is reviewing your business and setting up your Google Ads
-          campaign. There&apos;s nothing else you need to do right now.
+          Your details are saved. An expert will complete your setup and call you when your Google
+          Ads account is ready.
         </p>
         <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-muted)' }}>
           Signed in as <strong>{user.email}</strong>.
@@ -171,37 +176,13 @@ export function HomePage(): ReactElement {
     )
   }
 
-  if (activeContext && !activeContext.confirmedAt) {
-    return (
-      <PageLayout
-        title="Continue your details"
-        lead="You're not done yet. Submit so our team can take over."
-      >
-        <div className="actions" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
-          <p
-            style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: 'var(--color-muted)' }}
-          >
-            Signed in as <strong>{user.email}</strong>.
-          </p>
-          <Link className="btn btn-primary" to="/onboarding/business">
-            Continue
-          </Link>
-        </div>
-      </PageLayout>
-    )
-  }
-
   return (
-    <PageLayout
-      title="Welcome"
-      lead="Tell us about your business. We'll set up Google Ads for you."
-    >
+    <PageLayout title="Welcome" lead="Let's get your account set up.">
       <div className="actions" style={{ flexDirection: 'column', alignItems: 'flex-start' }}>
         <p style={{ margin: '0 0 0.5rem', fontSize: '0.95rem', color: 'var(--color-muted)' }}>
-          Signed in as <strong>{user.email}</strong>. This takes a few minutes — share the basics and
-          connect Google Ads.
+          Signed in as <strong>{user.email}</strong>.
         </p>
-        <Link className="btn btn-primary" to="/onboarding/business">
+        <Link className="btn btn-primary" to="/onboarding/accounts">
           Get started
         </Link>
       </div>

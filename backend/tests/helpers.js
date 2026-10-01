@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const { CSRF_COOKIE_NAME, AUTH_ACCESS_COOKIE_NAME } = require('../lib/auth/constants');
 
 const TEST_PASSWORD_DEFAULT = 'SecurePass12';
+const TEST_PHONE_DEFAULT = '+1 555 123 4567';
 
 const MUTATING_AGENT_METHODS = ['post', 'put', 'patch', 'delete'];
 
@@ -63,7 +64,9 @@ async function registerAgent(app, email, options = {}) {
     .send({
       email,
       password,
+      phone: options.phone ?? TEST_PHONE_DEFAULT,
       ...(name !== undefined ? { name } : {}),
+      ...(options.websiteUrl !== undefined ? { websiteUrl: options.websiteUrl } : {}),
     })
     .expect(201);
 
@@ -73,6 +76,7 @@ async function registerAgent(app, email, options = {}) {
     agent,
     userId: res.body.user.id,
     email: res.body.user.email,
+    primaryBusinessId: res.body.user.primaryBusinessId ?? null,
   };
 }
 
@@ -86,6 +90,7 @@ async function createBareUser(email = 'bare@test.com') {
 
 module.exports = {
   TEST_PASSWORD_DEFAULT,
+  TEST_PHONE_DEFAULT,
   registerAgent,
   createBareUser,
   attachCsrfToAgent,

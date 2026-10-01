@@ -84,6 +84,10 @@ const businessContextSchema = new mongoose.Schema(
     setupCallConfirmedAt: { type: Date },
     /** Set when the operator completes at least one fact-check submission. */
     factCheckCompletedAt: { type: Date },
+    /** Customer finished the optional Google account-linking step. */
+    accountLinksCompletedAt: { type: Date },
+    /** Customer finished the business-questions step. */
+    questionsCompletedAt: { type: Date },
     /** Intake: who buys today. */
     whoBuysToday: { type: String, trim: true },
     /** Intake: how buyers contact the business today. */

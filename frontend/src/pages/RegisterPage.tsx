@@ -6,9 +6,11 @@ import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useAuth } from '../hooks/useAuth'
+import { useOnboardingState } from '../hooks/useOnboardingState'
 import {
   MAX_EMAIL_LENGTH,
   MAX_NAME_LENGTH,
+  MAX_URL_LENGTH,
   PASSWORD_MAX_LENGTH,
   validateRegisterWithPasswordForm,
 } from '../utils/validation'
@@ -16,8 +18,11 @@ import {
 export function RegisterPage(): ReactElement {
   const navigate = useNavigate()
   const { register } = useAuth()
+  const { setBusinessId } = useOnboardingState()
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [websiteUrl, setWebsiteUrl] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -26,19 +31,31 @@ export function RegisterPage(): ReactElement {
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
     setError(null)
-    const form = validateRegisterWithPasswordForm(email, name, password, confirmPassword)
+    const form = validateRegisterWithPasswordForm(
+      email,
+      name,
+      phone,
+      websiteUrl,
+      password,
+      confirmPassword,
+    )
     if (!form.ok) {
       setError(form.message)
       return
     }
     setBusy(true)
     try {
-      await register({
+      const user = await register({
         email: form.email,
         password: form.password,
+        phone: form.phone,
         ...(form.name !== undefined ? { name: form.name } : {}),
+        ...(form.websiteUrl !== undefined ? { websiteUrl: form.websiteUrl } : {}),
       })
-      navigate('/onboarding/business', { replace: true })
+      if (user.primaryBusinessId) {
+        setBusinessId(user.primaryBusinessId)
+      }
+      navigate('/onboarding/accounts', { replace: true })
     } catch (err) {
       if (err instanceof ApiError) setError(err.message)
       else setError('Something went wrong. Try again.')
@@ -50,7 +67,7 @@ export function RegisterPage(): ReactElement {
   return (
     <PageLayout
       title="Create your account"
-      lead="Choose a secure password — your session stays signed in via a secure cookie."
+      lead="We'll use your phone to reach you. Website is optional — if you share it, we'll start learning about your business right away."
     >
       <form className="form" onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error} />
@@ -93,6 +110,30 @@ export function RegisterPage(): ReactElement {
             maxLength={PASSWORD_MAX_LENGTH}
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="phone">Phone</label>
+          <input
+            id="phone"
+            name="phone"
+            type="tel"
+            autoComplete="tel"
+            required
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="websiteUrl">Website (optional)</label>
+          <input
+            id="websiteUrl"
+            name="websiteUrl"
+            type="url"
+            placeholder="https://example.com"
+            maxLength={MAX_URL_LENGTH}
+            value={websiteUrl}
+            onChange={(e) => setWebsiteUrl(e.target.value)}
           />
         </div>
         <div className="field">

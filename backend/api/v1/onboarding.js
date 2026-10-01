@@ -6,97 +6,28 @@ const BusinessContext = mongoose.model('BusinessContext');
 const ScrapeRun = mongoose.model('ScrapeRun');
 const User = mongoose.model('User');
 const { requireAuth } = require('./middleware/requireAuth');
-const { validateHttpUrl } = require('../../lib/validation');
 const { validateIntakeBody } = require('../../lib/intakeValidation');
-const { getTemporalClient } = require('../../lib/temporalClient');
-const {
-  SCRAPE_WORKFLOW_NAME,
-  resolveTemporalTaskQueue,
-} = require('../../constants/temporalDefaults');
 const { SCRAPE_TERMINAL_STATUSES } = require('../../constants/onboarding');
-const { isSoftLaunchMode } = require('../../constants/softLaunch');
+const { createBusinessDraftForUser } = require('../../services/onboarding/businessDraftService');
 
 const router = express.Router();
 
 const TERMINAL_SCRAPE_STATUSES = new Set(SCRAPE_TERMINAL_STATUSES);
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function findExistingBusinessContextForUser(userId) {
-  return BusinessContext.findOne({ userId })
-    .sort({ confirmedAt: -1, updatedAt: -1 })
-    .lean();
-}
-
 router.post('/business', requireAuth, async (req, res, next) => {
   const userId = new mongoose.Types.ObjectId(req.user.id);
-  const Membership = mongoose.model('Membership');
 
-  const existingBusinessContext = await findExistingBusinessContextForUser(userId);
-  if (existingBusinessContext) {
-    return res.status(200).json({
-      businessId: existingBusinessContext.businessId.toString(),
-    });
-  }
-
-  let claimedSoftLaunch = false;
-  if (isSoftLaunchMode()) {
-    const claim = await User.findOneAndUpdate(
-      {
-        _id: userId,
-        softLaunchClaim: { $exists: false },
-      },
-      { $set: { softLaunchClaim: true } }
-    );
-    if (!claim) {
-      for (let i = 0; i < 3; i++) {
-        await sleep(100);
-        const foundExisting = await findExistingBusinessContextForUser(userId);
-        if (foundExisting) {
-          return res.status(200).json({
-            businessId: foundExisting.businessId.toString(),
-          });
-        }
-      }
-      return res.status(409).json({
-        error: 'soft_launch_single_business',
-        message: 'Soft launch supports one business per user.',
-      });
-    }
-    claimedSoftLaunch = true;
-  }
-
-  let orgId;
-  const membership = await Membership.findOne({ userId, role: 'owner' }).lean();
-  if (membership?.orgId) {
-    orgId = membership.orgId;
-  } else {
-    const Org = mongoose.model('Org');
-    const user = await User.findById(userId).select('email primaryOrgId').lean();
-    if (user?.primaryOrgId) {
-      orgId = user.primaryOrgId;
-    } else {
-      const org = await Org.create({
-        name: user?.email ? `${user.email} org` : 'My organization',
-        ownerUserId: userId,
-      });
-      orgId = org._id;
-      await Membership.create({ orgId, userId, role: 'owner' });
-      await User.findByIdAndUpdate(userId, { $set: { primaryOrgId: orgId } });
-    }
-  }
-
-  let draft;
   try {
-    draft = await BusinessContext.create({
-      userId,
-      orgId,
+    const { businessId, created } = await createBusinessDraftForUser(userId);
+    return res.status(created ? 201 : 200).json({
+      businessId: businessId.toString(),
     });
   } catch (err) {
-    if (claimedSoftLaunch) {
-      await User.findByIdAndUpdate(userId, { $unset: { softLaunchClaim: '' } });
+    if (err?.code === 'soft_launch_single_business') {
+      return res.status(409).json({
+        error: 'soft_launch_single_business',
+        message: err.message,
+      });
     }
     if (err?.name === 'ValidationError') {
       const msg = typeof err.message === 'string' ? err.message : 'Validation failed';
@@ -104,17 +35,36 @@ router.post('/business', requireAuth, async (req, res, next) => {
     }
     return next(err);
   }
+});
 
-  await User.findOneAndUpdate(
-    {
-      _id: userId,
-      $or: [{ primaryBusinessId: { $exists: false } }, { primaryBusinessId: null }],
-    },
-    { $set: { primaryBusinessId: draft.businessId } }
-  );
+router.post('/business/:businessId/complete-account-links', requireAuth, async (req, res, next) => {
+  const businessIdRaw = req.params.businessId;
+  if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
+    return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
+  }
+  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  const userId = new mongoose.Types.ObjectId(req.user.id);
 
-  return res.status(201).json({
-    businessId: draft.businessId.toString(),
+  const doc = await BusinessContext.findOne({ businessId, userId });
+  if (!doc) {
+    return res.status(404).json({
+      error: 'not_found',
+      message: 'Business draft not found for this user',
+    });
+  }
+
+  if (!doc.accountLinksCompletedAt) {
+    doc.accountLinksCompletedAt = new Date();
+    try {
+      await doc.save();
+    } catch (err) {
+      return next(err);
+    }
+  }
+
+  return res.status(200).json({
+    businessId: doc.businessId.toString(),
+    accountLinksCompletedAt: doc.accountLinksCompletedAt,
   });
 });
 
@@ -126,11 +76,6 @@ router.post('/business/:businessId/intake', requireAuth, async (req, res, next) 
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
   const userId = new mongoose.Types.ObjectId(req.user.id);
 
-  const parsed = validateIntakeBody(req.body);
-  if (!parsed.ok) {
-    return res.status(400).json({ error: 'validation_error', message: parsed.message });
-  }
-
   const doc = await BusinessContext.findOne({ businessId, userId });
   if (!doc) {
     return res.status(404).json({
@@ -139,7 +84,37 @@ router.post('/business/:businessId/intake', requireAuth, async (req, res, next) 
     });
   }
 
+  const user = await User.findById(userId).select('email phone websiteUrl').lean();
+  const mergedBody = {
+    ...req.body,
+    phone:
+      typeof req.body?.phone === 'string' && req.body.phone.trim()
+        ? req.body.phone.trim()
+        : user?.phone ?? '',
+    email:
+      typeof req.body?.email === 'string' && req.body.email.trim()
+        ? req.body.email.trim()
+        : user?.email ?? '',
+    websiteUrl:
+      typeof req.body?.websiteUrl === 'string' && req.body.websiteUrl.trim()
+        ? req.body.websiteUrl.trim()
+        : doc.websiteUrl ?? user?.websiteUrl ?? '',
+  };
+
+  const parsed = validateIntakeBody(mergedBody);
+  if (!parsed.ok) {
+    return res.status(400).json({ error: 'validation_error', message: parsed.message });
+  }
+
   Object.assign(doc, parsed.value);
+  const now = new Date();
+  if (!doc.questionsCompletedAt) {
+    doc.questionsCompletedAt = now;
+  }
+  if (!doc.confirmedAt) {
+    doc.confirmedAt = now;
+  }
+
   try {
     await doc.save();
   } catch (err) {
@@ -149,6 +124,7 @@ router.post('/business/:businessId/intake', requireAuth, async (req, res, next) 
   return res.status(200).json({
     businessId: doc.businessId.toString(),
     saved: true,
+    questionsCompletedAt: doc.questionsCompletedAt,
   });
 });
 
@@ -181,7 +157,7 @@ router.get('/business/:businessId/scrape-suggestions', requireAuth, async (req, 
   const scrapeRun = await ScrapeRun.findOne({
     businessId,
     userId,
-    purpose: 'onboarding',
+    purpose: 'signup',
   })
     .sort({ updatedAt: -1 })
     .lean();

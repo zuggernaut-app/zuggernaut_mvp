@@ -3,7 +3,7 @@
 const request = require('supertest');
 const { createApp } = require('../app');
 const { PASSWORD_MIN_LENGTH } = require('../lib/auth/passwordPolicy');
-const { TEST_PASSWORD_DEFAULT, registerAgent } = require('./helpers');
+const { TEST_PASSWORD_DEFAULT, TEST_PHONE_DEFAULT, registerAgent } = require('./helpers');
 
 describe('/api/v1/auth', () => {
   const app = createApp();
@@ -27,27 +27,26 @@ describe('/api/v1/auth', () => {
     const me = await agent.get('/api/v1/auth/me').expect(200);
     expect(me.body.user.id).toMatch(/^[a-f0-9]{24}$/);
     expect(me.body.user.email).toBe('cookie_me@example.com');
-    expect(me.body.user.primaryBusinessId).toBeNull();
+    expect(me.body.user.primaryBusinessId).toMatch(/^[a-f0-9]{24}$/);
   });
 
   it('/me includes primaryBusinessId when set', async () => {
-    const { agent } = await registerAgent(app, 'primary_biz@example.com');
-    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+    const { agent, primaryBusinessId } = await registerAgent(app, 'primary_biz@example.com');
 
     const me = await agent.get('/api/v1/auth/me').expect(200);
-    expect(me.body.user.primaryBusinessId).toBe(draft.body.businessId);
+    expect(me.body.user.primaryBusinessId).toBe(primaryBusinessId);
   });
 
   it('duplicate register returns conflict', async () => {
     const email = 'dup_auth@example.com';
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ email, password: TEST_PASSWORD_DEFAULT, name: 'A' })
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'A' })
       .expect(201);
 
     const res = await request(app)
       .post('/api/v1/auth/register')
-      .send({ email, password: TEST_PASSWORD_DEFAULT, name: 'B' })
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'B' })
       .expect(409);
 
     expect(res.body.error).toBe('conflict');
@@ -57,7 +56,7 @@ describe('/api/v1/auth', () => {
     const email = 'login_bad_pw@example.com';
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ email, password: TEST_PASSWORD_DEFAULT, name: 'A' })
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'A' })
       .expect(201);
 
     const res = await request(app)
@@ -91,7 +90,7 @@ describe('/api/v1/auth', () => {
     await request(app).post('/api/v1/onboarding/business').expect(401);
 
     const { agent } = await registerAgent(app, 'onboard_prot@example.com');
-    await agent.post('/api/v1/onboarding/business').expect(201);
+    await agent.post('/api/v1/onboarding/business').expect(200);
   });
 
   it('sets SameSite=Lax on session cookie in development', async () => {
@@ -102,7 +101,12 @@ describe('/api/v1/auth', () => {
 
     const res = await request(app)
       .post('/api/v1/auth/register')
-      .send({ email: 'samesite_dev@example.com', password: TEST_PASSWORD_DEFAULT, name: 'A' })
+      .send({
+        email: 'samesite_dev@example.com',
+        password: TEST_PASSWORD_DEFAULT,
+        phone: TEST_PHONE_DEFAULT,
+        name: 'A',
+      })
       .expect(201);
 
     const setCookie = res.headers['set-cookie'];
@@ -125,7 +129,12 @@ describe('/api/v1/auth', () => {
 
     const res = await request(app)
       .post('/api/v1/auth/register')
-      .send({ email: 'samesite_prod@example.com', password: TEST_PASSWORD_DEFAULT, name: 'A' })
+      .send({
+        email: 'samesite_prod@example.com',
+        password: TEST_PASSWORD_DEFAULT,
+        phone: TEST_PHONE_DEFAULT,
+        name: 'A',
+      })
       .expect(201);
 
     const setCookie = res.headers['set-cookie'];

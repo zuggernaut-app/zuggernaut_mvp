@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { listBusinessContexts } from '../api/businessContexts'
 import { AuthProvider } from '../hooks/useAuth'
@@ -38,7 +38,17 @@ function renderHome(): ReturnType<typeof render> {
     <MemoryRouter>
       <AuthProvider>
         <OnboardingProvider>
-          <HomePage />
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route
+              path="/onboarding/accounts"
+              element={<div data-testid="accounts-target">accounts</div>}
+            />
+            <Route
+              path="/onboarding/business"
+              element={<div data-testid="business-target">business</div>}
+            />
+          </Routes>
         </OnboardingProvider>
       </AuthProvider>
     </MemoryRouter>,
@@ -74,7 +84,7 @@ describe('HomePage', () => {
     expect(screen.queryByRole('link', { name: /^continue$/i })).not.toBeInTheDocument()
   })
 
-  it('shows Continue when intake is in progress', async () => {
+  it('redirects to account links when onboarding is in progress', async () => {
     hoisted.mockListBusinessContexts.mockResolvedValue({
       businessContexts: [
         {
@@ -99,6 +109,8 @@ describe('HomePage', () => {
           susoVersion: 0,
           susoVersionUpdatedAt: null,
           confirmedAt: null,
+          accountLinksCompletedAt: null,
+          questionsCompletedAt: null,
         },
       ],
     })
@@ -106,8 +118,44 @@ describe('HomePage', () => {
 
     renderHome()
 
-    expect(await screen.findByRole('link', { name: /^continue$/i })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /continue your details/i })).toBeInTheDocument()
+    expect(await screen.findByTestId('accounts-target')).toBeInTheDocument()
+  })
+
+  it('redirects to business questions when account links are complete', async () => {
+    hoisted.mockListBusinessContexts.mockResolvedValue({
+      businessContexts: [
+        {
+          businessId: TEST_IDS.business,
+          userId: TEST_IDS.user,
+          websiteUrl: null,
+          businessName: 'Acme',
+          industry: null,
+          services: [],
+          serviceAreas: [],
+          contactMethods: null,
+          audienceSignals: null,
+          goals: null,
+          differentiators: null,
+          orderValueHint: null,
+          thankYouUrls: [],
+          uvp: null,
+          competitorLandscape: null,
+          businessScope: null,
+          valueComplexity: null,
+          budgetTier: null,
+          susoVersion: 0,
+          susoVersionUpdatedAt: null,
+          confirmedAt: null,
+          accountLinksCompletedAt: '2026-01-01T00:00:00.000Z',
+          questionsCompletedAt: null,
+        },
+      ],
+    })
+    seedSession({ userId: TEST_IDS.user, businessId: TEST_IDS.business })
+
+    renderHome()
+
+    expect(await screen.findByTestId('business-target')).toBeInTheDocument()
   })
 
   it('shows campaign dashboard when lead campaigns exist', async () => {
@@ -156,7 +204,7 @@ describe('HomePage', () => {
     renderHome()
 
     expect(await screen.findByRole('heading', { name: /acme/i })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /recommended/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /recommended/i })).toBeInTheDocument()
   })
 
   it('shows waiting message when intake is complete', async () => {

@@ -9,15 +9,21 @@ export function createBusinessDraft(): Promise<{ businessId: string }> {
 }
 
 export interface SubmitIntakeBody {
-  websiteUrl: string
-  businessName: string
-  phone: string
-  email: string
-  primaryOffer: string
-  whoBuysToday: string
-  serviceArea: string
+  businessName?: string
+  primaryOffer?: string
+  whoBuysToday?: string
+  serviceArea?: string
   orderValueHint?: string
-  howBuyersContact: string
+  howBuyersContact?: string
+}
+
+export function completeAccountLinks(
+  businessId: string,
+): Promise<{ businessId: string; accountLinksCompletedAt: string }> {
+  return apiRequest(`/onboarding/business/${businessId}/complete-account-links`, {
+    method: 'POST',
+    body: {},
+  })
 }
 
 export function submitIntake(

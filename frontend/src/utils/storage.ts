@@ -12,15 +12,12 @@ export const STORAGE_KEYS = {
 const INTAKE_DRAFT_PREFIX = `${PREFIX}intakeDraft:`
 
 export type IntakeDraftFields = {
-  websiteUrl: string
   businessName: string
   primaryOffer: string
   whoBuysToday: string
   serviceArea: string
   orderValueHint: string
   howBuyersContact: string
-  phone: string
-  email: string
 }
 
 function readJson<T>(raw: string | null): T | null {

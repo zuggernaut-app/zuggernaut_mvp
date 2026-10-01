@@ -9,7 +9,8 @@ import { PageLayout } from '../components/layout/PageLayout'
 import {
   MAX_EMAIL_LENGTH,
   PASSWORD_MAX_LENGTH,
-  validateRegisterWithPasswordForm,
+  validatePasswordField,
+  validateRegisterForm,
 } from '../utils/validation'
 
 export function PasswordResetPage(): ReactElement {
@@ -37,18 +38,29 @@ export function PasswordResetPage(): ReactElement {
       return
     }
 
-    const form = validateRegisterWithPasswordForm(email, '', password, confirmPassword)
-    if (!form.ok) {
-      setError(form.message)
+    const emailForm = validateRegisterForm(email, '')
+    if (!emailForm.ok) {
+      setError(emailForm.message)
+      return
+    }
+
+    const pwForm = validatePasswordField(password)
+    if (!pwForm.ok) {
+      setError(pwForm.message)
+      return
+    }
+
+    if (confirmPassword.trim() !== pwForm.password) {
+      setError('Passwords must match.')
       return
     }
 
     setBusy(true)
     try {
       const res = await authPasswordResetConfirm({
-        email: form.email,
+        email: emailForm.email,
         token: tokenFromQuery,
-        password: form.password,
+        password: pwForm.password,
       })
       navigate('/login', {
         replace: true,

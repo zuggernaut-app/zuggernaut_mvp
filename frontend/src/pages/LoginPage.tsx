@@ -6,6 +6,7 @@ import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useAuth } from '../hooks/useAuth'
+import { useOnboardingState } from '../hooks/useOnboardingState'
 import {
   MAX_EMAIL_LENGTH,
   PASSWORD_MAX_LENGTH,
@@ -17,6 +18,7 @@ export function LoginPage(): ReactElement {
   const location = useLocation()
   const from = (location.state as { from?: string } | null)?.from ?? '/'
   const { login } = useAuth()
+  const { setBusinessId } = useOnboardingState()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -35,7 +37,10 @@ export function LoginPage(): ReactElement {
 
     setBusy(true)
     try {
-      await login(parsed.email, parsed.password)
+      const loggedInUser = await login(parsed.email, parsed.password)
+      if (loggedInUser.primaryBusinessId) {
+        setBusinessId(loggedInUser.primaryBusinessId)
+      }
       navigate(from, { replace: true })
     } catch (err) {
       if (err instanceof ApiError) setError(err.message)

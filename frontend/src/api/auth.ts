@@ -8,6 +8,8 @@ export interface LoginBody {
 
 export interface RegisterBody extends LoginBody {
   name?: string
+  phone: string
+  websiteUrl?: string
 }
 
 export type AuthSessionResponse = { user: UserDto }

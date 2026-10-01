@@ -95,6 +95,8 @@ function serializeBusinessContext(doc) {
     howBuyersContact: doc.howBuyersContact ?? null,
     intakeFieldSources: doc.intakeFieldSources ?? null,
     confirmedAt: doc.confirmedAt ?? null,
+    accountLinksCompletedAt: doc.accountLinksCompletedAt ?? null,
+    questionsCompletedAt: doc.questionsCompletedAt ?? null,
     updatedAt: doc.updatedAt,
   };
 }
