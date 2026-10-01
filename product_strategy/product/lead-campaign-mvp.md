@@ -344,7 +344,7 @@ Pause does not delete the campaign. A lapsed subscription uses the existing seve
 Onboarding and account setup:
 
 - The website becomes required on the form. Today the form accepts a blank website.
-- The scrape has to cover same-origin pages up to the configured page cap. Today it reads only the website address on the form. Step 3 needs the AI to read the site and store the whole result before it answers the five questions.
+- The scrape covers same-origin pages up to the configured page cap (`SCRAPE_MAX_PAGES`). Step 3 stores the full scrape result before it answers the five questions.
 - The operator chooses the account currency. Accounts the product creates today use a default currency from config, which is US dollars. Step 5 needs the operator to choose US dollars or rupees when creating the account.
 - The business country is used for call campaigns. The forwarding-number list is a config value, not hard-coded. Step 7 checks the operator-recorded business country against it.
 

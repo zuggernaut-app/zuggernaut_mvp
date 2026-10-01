@@ -10,7 +10,7 @@ import {
 } from 'react'
 import type { RegisterBody } from '../api/auth'
 import { authLogin, authLogout, authMe, authRegister } from '../api/auth'
-import { ensureCsrfCookie } from '../api/client'
+import { clearCsrfToken, ensureCsrfCookie } from '../api/client'
 import type { UserDto } from '../types/api'
 import {
   clearOnboardingDrafts,
@@ -73,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
 
   const register = useCallback(async (body: RegisterBody) => {
     const res = await authRegister(body)
+    await ensureCsrfCookie(true)
     reconcileOnboardingDraftsForSession(res.user.id)
     setUser(res.user)
     setStoredUserId(res.user.id)
@@ -81,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await authLogin({ email, password })
+    await ensureCsrfCookie(true)
     reconcileOnboardingDraftsForSession(res.user.id)
     setUser(res.user)
     setStoredUserId(res.user.id)
@@ -91,6 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
     try {
       await authLogout()
     } finally {
+      clearCsrfToken()
       setUser(null)
       resetLocalSession()
       notifyOnboardingStorageChanged()

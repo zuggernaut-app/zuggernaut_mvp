@@ -82,6 +82,8 @@ const businessContextSchema = new mongoose.Schema(
     businessCountry: { type: String, trim: true, uppercase: true },
     /** Set when the operator completes the confirmation call (distinct from customer context confirm). */
     setupCallConfirmedAt: { type: Date },
+    /** Set when the operator completes at least one fact-check submission. */
+    factCheckCompletedAt: { type: Date },
     /** Intake: who buys today. */
     whoBuysToday: { type: String, trim: true },
     /** Intake: how buyers contact the business today. */

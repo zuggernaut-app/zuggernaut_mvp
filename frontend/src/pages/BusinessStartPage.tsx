@@ -1,7 +1,11 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { createBusinessDraft, submitIntake } from '../api/onboarding'
+import {
+  createBusinessDraft,
+  getOnboardingScrapeSuggestions,
+  submitIntake,
+} from '../api/onboarding'
 import { getBusinessContext } from '../api/businessContexts'
 import { ApiError } from '../api/client'
 import { GoogleAdsCustomerSelector } from '../components/integrations/GoogleAdsCustomerSelector'
@@ -59,6 +63,32 @@ function intakeDraftSnapshot(fields: IntakeDraftFields): IntakeDraftFields {
   return { ...fields }
 }
 
+function hintText(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (Array.isArray(value)) {
+    const parts = value.map((entry) => String(entry ?? '').trim()).filter(Boolean)
+    return parts.length > 0 ? parts.join(', ') : null
+  }
+  return null
+}
+
+function websitePhoneHint(suggested: Record<string, unknown>): string | null {
+  const contactMethods = suggested.contactMethods
+  if (!contactMethods || typeof contactMethods !== 'object') return null
+  const phones = (contactMethods as { phones?: unknown }).phones
+  if (!Array.isArray(phones)) return null
+  const parts = phones.map((phone) => String(phone ?? '').trim()).filter(Boolean)
+  return parts.length > 0 ? parts.join(', ') : null
+}
+
+function FieldHint({ text }: { text: string }): ReactElement {
+  return (
+    <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)', margin: '0.25rem 0 0' }}>
+      {text}
+    </p>
+  )
+}
+
 export function BusinessStartPage(): ReactElement {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -79,6 +109,7 @@ export function BusinessStartPage(): ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [integrationNotice, setIntegrationNotice] = useState<string | null>(null)
   const [intakeDraftHydrated, setIntakeDraftHydrated] = useState(false)
+  const [scrapeHints, setScrapeHints] = useState<Record<string, unknown> | null>(null)
 
   const {
     connections,
@@ -154,6 +185,24 @@ export function BusinessStartPage(): ReactElement {
     }
     setIntakeDraftHydrated(true)
   }, [businessId])
+
+  useEffect(() => {
+    if (!businessId || !intakeDraftHydrated) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await getOnboardingScrapeSuggestions(businessId)
+        if (!cancelled && res.suggested) {
+          setScrapeHints(res.suggested)
+        }
+      } catch {
+        // Hints are optional; never block intake.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [businessId, intakeDraftHydrated])
 
   useEffect(() => {
     if (!businessId || !intakeDraftHydrated) return
@@ -344,43 +393,51 @@ export function BusinessStartPage(): ReactElement {
           <input
             id="businessName"
             name="businessName"
-            required
             value={businessName}
             onChange={(e) => setBusinessName(e.target.value)}
           />
+          {scrapeHints && hintText(scrapeHints.businessName) ? (
+            <FieldHint text={hintText(scrapeHints.businessName)!} />
+          ) : null}
         </div>
         <div className="field">
           <label htmlFor="primaryOffer">What you sell</label>
           <input
             id="primaryOffer"
             name="primaryOffer"
-            required
             placeholder="e.g. Residential plumbing services"
             value={primaryOffer}
             onChange={(e) => setPrimaryOffer(e.target.value)}
           />
+          {scrapeHints && hintText(scrapeHints.services) ? (
+            <FieldHint text={hintText(scrapeHints.services)!} />
+          ) : null}
         </div>
         <div className="field">
           <label htmlFor="whoBuysToday">Who buys from you today</label>
           <input
             id="whoBuysToday"
             name="whoBuysToday"
-            required
             placeholder="e.g. Homeowners with urgent plumbing issues"
             value={whoBuysToday}
             onChange={(e) => setWhoBuysToday(e.target.value)}
           />
+          {scrapeHints && hintText(scrapeHints.whoBuysToday) ? (
+            <FieldHint text={hintText(scrapeHints.whoBuysToday)!} />
+          ) : null}
         </div>
         <div className="field">
           <label htmlFor="serviceArea">Where you serve</label>
           <input
             id="serviceArea"
             name="serviceArea"
-            required
             placeholder="e.g. Austin, TX and surrounding areas"
             value={serviceArea}
             onChange={(e) => setServiceArea(e.target.value)}
           />
+          {scrapeHints && hintText(scrapeHints.serviceAreas) ? (
+            <FieldHint text={hintText(scrapeHints.serviceAreas)!} />
+          ) : null}
         </div>
         <div className="field">
           <label htmlFor="orderValueHint">Typical order value (optional)</label>
@@ -397,11 +454,13 @@ export function BusinessStartPage(): ReactElement {
           <input
             id="howBuyersContact"
             name="howBuyersContact"
-            required
             placeholder="e.g. Phone calls and contact form"
             value={howBuyersContact}
             onChange={(e) => setHowBuyersContact(e.target.value)}
           />
+          {scrapeHints && websitePhoneHint(scrapeHints) ? (
+            <FieldHint text={websitePhoneHint(scrapeHints)!} />
+          ) : null}
         </div>
         <div className="field">
           <label htmlFor="phone">Phone</label>

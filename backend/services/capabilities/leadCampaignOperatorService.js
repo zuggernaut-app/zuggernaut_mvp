@@ -141,6 +141,7 @@ async function applyOperatorFactCheck(businessId, corrections) {
   }
 
   doc.intakeFieldSources = sources;
+  doc.factCheckCompletedAt = new Date();
   await doc.save();
   return doc;
 }

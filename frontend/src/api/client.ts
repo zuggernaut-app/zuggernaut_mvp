@@ -59,6 +59,9 @@ export interface RequestOptions extends Omit<RequestInit, 'body'> {
 const CSRF_COOKIE_NAME = 'zugg_csrf'
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
+/** In-memory CSRF token for cross-origin prod (Firebase SPA + Railway API). */
+let csrfTokenMemory: string | null = null
+
 function readCsrfCookie(): string | null {
   if (typeof document === 'undefined') return null
   const escaped = CSRF_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -66,10 +69,24 @@ function readCsrfCookie(): string | null {
   return match ? decodeURIComponent(match[1]) : null
 }
 
-/** Bootstrap CSRF double-submit cookie before authenticated mutating API calls. */
-export async function ensureCsrfCookie(): Promise<void> {
-  if (readCsrfCookie()) return
-  await apiRequest<{ csrfToken: string }>('/auth/csrf')
+function getCsrfToken(): string | null {
+  return csrfTokenMemory ?? readCsrfCookie()
+}
+
+export function clearCsrfToken(): void {
+  csrfTokenMemory = null
+}
+
+/**
+ * Bootstrap CSRF double-submit token before authenticated mutating API calls.
+ * `force` refetches after login/register when the API issues a new cookie token.
+ */
+export async function ensureCsrfCookie(force = false): Promise<void> {
+  if (!force && getCsrfToken()) return
+  const res = await apiRequest<{ csrfToken: string }>('/auth/csrf')
+  if (typeof res.csrfToken === 'string' && res.csrfToken.length > 0) {
+    csrfTokenMemory = res.csrfToken
+  }
 }
 
 async function parseJsonSafely(res: Response): Promise<unknown> {
@@ -96,7 +113,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const method = (fetchInit.method ?? 'GET').toUpperCase()
   if (MUTATING_METHODS.has(method)) {
-    const csrf = readCsrfCookie()
+    const csrf = getCsrfToken()
     if (csrf) {
       headers.set('X-CSRF-Token', csrf)
     }

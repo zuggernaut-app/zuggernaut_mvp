@@ -4,7 +4,6 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { RequireAuth } from '../app/RequireAuth'
 import { createBusinessDraft, scrapeBusiness, submitIntake } from '../api/onboarding'
-import { getBusinessContext } from '../api/businessContexts'
 import { ApiError } from '../api/client'
 import { AuthProvider } from '../hooks/useAuth'
 import { OnboardingProvider } from '../hooks/useOnboardingState'
@@ -20,6 +19,7 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../api/onboarding', () => ({
   createBusinessDraft: vi.fn(),
+  getOnboardingScrapeSuggestions: vi.fn().mockResolvedValue({ suggested: null, status: null }),
   scrapeBusiness: vi.fn(),
   submitIntake: vi.fn(),
 }))

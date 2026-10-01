@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { apiRequest } from './client'
+import { apiRequest, clearCsrfToken, ensureCsrfCookie } from './client'
 
 describe('apiRequest', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    clearCsrfToken()
     globalThis.fetch = vi.fn()
   })
 
@@ -75,6 +76,20 @@ describe('apiRequest', () => {
       code: 'network_error',
       status: 503,
     })
+  })
+
+  it('stores CSRF token from /auth/csrf and sends it on mutating requests', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ csrfToken: 'csrf-from-json' }), { status: 200 }),
+    )
+    vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }))
+
+    await ensureCsrfCookie(true)
+    await apiRequest('/onboarding/business', { method: 'POST', body: {} })
+
+    const [, init] = vi.mocked(fetch).mock.calls[1]
+    const headers = init?.headers as Headers
+    expect(headers.get('X-CSRF-Token')).toBe('csrf-from-json')
   })
 
   it('throws ApiError with server payload on non-OK response', async () => {

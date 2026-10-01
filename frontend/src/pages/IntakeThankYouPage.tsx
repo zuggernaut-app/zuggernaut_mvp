@@ -6,11 +6,11 @@ export function IntakeThankYouPage(): ReactElement {
   return (
     <PageLayout
       title="Thank you"
-      lead="We'll take it from here."
+      lead="You're all set for now."
     >
       <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-        Your details are saved. Our team will review your business and set up your Google Ads
-        campaign.
+        Your part is done. An expert will complete your setup and call you when your Google Ads
+        account is ready.
       </p>
       <div className="actions">
         <Link className="btn btn-secondary" to="/">

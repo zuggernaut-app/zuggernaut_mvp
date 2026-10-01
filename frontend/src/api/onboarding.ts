@@ -41,6 +41,19 @@ export function scrapeBusiness(
   })
 }
 
+export type OnboardingScrapeSuggestionsResponse = {
+  suggested: Record<string, unknown> | null
+  status: string | null
+}
+
+export function getOnboardingScrapeSuggestions(
+  businessId: string,
+): Promise<OnboardingScrapeSuggestionsResponse> {
+  return apiRequest<OnboardingScrapeSuggestionsResponse>(
+    `/onboarding/business/${businessId}/scrape-suggestions`,
+  )
+}
+
 export function pollScrapeRun(
   businessId: string,
   scrapeRunId: string

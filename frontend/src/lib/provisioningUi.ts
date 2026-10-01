@@ -105,8 +105,8 @@ export function integrationStatusLabel(status: IntegrationConnectionStatusDto): 
   if (status.reason === 'mcc_link_required') return 'MCC link required'
   if (status.reason === 'mcc_link_pending') return 'MCC link pending'
   if (status.reason === 'selection_required') return 'Account selection needed'
-  if (status.reason === 'gtm_account_required') return 'GTM account needed'
-  if (status.reason === 'ads_customer_not_found') return 'Google Ads account needed'
+  if (status.reason === 'gtm_account_required') return 'Account Does not Exist'
+  if (status.reason === 'ads_customer_not_found') return 'Account Does not Exist'
   if (status.reason === 'provisioning_required') return 'Provisioning approval needed'
   if (status.reason === 'insufficient_scopes') return 'Insufficient scopes'
   if (status.reason === 'token_expired' || status.reason === 'needs_reauth') {

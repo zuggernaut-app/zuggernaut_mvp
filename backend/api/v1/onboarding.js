@@ -159,6 +159,49 @@ router.post('/business/:businessId/scrape', requireAuth, async (req, res) => {
   });
 });
 
+router.get('/business/:businessId/scrape-suggestions', requireAuth, async (req, res) => {
+  const userId = new mongoose.Types.ObjectId(req.user.id);
+  const businessIdRaw = req.params.businessId;
+  if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
+    return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
+  }
+  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+
+  const owns = await BusinessContext.exists({
+    businessId,
+    userId,
+  });
+  if (!owns) {
+    return res.status(404).json({
+      error: 'not_found',
+      message: 'Business not found for this user',
+    });
+  }
+
+  const scrapeRun = await ScrapeRun.findOne({
+    businessId,
+    userId,
+    purpose: 'onboarding',
+  })
+    .sort({ updatedAt: -1 })
+    .lean();
+
+  if (!scrapeRun) {
+    return res.status(200).json({ suggested: null, status: null });
+  }
+
+  const terminal = TERMINAL_SCRAPE_STATUSES.has(scrapeRun.status);
+  const suggested =
+    terminal && scrapeRun.resultSuggested && typeof scrapeRun.resultSuggested === 'object'
+      ? scrapeRun.resultSuggested
+      : null;
+
+  return res.status(200).json({
+    suggested,
+    status: scrapeRun.status,
+  });
+});
+
 router.get('/business/:businessId/scrape-runs/:scrapeRunId', requireAuth, async (req, res) => {
   const userId = new mongoose.Types.ObjectId(req.user.id);
   const businessIdRaw = req.params.businessId;

@@ -122,6 +122,13 @@ async function startOperatorOnboardingScrape(businessId, operatorUserId) {
   if (!bc) {
     throw new LeadCampaignScrapeError('Business not found.', 'not_found');
   }
+  if (!bc.factCheckCompletedAt) {
+    throw new LeadCampaignScrapeError(
+      'Operator fact-check must be completed before starting scrape.',
+      'fact_check_required'
+    );
+  }
+
   const websiteUrl = String(bc.websiteUrl ?? '').trim();
   if (!websiteUrl) {
     throw new LeadCampaignScrapeError('Business has no website URL.', 'validation_error');

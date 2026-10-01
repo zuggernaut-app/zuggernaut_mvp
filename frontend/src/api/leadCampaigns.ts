@@ -26,6 +26,8 @@ export type LeadCampaignDashboardResponse = {
   currency?: string
   budgetFloorMicros?: number
   budgetCeilingMicros?: number
+  recommendedBudgetLabel?: string | null
+  recommendedBudgetMicros?: number | null
   subscriptionActive?: boolean
   slots: {
     recommended: LeadCampaignSlotState | null

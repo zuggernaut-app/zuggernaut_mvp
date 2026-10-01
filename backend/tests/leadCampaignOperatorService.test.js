@@ -43,6 +43,14 @@ describe('leadCampaignOperatorService', () => {
     ).rejects.toBeInstanceOf(LeadCampaignOperatorError);
   });
 
+  it('sets factCheckCompletedAt on operator fact-check save', async () => {
+    const { bc } = await seedBusiness();
+    const updated = await applyOperatorFactCheck(bc.businessId, {
+      businessName: 'Acme Co Updated',
+    });
+    expect(updated.factCheckCompletedAt).toBeTruthy();
+  });
+
   it('records setup call after five answers are operator-reviewed', async () => {
     const { bc } = await seedBusiness();
     await applyOperatorFactCheck(bc.businessId, {

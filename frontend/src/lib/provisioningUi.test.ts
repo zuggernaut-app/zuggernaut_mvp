@@ -47,10 +47,10 @@ describe('provisioningUi', () => {
     ).toBe('Provisioning approval needed')
     expect(
       integrationStatusLabel(conn({ provider: 'gtm', reason: 'gtm_account_required' })),
-    ).toBe('GTM account needed')
+    ).toBe('Account Does not Exist')
     expect(
       integrationStatusLabel(conn({ provider: 'google_ads', reason: 'ads_customer_not_found' })),
-    ).toBe('Google Ads account needed')
+    ).toBe('Account Does not Exist')
   })
 
   it('labels selection_required connections', () => {

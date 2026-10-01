@@ -8,6 +8,7 @@ import { getBusinessContext } from '../../api/businessContexts'
 
 import type { BusinessContextDto } from '../../types/api'
 
+import { AdminAccountSetupSection } from '../../components/admin/AdminAccountSetupSection'
 import { AdminBusinessSetupSection } from '../../components/admin/AdminBusinessSetupSection'
 import { AdminFiveAnswerReviewSection } from '../../components/admin/AdminFiveAnswerReviewSection'
 import { AdminLeadCampaignReviewSection } from '../../components/admin/AdminLeadCampaignReviewSection'
@@ -171,6 +172,17 @@ export function AdminBusinessWorkspacePage(): ReactElement {
 
         />
 
+      </section>
+
+      <section style={{ marginTop: '1.5rem' }}>
+        <h2>Account setup</h2>
+        <p style={{ color: 'var(--color-muted)', marginTop: 0 }}>
+          Google Ads account currency and connection status.
+        </p>
+        <AdminAccountSetupSection
+          businessId={businessId}
+          returnPath={`/admin/businesses/${businessId}`}
+        />
       </section>
 
       <AdminFiveAnswerReviewSection

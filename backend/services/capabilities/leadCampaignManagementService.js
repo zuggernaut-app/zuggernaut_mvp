@@ -150,6 +150,12 @@ async function resolvePlanCeilingMicros(businessId) {
 async function getLeadCampaignDashboard(userId, businessIdRaw) {
   const businessId = await assertCampaignAccess(userId, businessIdRaw);
   const { ceiling, floor, currency } = await resolvePlanCeilingMicros(businessId);
+  const BusinessContext = mongoose.model('BusinessContext');
+  const bc = await BusinessContext.findOne({ businessId }).select('orderValueHint').lean();
+  const orderValueHint =
+    typeof bc?.orderValueHint === 'string' ? bc.orderValueHint.trim() : '';
+  const recommendedBudgetLabel = orderValueHint || null;
+  const recommendedBudgetMicros = orderValueHint ? null : floor;
   await refreshTrackingStatusForBusiness(businessId);
   const set = await getLeadCampaignSet(businessId);
   const subscriptionStatus = await getSubscriptionStatusForBusinessOwner(businessId);
@@ -201,6 +207,8 @@ async function getLeadCampaignDashboard(userId, businessIdRaw) {
     currency,
     budgetFloorMicros: floor,
     budgetCeilingMicros: ceiling,
+    recommendedBudgetLabel,
+    recommendedBudgetMicros,
     subscriptionActive: subscriptionStatus.active,
     slots,
   };

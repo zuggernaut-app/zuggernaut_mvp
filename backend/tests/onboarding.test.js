@@ -71,6 +71,35 @@ describe('POST /api/v1/onboarding', () => {
     expect(poll.body.scrapeRun.suggested).toBeNull();
   });
 
+  it('GET scrape suggestions returns latest onboarding suggested payload', async () => {
+    const ScrapeRun = mongoose.model('ScrapeRun');
+    const { agent, userId } = await registerAgent(app, 'hints@test.com');
+    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
+    const bid = draft.body.businessId;
+
+    const suggested = {
+      businessName: 'Hints Co',
+      services: ['Plumbing'],
+      contactMethods: { phones: ['+15551234567'] },
+    };
+
+    await ScrapeRun.create({
+      businessId: new mongoose.Types.ObjectId(bid),
+      userId: new mongoose.Types.ObjectId(userId),
+      websiteUrl: 'https://hints.example.com',
+      purpose: 'onboarding',
+      status: 'SUCCEEDED',
+      resultSuggested: suggested,
+    });
+
+    const res = await agent
+      .get(`/api/v1/onboarding/business/${bid}/scrape-suggestions`)
+      .expect(200);
+
+    expect(res.body.suggested).toMatchObject(suggested);
+    expect(res.body.status).toBe('SUCCEEDED');
+  });
+
   it('GET scrape run returns terminal suggested payload', async () => {
     const ScrapeRun = mongoose.model('ScrapeRun');
     const { agent, userId } = await registerAgent(app, 'terminal@test.com');

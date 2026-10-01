@@ -4,7 +4,6 @@ import { ApiError } from '../../api/client'
 import { updateBusinessContext } from '../../api/businessContexts'
 import { SusoMatrixPreview } from '../setup/SusoMatrixPreview'
 import { ErrorAlert } from '../feedback/ErrorAlert'
-import { InlineLoading } from '../feedback/InlineLoading'
 import type {
   BusinessContextDto,
   BusinessContextUpdateBody,
