@@ -11,8 +11,21 @@ const {
 } = require('./htmlSignals');
 
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_STORED_PAGE_TEXT_CHARS = 32_768;
 const FETCH_TIMEOUT_MS = 18000;
 const INTER_REQUEST_DELAY_MS = Number(process.env.SCRAPER_INTER_REQUEST_DELAY_MS || 450);
+
+/**
+ * @param {string | null | undefined} text
+ * @returns {string | undefined}
+ */
+function storedPageText(text) {
+  if (typeof text !== 'string') return undefined;
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length <= MAX_STORED_PAGE_TEXT_CHARS) return trimmed;
+  return trimmed.slice(0, MAX_STORED_PAGE_TEXT_CHARS);
+}
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -98,6 +111,7 @@ async function runStaticScrape(websiteUrl) {
       url: normalized,
       title: sig0.title || '',
       textLength: sig0.textLength,
+      text: storedPageText(sig0.text),
       strategy: 'static',
       status: first.status,
       blockHints: firstBlock.reasons,
@@ -115,6 +129,7 @@ async function runStaticScrape(websiteUrl) {
           url: pageUrl,
           title: sig.title || '',
           textLength: sig.textLength,
+          text: storedPageText(sig.text),
           strategy: 'static',
           status: r.status,
           blockHints: pb.reasons,

@@ -79,6 +79,8 @@ export function LeadCampaignDashboard({ businessId }: LeadCampaignDashboardProps
   const [currency, setCurrency] = useState('USD')
   const [budgetFloorMicros, setBudgetFloorMicros] = useState<number | null>(null)
   const [budgetCeilingMicros, setBudgetCeilingMicros] = useState<number | null>(null)
+  const [recommendedBudgetLabel, setRecommendedBudgetLabel] = useState<string | null>(null)
+  const [recommendedBudgetMicros, setRecommendedBudgetMicros] = useState<number | null>(null)
   const [budgetInputs, setBudgetInputs] = useState<Record<LeadCampaignSlotName, string>>({
     recommended: '',
     alternative: '',
@@ -93,6 +95,8 @@ export function LeadCampaignDashboard({ businessId }: LeadCampaignDashboardProps
       setCurrency(dashboard.currency ?? 'USD')
       setBudgetFloorMicros(dashboard.budgetFloorMicros ?? null)
       setBudgetCeilingMicros(dashboard.budgetCeilingMicros ?? null)
+      setRecommendedBudgetLabel(dashboard.recommendedBudgetLabel ?? null)
+      setRecommendedBudgetMicros(dashboard.recommendedBudgetMicros ?? null)
       setBudgetInputs({
         recommended: dashboard.slots.recommended?.committedBudgetMicros
           ? String(dashboard.slots.recommended.committedBudgetMicros / 1_000_000)
@@ -197,6 +201,14 @@ export function LeadCampaignDashboard({ businessId }: LeadCampaignDashboardProps
             <p style={{ margin: '0 0 0.5rem' }}>
               Budget: {formatMicros(slot.amountMicros ?? slot.committedBudgetMicros, currency)}
             </p>
+            {recommendedBudgetLabel || recommendedBudgetMicros != null ? (
+              <p style={{ margin: '0 0 0.5rem', color: 'var(--color-muted)' }}>
+                Recommended budget:{' '}
+                {recommendedBudgetLabel
+                  ? recommendedBudgetLabel
+                  : formatMicros(recommendedBudgetMicros, currency)}
+              </p>
+            ) : null}
             {!slot.budgetConfirmedAt ? (
               <label style={{ display: 'block', marginBottom: '0.75rem' }}>
                 <span style={{ display: 'block', marginBottom: '0.25rem' }}>

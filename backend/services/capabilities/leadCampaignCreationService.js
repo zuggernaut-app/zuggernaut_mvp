@@ -46,7 +46,15 @@ const {
 } = require('./adsAutoCampaignService');
 const { parseInternationalPhone } = require('../scraper/phoneUtils');
 const { parsePhoneNumberFromString } = require('libphonenumber-js/min');
-const { generateCampaignSlotContent } = require('./leadCampaignContentService');
+const {
+  extractScrapeTextCorpus,
+  extractScrapePages,
+  selectLandingPage,
+  generateCampaignSlotContent,
+} = require('./leadCampaignContentService');
+const { sanitizeKeywordSeeds } = require('./googleAdsCampaignComplianceService');
+
+const BusinessContext = mongoose.model('BusinessContext');
 
 const CampaignPlan = mongoose.model('CampaignPlan');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
@@ -182,6 +190,13 @@ async function createLeadCampaignsForSetupRun(ctx) {
 
   const existingSet = await getLeadCampaignSet(businessId);
 
+  const bcWithScrape =
+    bc?.rawScrapeOutput != null
+      ? bc
+      : await BusinessContext.findOne({ businessId }).select('+rawScrapeOutput').lean();
+  const scrapeTextCorpus = extractScrapeTextCorpus(bcWithScrape?.rawScrapeOutput);
+  const scrapePages = extractScrapePages(bcWithScrape?.rawScrapeOutput);
+
   for (const [slot, slotPlan] of toCreate) {
     if (existingSet?.[slot]?.reviewStatus === 'retired') {
       slotSummaries.push({
@@ -254,6 +269,8 @@ async function createLeadCampaignsForSetupRun(ctx) {
       conversionArtifacts,
       { budgetAmountMicros }
     );
+    const landingPageUrl = selectLandingPage(slotPlan.offer, scrapePages, bc.websiteUrl);
+
     const aiContent = await generateCampaignSlotContent({
       slot,
       businessName: bc.businessName,
@@ -263,19 +280,26 @@ async function createLeadCampaignsForSetupRun(ctx) {
       websiteUrl: bc.websiteUrl,
       fallbackHeadlines: previewIntent.ad.headlines,
       fallbackDescriptions: previewIntent.ad.descriptions,
-      allowedPages: [],
+      scrapePages,
+      scrapeTextCorpus,
     });
 
     const slotContentPatch = {};
-    if (aiContent?.landingPageUrl) {
-      slotContentPatch.page = aiContent.landingPageUrl;
-      readiness.normalized.websiteUrl = aiContent.landingPageUrl;
+    if (landingPageUrl) {
+      slotContentPatch.page = landingPageUrl;
+      readiness.normalized.websiteUrl = landingPageUrl;
     }
     if (aiContent?.proofLine) {
       slotContentPatch.proofLine = aiContent.proofLine;
     }
     if (Object.keys(slotContentPatch).length > 0) {
       await updateSlot(businessId, slot, slotContentPatch);
+    }
+    if (Array.isArray(aiContent?.keywords) && aiContent.keywords.filter(Boolean).length >= 3) {
+      const { keywords } = sanitizeKeywordSeeds(aiContent.keywords);
+      if (keywords.length >= 3) {
+        readiness.normalized.keywordSeeds = keywords.map((entry) => entry.text);
+      }
     }
     if (Array.isArray(aiContent?.headlines) && aiContent.headlines.filter(Boolean).length >= 3) {
       readiness.normalized.adCopySeeds = {
