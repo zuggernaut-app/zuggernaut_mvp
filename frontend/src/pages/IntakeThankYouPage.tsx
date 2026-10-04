@@ -1,8 +1,10 @@
 import type { ReactElement } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { PageLayout } from '../components/layout/PageLayout'
 
 export function IntakeThankYouPage(): ReactElement {
+  const navigate = useNavigate()
+
   return (
     <PageLayout
       title="Thank you"
@@ -13,6 +15,15 @@ export function IntakeThankYouPage(): ReactElement {
         account is ready.
       </p>
       <div className="actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() =>
+            navigate('/onboarding/accounts', { replace: true, state: { editMode: true } })
+          }
+        >
+          Edit
+        </button>
         <Link className="btn btn-secondary" to="/">
           Back to home
         </Link>

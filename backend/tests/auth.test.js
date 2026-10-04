@@ -52,6 +52,26 @@ describe('/api/v1/auth', () => {
     expect(res.body.error).toBe('conflict');
   });
 
+  it('login still succeeds after failed attempts for the same email', async () => {
+    const email = 'login_retry@example.com';
+    await request(app)
+      .post('/api/v1/auth/register')
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'A' })
+      .expect(201);
+
+    await request(app)
+      .post('/api/v1/auth/login')
+      .send({ email, password: 'WrongPassword!' })
+      .expect(401);
+
+    const ok = await request(app)
+      .post('/api/v1/auth/login')
+      .send({ email, password: TEST_PASSWORD_DEFAULT })
+      .expect(200);
+
+    expect(ok.body.user.email).toBe(email);
+  });
+
   it('login rejects bad password without leaking details', async () => {
     const email = 'login_bad_pw@example.com';
     await request(app)

@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { getOnboardingScrapeSuggestions, submitIntake } from '../api/onboarding'
 import { getBusinessContext } from '../api/businessContexts'
 import { ApiError } from '../api/client'
@@ -49,6 +49,8 @@ function FieldHint({ text }: { text: string }): ReactElement {
 
 export function BusinessStartPage(): ReactElement {
   const navigate = useNavigate()
+  const location = useLocation()
+  const editMode = (location.state as { editMode?: boolean } | null)?.editMode === true
   const { snapshot } = useOnboardingState()
   const businessId = snapshot.businessId
 
@@ -75,12 +77,12 @@ export function BusinessStartPage(): ReactElement {
       try {
         const res = await getBusinessContext(businessId)
         if (!cancelled) {
-          if (isQuestionsComplete(res.businessContext)) {
+          if (!editMode && isQuestionsComplete(res.businessContext)) {
             navigate('/onboarding/thank-you', { replace: true })
             return
           }
           if (!res.businessContext.accountLinksCompletedAt) {
-            navigate('/onboarding/accounts', { replace: true })
+            navigate('/onboarding/accounts', { replace: true, state: { editMode: true } })
           }
         }
       } catch (err) {
@@ -96,7 +98,7 @@ export function BusinessStartPage(): ReactElement {
     return () => {
       cancelled = true
     }
-  }, [businessId, navigate])
+  }, [businessId, navigate, editMode])
 
   useEffect(() => {
     if (!businessId) {
@@ -276,6 +278,15 @@ export function BusinessStartPage(): ReactElement {
         </div>
 
         <div className="actions">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() =>
+              navigate('/onboarding/accounts', { replace: true, state: { editMode: true } })
+            }
+          >
+            Back
+          </button>
           <button type="submit" className="btn btn-primary" disabled={busy}>
             {busy ? <InlineLoading label="Submitting…" /> : 'Submit'}
           </button>

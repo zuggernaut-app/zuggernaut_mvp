@@ -97,6 +97,13 @@ const businessContextSchema = new mongoose.Schema(
      * Keys align with intake field names (businessName, services, …).
      */
     intakeFieldSources: { type: mongoose.Schema.Types.Mixed, default: undefined },
+    /** Append-only customer intake submissions for operator review. */
+    intakeSubmissions: [
+      {
+        submittedAt: { type: Date, required: true },
+        fields: { type: mongoose.Schema.Types.Mixed, required: true },
+      },
+    ],
     /** Raw scrape output — never map into confirmed fields without explicit user save */
     rawScrapeOutput: { type: mongoose.Schema.Types.Mixed, select: false },
     confirmedAt: { type: Date },

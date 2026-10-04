@@ -85,6 +85,11 @@ export interface ScrapeRunPollResponse {
   scrapeRun: ScrapeRunDto
 }
 
+export interface IntakeSubmissionDto {
+  submittedAt: string | null
+  fields: Record<string, unknown> | null
+}
+
 export interface BusinessContextDto {
   businessId: string
   userId: string
@@ -102,6 +107,7 @@ export interface BusinessContextDto {
   howBuyersContact?: string | null
   businessCountry?: string | null
   intakeFieldSources?: Record<string, string> | null
+  intakeSubmissions?: IntakeSubmissionDto[]
   setupCallConfirmedAt?: string | null
   thankYouUrls: string[]
   nameKey?: string | null

@@ -9,7 +9,7 @@ type RequireAuthProps = {
 }
 
 export function RequireAuth({ children }: RequireAuthProps): ReactElement {
-  const { user, loading } = useAuth()
+  const { user, loading, sessionExpiredRedirect } = useAuth()
   const location = useLocation()
 
   if (loading) {
@@ -21,7 +21,13 @@ export function RequireAuth({ children }: RequireAuthProps): ReactElement {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname, sessionExpired: sessionExpiredRedirect }}
+      />
+    )
   }
 
   return children

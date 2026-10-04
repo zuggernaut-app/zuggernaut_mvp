@@ -76,8 +76,8 @@ router.post('/business/:businessId/intake', requireAuth, async (req, res, next) 
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
   const userId = new mongoose.Types.ObjectId(req.user.id);
 
-  const doc = await BusinessContext.findOne({ businessId, userId });
-  if (!doc) {
+  const existing = await BusinessContext.findOne({ businessId, userId }).lean();
+  if (!existing) {
     return res.status(404).json({
       error: 'not_found',
       message: 'Business draft not found for this user',
@@ -98,7 +98,7 @@ router.post('/business/:businessId/intake', requireAuth, async (req, res, next) 
     websiteUrl:
       typeof req.body?.websiteUrl === 'string' && req.body.websiteUrl.trim()
         ? req.body.websiteUrl.trim()
-        : doc.websiteUrl ?? user?.websiteUrl ?? '',
+        : existing.websiteUrl ?? user?.websiteUrl ?? '',
   };
 
   const parsed = validateIntakeBody(mergedBody);
@@ -106,19 +106,49 @@ router.post('/business/:businessId/intake', requireAuth, async (req, res, next) 
     return res.status(400).json({ error: 'validation_error', message: parsed.message });
   }
 
-  Object.assign(doc, parsed.value);
   const now = new Date();
-  if (!doc.questionsCompletedAt) {
-    doc.questionsCompletedAt = now;
-  }
-  if (!doc.confirmedAt) {
-    doc.confirmedAt = now;
-  }
+  const snapshot = {
+    submittedAt: now,
+    fields: {
+      businessName: parsed.value.businessName ?? null,
+      services: parsed.value.services ?? [],
+      serviceAreas: parsed.value.serviceAreas ?? [],
+      whoBuysToday: parsed.value.whoBuysToday ?? null,
+      orderValueHint: parsed.value.orderValueHint ?? null,
+      howBuyersContact: parsed.value.howBuyersContact ?? null,
+      websiteUrl: parsed.value.websiteUrl ?? null,
+      contactMethods: parsed.value.contactMethods ?? null,
+      intakeFieldSources: parsed.value.intakeFieldSources ?? null,
+    },
+  };
 
+  let doc;
   try {
-    await doc.save();
+    doc = await BusinessContext.findOneAndUpdate(
+      { businessId, userId },
+      [
+        {
+          $set: {
+            ...parsed.value,
+            intakeSubmissions: {
+              $concatArrays: [{ $ifNull: ['$intakeSubmissions', []] }, [snapshot]],
+            },
+            questionsCompletedAt: { $ifNull: ['$questionsCompletedAt', now] },
+            confirmedAt: { $ifNull: ['$confirmedAt', now] },
+          },
+        },
+      ],
+      { new: true, updatePipeline: true }
+    );
   } catch (err) {
     return next(err);
+  }
+
+  if (!doc) {
+    return res.status(404).json({
+      error: 'not_found',
+      message: 'Business draft not found for this user',
+    });
   }
 
   return res.status(200).json({

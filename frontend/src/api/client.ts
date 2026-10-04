@@ -62,6 +62,12 @@ const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 /** In-memory CSRF token for cross-origin prod (Firebase SPA + Railway API). */
 let csrfTokenMemory: string | null = null
 
+let onUnauthorized: (() => void) | null = null
+
+export function setOnUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler
+}
+
 function readCsrfCookie(): string | null {
   if (typeof document === 'undefined') return null
   const escaped = CSRF_COOKIE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -173,6 +179,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     } else if (looksLikeExpressUnmatchedRoute && import.meta.env.DEV) {
       msg =
         'API route not found on the running backend. Restart Express (`npm start` in `backend/`) so new routes load, then retry.'
+    }
+
+    if (res.status === 401) {
+      onUnauthorized?.()
     }
 
     throw new ApiError(res.status, msg, code, errPayload)

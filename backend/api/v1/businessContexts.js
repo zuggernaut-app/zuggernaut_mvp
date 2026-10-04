@@ -94,6 +94,12 @@ function serializeBusinessContext(doc) {
     whoBuysToday: doc.whoBuysToday ?? null,
     howBuyersContact: doc.howBuyersContact ?? null,
     intakeFieldSources: doc.intakeFieldSources ?? null,
+    intakeSubmissions: Array.isArray(doc.intakeSubmissions)
+      ? doc.intakeSubmissions.map((entry) => ({
+          submittedAt: entry.submittedAt ? new Date(entry.submittedAt).toISOString() : null,
+          fields: entry.fields ?? null,
+        }))
+      : [],
     confirmedAt: doc.confirmedAt ?? null,
     accountLinksCompletedAt: doc.accountLinksCompletedAt ?? null,
     questionsCompletedAt: doc.questionsCompletedAt ?? null,

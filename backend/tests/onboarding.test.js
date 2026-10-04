@@ -159,6 +159,34 @@ describe('POST /api/v1/onboarding', () => {
       .expect(404);
   });
 
+  it('POST intake appends submission history and preserves completion timestamps', async () => {
+    const BusinessContext = mongoose.model('BusinessContext');
+    const { agent, primaryBusinessId } = await registerAgent(app, 'intake_hist@test.com');
+
+    await agent
+      .post(`/api/v1/onboarding/business/${primaryBusinessId}/complete-account-links`)
+      .expect(200);
+
+    const first = await agent
+      .post(`/api/v1/onboarding/business/${primaryBusinessId}/intake`)
+      .send({ businessName: 'First Co', primaryOffer: 'Plumbing' })
+      .expect(200);
+
+    const second = await agent
+      .post(`/api/v1/onboarding/business/${primaryBusinessId}/intake`)
+      .send({ businessName: 'Second Co', primaryOffer: 'HVAC' })
+      .expect(200);
+
+    expect(first.body.questionsCompletedAt).toBeTruthy();
+    expect(second.body.questionsCompletedAt).toBe(first.body.questionsCompletedAt);
+
+    const doc = await BusinessContext.findOne({ businessId: primaryBusinessId }).lean();
+    expect(doc.businessName).toBe('Second Co');
+    expect(doc.intakeSubmissions).toHaveLength(2);
+    expect(doc.intakeSubmissions[0].fields.businessName).toBe('First Co');
+    expect(doc.intakeSubmissions[1].fields.businessName).toBe('Second Co');
+  });
+
   describe('SOFT_LAUNCH_MODE single business', () => {
     const originalFlag = process.env.SOFT_LAUNCH_MODE;
 

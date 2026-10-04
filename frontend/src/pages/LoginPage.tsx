@@ -16,7 +16,9 @@ import {
 export function LoginPage(): ReactElement {
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from ?? '/'
+  const loginState = location.state as { from?: string; sessionExpired?: boolean } | null
+  const from = loginState?.from ?? '/'
+  const sessionExpired = loginState?.sessionExpired === true
   const { login } = useAuth()
   const { setBusinessId } = useOnboardingState()
 
@@ -56,6 +58,11 @@ export function LoginPage(): ReactElement {
       lead="Use the email and password you registered with."
     >
       <form className="form" onSubmit={(e) => void onSubmit(e)}>
+        {sessionExpired ? (
+          <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
+            Your session expired. Sign in again.
+          </div>
+        ) : null}
         <ErrorAlert message={error} />
         <div className="field">
           <label htmlFor="email">Email</label>

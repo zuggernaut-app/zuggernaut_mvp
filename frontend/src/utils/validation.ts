@@ -6,7 +6,7 @@ export const MAX_EMAIL_LENGTH = 254
 export const MAX_NAME_LENGTH = 200
 export const MAX_URL_LENGTH = 2048
 /** Mirrors backend/lib/auth/passwordPolicy.js */
-export const PASSWORD_MIN_LENGTH = 10
+export const PASSWORD_MIN_LENGTH = 12
 export const PASSWORD_MAX_LENGTH = 72
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

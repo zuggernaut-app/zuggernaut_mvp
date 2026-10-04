@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { completeAccountLinks, createBusinessDraft } from '../api/onboarding'
 import { getBusinessContext } from '../api/businessContexts'
 import { ApiError } from '../api/client'
@@ -45,6 +45,8 @@ function showSelectionUi(provider: IntegrationProvider, reason: string | undefin
 
 export function OnboardingAccountLinksPage(): ReactElement {
   const navigate = useNavigate()
+  const location = useLocation()
+  const editMode = (location.state as { editMode?: boolean } | null)?.editMode === true
   const [searchParams, setSearchParams] = useSearchParams()
   const { user } = useAuth()
   const { snapshot, setBusinessId } = useOnboardingState()
@@ -106,11 +108,11 @@ export function OnboardingAccountLinksPage(): ReactElement {
       try {
         const res = await getBusinessContext(businessId)
         if (!cancelled) {
-          if (isQuestionsComplete(res.businessContext)) {
+          if (!editMode && isQuestionsComplete(res.businessContext)) {
             navigate('/onboarding/thank-you', { replace: true })
             return
           }
-          if (res.businessContext.accountLinksCompletedAt) {
+          if (!editMode && res.businessContext.accountLinksCompletedAt) {
             navigate('/onboarding/business', { replace: true })
           }
         }
@@ -126,7 +128,7 @@ export function OnboardingAccountLinksPage(): ReactElement {
     return () => {
       cancelled = true
     }
-  }, [businessId, navigate])
+  }, [businessId, navigate, editMode])
 
   useEffect(() => {
     const integration = searchParams.get('integration')

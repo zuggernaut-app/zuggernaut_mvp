@@ -56,6 +56,7 @@ export function AdminFiveAnswerReviewSection({
   }, [initial])
 
   const sources = initial.intakeFieldSources ?? {}
+  const submissions = initial.intakeSubmissions ?? []
 
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
@@ -103,6 +104,34 @@ export function AdminFiveAnswerReviewSection({
       {savedNotice ? (
         <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
           {savedNotice}
+        </div>
+      ) : null}
+      {submissions.length > 0 ? (
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h3 style={{ marginTop: 0 }}>Customer submission history</h3>
+          <ul style={{ paddingLeft: '1.25rem', margin: 0 }}>
+            {submissions.map((entry, index) => {
+              const fields = entry.fields ?? {}
+              const label =
+                typeof entry.submittedAt === 'string' && entry.submittedAt
+                  ? new Date(entry.submittedAt).toLocaleString()
+                  : `Submission ${index + 1}`
+              const businessName =
+                typeof fields.businessName === 'string' ? fields.businessName : null
+              const services = Array.isArray(fields.services)
+                ? fields.services.map((s) => String(s)).join(', ')
+                : null
+              return (
+                <li key={`${entry.submittedAt ?? 'submission'}-${index}`} style={{ marginBottom: '0.75rem' }}>
+                  <strong>{label}</strong>
+                  <div style={{ color: 'var(--color-muted)', fontSize: '0.9rem' }}>
+                    {businessName ? `Business: ${businessName}` : 'Business: —'}
+                    {services ? ` · Offer: ${services}` : ''}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </div>
       ) : null}
       <form className="form" style={{ maxWidth: '32rem' }} onSubmit={(e) => void onSubmit(e)}>

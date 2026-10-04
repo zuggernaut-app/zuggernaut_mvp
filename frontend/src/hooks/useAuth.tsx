@@ -10,7 +10,8 @@ import {
 } from 'react'
 import type { RegisterBody } from '../api/auth'
 import { authLogin, authLogout, authMe, authRegister } from '../api/auth'
-import { clearCsrfToken, ensureCsrfCookie } from '../api/client'
+import { clearCsrfToken, ensureCsrfCookie, setOnUnauthorizedHandler } from '../api/client'
+import { useNavigate } from 'react-router-dom'
 import type { UserDto } from '../types/api'
 import {
   clearOnboardingDrafts,
@@ -25,6 +26,7 @@ import { notifyOnboardingStorageChanged } from './useOnboardingState'
 export type AuthContextValue = {
   user: UserDto | null
   loading: boolean
+  sessionExpiredRedirect: boolean
   register: (body: RegisterBody) => Promise<UserDto>
   login: (email: string, password: string) => Promise<UserDto>
   logout: () => Promise<void>
@@ -46,22 +48,44 @@ function reconcileOnboardingDraftsForSession(nextUserId: string): void {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }): ReactElement {
+  const navigate = useNavigate()
   const [user, setUser] = useState<UserDto | null>(null)
   const [loading, setLoading] = useState(true)
+  const [sessionExpiredRedirect, setSessionExpiredRedirect] = useState(false)
 
   const refreshSession = useCallback(async () => {
+    const hadStoredSession = getStoredUserId() !== null
     try {
       const res = await authMe()
       reconcileOnboardingDraftsForSession(res.user.id)
       setUser(res.user)
       setStoredUserId(res.user.id)
+      setSessionExpiredRedirect(false)
     } catch {
       setUser(null)
+      if (hadStoredSession) {
+        setSessionExpiredRedirect(true)
+      }
       clearStoredUserId()
       clearOnboardingDrafts()
       notifyOnboardingStorageChanged()
     }
   }, [])
+
+  useEffect(() => {
+    setOnUnauthorizedHandler(() => {
+      if (window.location.pathname === '/login') return
+      const from = `${window.location.pathname}${window.location.search}`
+      setUser(null)
+      setSessionExpiredRedirect(true)
+      clearCsrfToken()
+      clearStoredUserId()
+      clearOnboardingDrafts()
+      notifyOnboardingStorageChanged()
+      navigate('/login', { replace: true, state: { from, sessionExpired: true } })
+    })
+    return () => setOnUnauthorizedHandler(null)
+  }, [navigate])
 
   useEffect(() => {
     void (async () => {
@@ -77,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
     reconcileOnboardingDraftsForSession(res.user.id)
     setUser(res.user)
     setStoredUserId(res.user.id)
+    setSessionExpiredRedirect(false)
     return res.user
   }, [])
 
@@ -86,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
     reconcileOnboardingDraftsForSession(res.user.id)
     setUser(res.user)
     setStoredUserId(res.user.id)
+    setSessionExpiredRedirect(false)
     return res.user
   }, [])
 
@@ -93,16 +119,17 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
     try {
       await authLogout()
     } finally {
-      clearCsrfToken()
       setUser(null)
+      setSessionExpiredRedirect(false)
       resetLocalSession()
+      clearCsrfToken()
       notifyOnboardingStorageChanged()
     }
   }, [])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, loading, register, login, logout }),
-    [user, loading, register, login, logout]
+    () => ({ user, loading, sessionExpiredRedirect, register, login, logout }),
+    [user, loading, sessionExpiredRedirect, register, login, logout]
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

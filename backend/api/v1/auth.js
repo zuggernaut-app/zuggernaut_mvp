@@ -21,6 +21,8 @@ const {
   clearAccessTokenCookieAttributes,
 } = require('../../lib/auth/sessionCookie');
 const { validatePlainPassword } = require('../../lib/auth/validateCredentials');
+const { assertPasswordNotPwned } = require('../../lib/auth/pwnedPassword');
+const { loginFailedLimiter } = require('../../lib/auth/loginFailedLimiter');
 const {
   generateResetToken,
   hashResetToken,
@@ -175,6 +177,11 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
     return res.status(400).json({ error: 'validation_error', message: pwdMsg });
   }
 
+  const pwnedCheck = await assertPasswordNotPwned(pwdRaw);
+  if (!pwnedCheck.ok) {
+    return res.status(400).json({ error: 'validation_error', message: pwnedCheck.message });
+  }
+
   let name;
   if (nameRaw) {
     if (nameRaw.length > MAX_NAME_LENGTH) {
@@ -229,7 +236,7 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
   }
 });
 
-router.post('/login', authWriteLimiter, async (req, res, next) => {
+router.post('/login', loginFailedLimiter, async (req, res, next) => {
   const emailRaw =
     typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const pwdRaw = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -340,6 +347,11 @@ router.post('/password-reset/confirm', authWriteLimiter, async (req, res, next) 
   const pwdMsg = validatePlainPassword(pwdRaw);
   if (pwdMsg) {
     return res.status(400).json({ error: 'validation_error', message: pwdMsg });
+  }
+
+  const pwnedCheck = await assertPasswordNotPwned(pwdRaw);
+  if (!pwnedCheck.ok) {
+    return res.status(400).json({ error: 'validation_error', message: pwnedCheck.message });
   }
 
   try {
