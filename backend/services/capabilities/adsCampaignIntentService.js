@@ -315,19 +315,29 @@ function validateCampaignIntent(intent) {
   }
 
   const ad = data.ad ?? {};
+  const primaryGoal =
+    data.goals && typeof data.goals === 'object' && typeof data.goals.primary === 'string'
+      ? data.goals.primary
+      : null;
+  const skipFinalUrlForCallCampaign = primaryGoal === 'calls';
   const finalUrlRaw = typeof ad.finalUrl === 'string' ? ad.finalUrl : '';
-  const urlCheck = validateHttpUrl(finalUrlRaw);
-  if (!urlCheck.ok) {
-    issues.push(
-      issue(
-        ADS_INTENT_CODES.INVALID_FINAL_URL,
-        'ad.finalUrl',
-        urlCheck.message ?? 'Final URL must be a valid http or https URL.',
-        'ad'
-      )
-    );
+  if (!skipFinalUrlForCallCampaign) {
+    const urlCheck = validateHttpUrl(finalUrlRaw);
+    if (!urlCheck.ok) {
+      issues.push(
+        issue(
+          ADS_INTENT_CODES.INVALID_FINAL_URL,
+          'ad.finalUrl',
+          urlCheck.message ?? 'Final URL must be a valid http or https URL.',
+          'ad'
+        )
+      );
+    }
   }
 
+  const callAdWithoutLandingPage = skipFinalUrlForCallCampaign && !finalUrlRaw.trim();
+
+  if (!callAdWithoutLandingPage) {
   const headlines = validateUniqueRsaTexts(
     Array.isArray(ad.headlines) ? ad.headlines : [],
     RSA_MIN_HEADLINES,
@@ -396,6 +406,7 @@ function validateCampaignIntent(intent) {
   const keywordCompliance = validateKeywordCompliance(keywords);
   if (!keywordCompliance.ok) {
     issues.push(...keywordCompliance.issues);
+  }
   }
 
   const geoLabels = Array.isArray(data.geoTargetLabels)

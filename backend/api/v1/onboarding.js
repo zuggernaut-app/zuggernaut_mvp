@@ -9,6 +9,10 @@ const { requireAuth } = require('./middleware/requireAuth');
 const { validateIntakeBody } = require('../../lib/intakeValidation');
 const { SCRAPE_TERMINAL_STATUSES } = require('../../constants/onboarding');
 const { createBusinessDraftForUser } = require('../../services/onboarding/businessDraftService');
+const {
+  appendBusinessFactVersion,
+  buildFactFieldsSnapshot,
+} = require('../../services/capabilities/businessFactVersionService');
 
 const router = express.Router();
 
@@ -124,21 +128,18 @@ router.post('/business/:businessId/intake', requireAuth, async (req, res, next) 
 
   let doc;
   try {
-    doc = await BusinessContext.findOneAndUpdate(
+    doc = await appendBusinessFactVersion(
       { businessId, userId },
-      [
-        {
-          $set: {
-            ...parsed.value,
-            intakeSubmissions: {
-              $concatArrays: [{ $ifNull: ['$intakeSubmissions', []] }, [snapshot]],
-            },
-            questionsCompletedAt: { $ifNull: ['$questionsCompletedAt', now] },
-            confirmedAt: { $ifNull: ['$confirmedAt', now] },
-          },
+      'customer_intake',
+      parsed.value,
+      buildFactFieldsSnapshot(parsed.value),
+      {
+        intakeSubmissions: {
+          $concatArrays: [{ $ifNull: ['$intakeSubmissions', []] }, [snapshot]],
         },
-      ],
-      { new: true, updatePipeline: true }
+        questionsCompletedAt: { $ifNull: ['$questionsCompletedAt', now] },
+        confirmedAt: { $ifNull: ['$confirmedAt', now] },
+      }
     );
   } catch (err) {
     return next(err);

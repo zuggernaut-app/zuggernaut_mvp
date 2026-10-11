@@ -18,6 +18,7 @@ const {
 const { listOrgIdsForUser, MembershipCheckError } = require('../../lib/auth/membershipCheck');
 const {
   assertBusinessMembershipOrPlatformAdmin,
+  isPlatformAdminUser,
 } = require('./lib/platformAdminBusinessAccess');
 const { isSoftLaunchMode } = require('../../constants/softLaunch');
 const { deriveBusinessNameKey } = require('../../lib/businessNameKey');
@@ -66,7 +67,8 @@ function applySoftLaunchStep0Defaults(doc) {
   }
 }
 
-function serializeBusinessContext(doc) {
+function serializeBusinessContext(doc, options = {}) {
+  const includeFactVersions = options.includeFactVersions === true;
   return {
     businessId: doc.businessId.toString(),
     userId: doc.userId.toString(),
@@ -101,6 +103,19 @@ function serializeBusinessContext(doc) {
           fields: entry.fields ?? null,
         }))
       : [],
+    latestFactVersion: typeof doc.latestFactVersion === 'number' ? doc.latestFactVersion : 0,
+    ...(includeFactVersions
+      ? {
+          factVersions: Array.isArray(doc.factVersions)
+            ? doc.factVersions.map((entry) => ({
+                version: entry.version,
+                savedAt: entry.savedAt ? new Date(entry.savedAt).toISOString() : null,
+                source: entry.source,
+                fields: entry.fields ?? {},
+              }))
+            : [],
+        }
+      : {}),
     confirmedAt: doc.confirmedAt ?? null,
     accountLinksCompletedAt: doc.accountLinksCompletedAt ?? null,
     questionsCompletedAt: doc.questionsCompletedAt ?? null,
@@ -170,8 +185,9 @@ router.get('/:businessId', requireAuth, async (req, res) => {
     });
   }
 
+  const includeFactVersions = await isPlatformAdminUser(req.user.id);
   return res.status(200).json({
-    businessContext: serializeBusinessContext(doc),
+    businessContext: serializeBusinessContext(doc, { includeFactVersions }),
     adsReadiness: await validateBusinessContextAdsReadiness(doc),
     susoMatrix: buildSusoMatrix(doc),
   });

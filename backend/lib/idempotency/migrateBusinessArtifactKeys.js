@@ -3,7 +3,7 @@
 const mongoose = require('mongoose');
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 const BusinessContext = mongoose.model('BusinessContext');
-const { computeBusinessIntentFingerprint } = require('./businessIntentFingerprint');
+const { computeLeadCampaignIntentFingerprint } = require('./businessIntentFingerprint');
 const {
   businessScopedIdempotencyKey,
   parseLegacyScopedIdempotencyKey,
@@ -33,7 +33,7 @@ async function migrateLegacyArtifactIdempotencyKeys() {
       continue;
     }
 
-    const intentFingerprint = computeBusinessIntentFingerprint(bc);
+    const intentFingerprint = computeLeadCampaignIntentFingerprint(bc);
     const provider = parsed.prefix === 'ads' ? 'google_ads' : 'gtm';
     const bizKey = businessScopedIdempotencyKey(
       artifact.businessId,

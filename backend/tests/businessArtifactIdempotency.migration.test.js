@@ -3,7 +3,7 @@
 const mongoose = require('mongoose');
 const { createLogger } = require('../lib/observability/logger');
 const { businessScopedIdempotencyKey } = require('../constants/idempotency');
-const { computeBusinessIntentFingerprint } = require('../lib/idempotency/businessIntentFingerprint');
+const { computeLeadCampaignIntentFingerprint } = require('../lib/idempotency/businessIntentFingerprint');
 const { migrateLegacyArtifactIdempotencyKeys } = require('../lib/idempotency/migrateBusinessArtifactKeys');
 const { createAdsAutoCampaign } = require('../services/capabilities/adsAutoCampaignService');
 const googleAdsCampaignClient = require('../services/integrations/googleAdsCampaignClient');
@@ -68,7 +68,7 @@ describe('business artifact idempotency migration', () => {
     });
     const businessId = bc.businessId;
     const setupRunId1 = new mongoose.Types.ObjectId();
-    const fingerprint = computeBusinessIntentFingerprint(bc);
+    const fingerprint = computeLeadCampaignIntentFingerprint(bc);
 
     await IntegrationArtifact.create({
       businessId,

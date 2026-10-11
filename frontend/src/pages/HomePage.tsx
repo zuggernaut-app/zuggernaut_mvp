@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactElement } from 'react'
 import { Link, Navigate } from 'react-router-dom'
+import { pollBusinessSetupTrackingTest } from '../api/businessSetup'
 import { listBusinessContexts } from '../api/businessContexts'
+import { fetchIntegrationStatus } from '../api/integrations'
 import { getLeadCampaignDashboard } from '../api/leadCampaigns'
 import { LeadCampaignDashboard } from '../components/dashboard/LeadCampaignDashboard'
 import { PageLayout } from '../components/layout/PageLayout'
@@ -8,7 +10,9 @@ import { InlineLoading } from '../components/feedback/InlineLoading'
 import { useAuth } from '../hooks/useAuth'
 import { useOnboardingState } from '../hooks/useOnboardingState'
 import { isQuestionsComplete, resolveOnboardingPath } from '../lib/onboardingRouting'
+import { buildSetupProgressItems } from '../lib/setupProgressUi'
 import type { BusinessContextDto } from '../types/api'
+import type { IntegrationConnectionStatusDto } from '../api/integrations'
 
 function resolveActiveBusinessContext(
   contexts: BusinessContextDto[],
@@ -65,12 +69,20 @@ export function HomePage(): ReactElement {
   )
   const [hasLeadCampaigns, setHasLeadCampaigns] = useState(false)
   const [dashboardChecked, setDashboardChecked] = useState(false)
+  const [connections, setConnections] = useState<
+    Record<string, IntegrationConnectionStatusDto | null> | null
+  >(null)
+  const [trackingTestResult, setTrackingTestResult] = useState<Record<string, string> | null>(
+    null,
+  )
 
   useEffect(() => {
     if (!user) {
       setActiveContext(undefined)
       setDashboardChecked(false)
       setHasLeadCampaigns(false)
+      setConnections(null)
+      setTrackingTestResult(null)
       return
     }
 
@@ -90,15 +102,25 @@ export function HomePage(): ReactElement {
           setActiveContext(resolved)
           if (isQuestionsComplete(resolved)) {
             try {
-              const dashboard = await getLeadCampaignDashboard(resolved!.businessId)
+              const [dashboard, integrationStatus, trackingPoll] = await Promise.all([
+                getLeadCampaignDashboard(resolved!.businessId),
+                fetchIntegrationStatus(resolved!.businessId),
+                pollBusinessSetupTrackingTest(resolved!.businessId).catch(() => null),
+              ])
               const anySlot =
                 dashboard.slots.recommended != null || dashboard.slots.alternative != null
               setHasLeadCampaigns(anySlot)
+              setConnections(integrationStatus.connections)
+              setTrackingTestResult(trackingPoll?.goals ?? null)
             } catch {
               setHasLeadCampaigns(false)
+              setConnections(null)
+              setTrackingTestResult(null)
             }
           } else {
             setHasLeadCampaigns(false)
+            setConnections(null)
+            setTrackingTestResult(null)
           }
           setDashboardChecked(true)
         }
@@ -155,7 +177,7 @@ export function HomePage(): ReactElement {
     return (
       <PageLayout
         title={activeContext.businessName ?? 'Your campaigns'}
-        lead="Start, pause, and monitor your lead campaigns."
+        lead="Monitor your lead campaigns."
       >
         <LeadCampaignDashboard businessId={activeContext.businessId} />
       </PageLayout>
@@ -163,15 +185,25 @@ export function HomePage(): ReactElement {
   }
 
   if (activeContext && isQuestionsComplete(activeContext)) {
+    const progress = buildSetupProgressItems(activeContext, connections, trackingTestResult)
     return (
-      <PageLayout title="Thank you" lead="We'll take it from here.">
+      <PageLayout
+        title="Thank you"
+        lead="We'll call you to take this forward. You can also continue setup yourself."
+      >
         <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-          Your details are saved. Continue business setup to connect accounts and prepare your
-          campaigns.
+          An expert will call you to help finish setup. You can keep going on your own anytime.
         </p>
+        <ul style={{ margin: '0 0 1rem', paddingLeft: '1.25rem', color: 'var(--color-muted)' }}>
+          {progress.map((item) => (
+            <li key={item.id}>
+              {item.label}: {item.done ? 'Done' : 'Still open'}
+            </li>
+          ))}
+        </ul>
         <div className="actions" style={{ marginBottom: '1rem' }}>
           <Link className="btn btn-primary" to="/business-setup">
-            Business setup
+            Continue business setup
           </Link>
         </div>
         <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-muted)' }}>

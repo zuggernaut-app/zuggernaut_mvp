@@ -66,5 +66,9 @@ describe('leadCampaignOperatorService', () => {
     });
 
     expect(result.setupCallConfirmedAt).toBeTruthy();
+
+    const refreshed = await BusinessContext.findOne({ businessId: bc.businessId }).lean();
+    expect(refreshed.latestFactVersion).toBeGreaterThan(0);
+    expect(refreshed.factVersions.some((v) => v.source === 'setup_call_confirmed')).toBe(true);
   });
 });

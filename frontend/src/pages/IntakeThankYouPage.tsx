@@ -8,11 +8,11 @@ export function IntakeThankYouPage(): ReactElement {
   return (
     <PageLayout
       title="Thank you"
-      lead="You're all set for now."
+      lead="We'll call you to take this forward. You can also continue setup yourself."
     >
       <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-        Your part is done. An expert will complete your setup and call you when your Google Ads
-        account is ready.
+        An expert will call you to help finish setup. You can keep going on your own anytime using
+        business setup below.
       </p>
       <div className="actions">
         <Link className="btn btn-primary" to="/business-setup">

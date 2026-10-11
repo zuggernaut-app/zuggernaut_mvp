@@ -169,14 +169,6 @@ router.post('/', requireAuth, async (req, res) => {
     bc.nameKey = nameKey;
   }
 
-  if (!bc.confirmedAt) {
-    return res.status(409).json({
-      error: 'precondition_failed',
-      message:
-        'Business context must be confirmed (PUT /business-contexts/:businessId) before starting setup.',
-    });
-  }
-
   if (!isStep0Complete(bc)) {
     return res.status(409).json({
       error: 'step0_incomplete',

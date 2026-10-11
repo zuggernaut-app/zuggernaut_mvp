@@ -13,6 +13,7 @@ import { AdminBusinessSetupSection } from '../../components/admin/AdminBusinessS
 import { AdminFiveAnswerReviewSection } from '../../components/admin/AdminFiveAnswerReviewSection'
 import { AdminLeadCampaignReviewSection } from '../../components/admin/AdminLeadCampaignReviewSection'
 import { AdminSetupCallSection } from '../../components/admin/AdminSetupCallSection'
+import { AdminFactVersionHistorySection } from '../../components/admin/AdminFactVersionHistorySection'
 
 import { ErrorAlert } from '../../components/feedback/ErrorAlert'
 
@@ -184,6 +185,8 @@ export function AdminBusinessWorkspacePage(): ReactElement {
           returnPath={`/admin/businesses/${businessId}`}
         />
       </section>
+
+      <AdminFactVersionHistorySection businessContext={businessContext} />
 
       <AdminFiveAnswerReviewSection
         businessId={businessId}

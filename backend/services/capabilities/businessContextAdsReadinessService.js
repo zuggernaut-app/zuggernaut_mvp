@@ -235,7 +235,9 @@ function validateBusinessContextAdsReadinessSync(businessContext) {
   }
 
   const websiteRaw = typeof bc.websiteUrl === 'string' ? bc.websiteUrl : '';
-  if (!websiteRaw.trim()) {
+  const resolvedPrimaryGoalForWebsite = resolvePrimaryGoal(bc.goals);
+  const websiteRequiredForGoal = resolvedPrimaryGoalForWebsite !== 'calls';
+  if (websiteRequiredForGoal && !websiteRaw.trim()) {
     issues.push(
       issue(
         ADS_READINESS_CODES.MISSING_WEBSITE_URL,

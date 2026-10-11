@@ -7,7 +7,7 @@ const {
   findReusableArtifact,
   adsCampaignIdempotencyKey,
 } = require('../../constants/idempotency');
-const { computeBusinessIntentFingerprint } = require('../../lib/idempotency/businessIntentFingerprint');
+const { computeLeadCampaignIntentFingerprint } = require('../../lib/idempotency/businessIntentFingerprint');
 const { FLOOR_DAILY_MICROS, SUPPORTED_ACCOUNT_CURRENCIES } = require('../../constants/leadCampaign');
 const {
   createCampaignBudget,
@@ -152,7 +152,7 @@ function businessContextForSlot(bc, slotPlan) {
  * @param {object} ctx
  */
 async function createLeadCampaignsForSetupRun(ctx) {
-  const { setupRunId, businessId, customerId, bc, conversionArtifacts, logger } = ctx;
+  const { setupRunId, businessId, customerId, bc, conversionArtifacts, logger, onlySlot } = ctx;
 
   const currencyCode =
     process.env.GOOGLE_ADS_API_MOCK === 'true' || process.env.GOOGLE_ADS_API_ENABLED !== 'true'
@@ -169,7 +169,8 @@ async function createLeadCampaignsForSetupRun(ctx) {
   const budgetAmountMicros =
     FLOOR_DAILY_MICROS[normalizedCurrency] ?? FLOOR_DAILY_MICROS.USD;
   const currentSusoVersion = typeof bc.susoVersion === 'number' ? bc.susoVersion : 0;
-  const intentFingerprint = computeBusinessIntentFingerprint(bc);
+  const factVersion = typeof bc.latestFactVersion === 'number' ? bc.latestFactVersion : 0;
+  const intentFingerprint = computeLeadCampaignIntentFingerprint(bc);
   const slotPlans = planLeadCampaignSlots(bc);
 
   const toCreate = [];
@@ -198,6 +199,9 @@ async function createLeadCampaignsForSetupRun(ctx) {
   const scrapePages = extractScrapePages(bcWithScrape?.rawScrapeOutput);
 
   for (const [slot, slotPlan] of toCreate) {
+    if (onlySlot && slot !== onlySlot) {
+      continue;
+    }
     if (existingSet?.[slot]?.reviewStatus === 'retired') {
       slotSummaries.push({
         slot,
@@ -493,27 +497,32 @@ async function createLeadCampaignsForSetupRun(ctx) {
       })
     );
 
-    for (let index = 0; index < intent.keywords.length; index += 1) {
-      const keyword = intent.keywords[index];
-      await ensureResource(
-        `keyword_${index}`,
-        'ads_keyword',
-        () =>
-          createAdGroupKeyword({
-            ...clientCtx,
+    const callOnlyNoWebsite =
+      slotPlan.action === 'calls' && !String(bc.websiteUrl ?? '').trim();
+
+    if (!callOnlyNoWebsite) {
+      for (let index = 0; index < intent.keywords.length; index += 1) {
+        const keyword = intent.keywords[index];
+        await ensureResource(
+          `keyword_${index}`,
+          'ads_keyword',
+          () =>
+            createAdGroupKeyword({
+              ...clientCtx,
+              adGroupResourceName,
+              keywordText: keyword.text,
+              matchType: keyword.matchType,
+              keywordIndex: index,
+            }),
+          () => ({
+            slot,
             adGroupResourceName,
             keywordText: keyword.text,
             matchType: keyword.matchType,
-            keywordIndex: index,
-          }),
-        () => ({
-          slot,
-          adGroupResourceName,
-          keywordText: keyword.text,
-          matchType: keyword.matchType,
-          source,
-        })
-      );
+            source,
+          })
+        );
+      }
     }
 
     for (let index = 0; index < intent.geoTargets.length; index += 1) {
@@ -532,18 +541,21 @@ async function createLeadCampaignsForSetupRun(ctx) {
       );
     }
 
-    const adResourceName = await ensureResource(
-      'ad',
-      'ads_ad',
-      () => createResponsiveSearchAd({ ...clientCtx, adGroupResourceName }),
-      () => ({
-        slot,
-        campaignResourceName,
-        adGroupResourceName,
-        finalUrl: intent.ad.finalUrl,
-        source,
-      })
-    );
+    let adResourceName = null;
+    if (!callOnlyNoWebsite) {
+      adResourceName = await ensureResource(
+        'ad',
+        'ads_ad',
+        () => createResponsiveSearchAd({ ...clientCtx, adGroupResourceName }),
+        () => ({
+          slot,
+          campaignResourceName,
+          adGroupResourceName,
+          finalUrl: intent.ad.finalUrl,
+          source,
+        })
+      );
+    }
 
     const slotConversionResource = resolveSlotConversionResource(
       conversionArtifacts,
@@ -632,6 +644,8 @@ async function createLeadCampaignsForSetupRun(ctx) {
         ad: adResourceName,
         budget: budgetResourceName,
       },
+      builtFactVersion: factVersion,
+      factRebuildClaimState: 'succeeded',
     });
 
     slotSummaries.push({

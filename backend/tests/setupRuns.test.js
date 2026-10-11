@@ -36,9 +36,8 @@ describe('setup-runs API', () => {
   });
 
   async function confirmedBusiness(email) {
-    const { agent } = await registerAgent(app, email);
-    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
-    const bid = draft.body.businessId;
+    const { agent, primaryBusinessId } = await registerAgent(app, email);
+    const bid = primaryBusinessId;
     await agent
       .put(`/api/v1/business-contexts/${bid}`)
       .send({
@@ -89,20 +88,16 @@ describe('setup-runs API', () => {
     expect(res.body.error).toBe('validation_error');
   });
 
-  it('409 when business context is not confirmed', async () => {
-    const { agent } = await registerAgent(app, 'sr_unconfirmed@test.com');
-    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
-    const bid = draft.body.businessId;
+  it('409 when step 0 is incomplete on a fresh draft', async () => {
+    const { agent, primaryBusinessId: bid } = await registerAgent(app, 'sr_unconfirmed@test.com');
 
     const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
 
-    expect(res.body.error).toBe('precondition_failed');
+    expect(res.body.error).toBe('step0_incomplete');
   });
 
-  it('409 when confirmation call is not complete', async () => {
-    const { agent } = await registerAgent(app, 'sr_no_call@test.com');
-    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
-    const bid = draft.body.businessId;
+  it('does not require a recorded confirmation call when step 0 is complete', async () => {
+    const { agent, primaryBusinessId: bid } = await registerAgent(app, 'sr_no_call@test.com');
     await agent
       .put(`/api/v1/business-contexts/${bid}`)
       .send({
@@ -118,15 +113,14 @@ describe('setup-runs API', () => {
       })
       .expect(200);
 
-    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid }).expect(409);
+    const res = await agent.post('/api/v1/setup-runs').send({ businessId: bid });
 
-    expect(res.body.error).toBe('precondition_failed');
+    expect(res.status).not.toBe(409);
+    expect(res.body.error).not.toBe('precondition_failed');
   });
 
   it('409 when step 0 is incomplete', async () => {
-    const { agent } = await registerAgent(app, 'sr_step0@test.com');
-    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
-    const bid = draft.body.businessId;
+    const { agent, primaryBusinessId: bid } = await registerAgent(app, 'sr_step0@test.com');
     await agent
       .put(`/api/v1/business-contexts/${bid}`)
       .send({
@@ -148,9 +142,7 @@ describe('setup-runs API', () => {
   });
 
   it('400 when confirmed business context is not ads-ready', async () => {
-    const { agent } = await registerAgent(app, 'sr_not_ready@test.com');
-    const draft = await agent.post('/api/v1/onboarding/business').expect(201);
-    const bid = draft.body.businessId;
+    const { agent, primaryBusinessId: bid } = await registerAgent(app, 'sr_not_ready@test.com');
     await agent
       .put(`/api/v1/business-contexts/${bid}`)
       .send({
@@ -649,9 +641,7 @@ describe('setup-runs API', () => {
         workflow: { start: workflowStart },
       });
 
-      const { agent } = await registerAgent(app, 'sr-sl-force-block@test.com');
-      const draft = await agent.post('/api/v1/onboarding/business').expect(201);
-      const bid = draft.body.businessId;
+      const { agent, primaryBusinessId: bid } = await registerAgent(app, 'sr-sl-force-block@test.com');
       await agent
         .put(`/api/v1/business-contexts/${bid}`)
         .send({
@@ -684,9 +674,7 @@ describe('setup-runs API', () => {
 
     it('freezes nameKey at setup start when missing from confirmed context', async () => {
       const BusinessContext = mongoose.model('BusinessContext');
-      const { agent } = await registerAgent(app, 'sr-namekey@test.com');
-      const draft = await agent.post('/api/v1/onboarding/business').expect(201);
-      const bid = draft.body.businessId;
+      const { agent, primaryBusinessId: bid } = await registerAgent(app, 'sr-namekey@test.com');
       await agent
         .put(`/api/v1/business-contexts/${bid}`)
         .send({

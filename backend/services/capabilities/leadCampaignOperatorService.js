@@ -9,6 +9,10 @@ const {
   updateSlot,
   LeadCampaignSetError,
 } = require('./leadCampaignSetService');
+const {
+  appendBusinessFactVersion,
+  snapshotFromBusinessContextDoc,
+} = require('./businessFactVersionService');
 
 const BusinessContext = mongoose.model('BusinessContext');
 const LeadCampaignSet = mongoose.model('LeadCampaignSet');
@@ -145,9 +149,31 @@ async function applyFactCheckCorrections(doc, corrections, sourceLabel) {
   }
 
   doc.intakeFieldSources = sources;
-  doc.factCheckCompletedAt = new Date();
-  await doc.save();
-  return doc;
+  const factCheckCompletedAt = new Date();
+  const sourceKey =
+    sourceLabel === 'operator' ? 'operator_fact_check' : 'customer_fact_confirm';
+
+  const liveSet = {
+    businessName: doc.businessName,
+    websiteUrl: doc.websiteUrl,
+    services: doc.services,
+    serviceAreas: doc.serviceAreas,
+    whoBuysToday: doc.whoBuysToday,
+    orderValueHint: doc.orderValueHint,
+    howBuyersContact: doc.howBuyersContact,
+    contactMethods: doc.contactMethods,
+    intakeFieldSources: sources,
+    businessCountry: doc.businessCountry,
+  };
+
+  const updated = await appendBusinessFactVersion(
+    { businessId: doc.businessId },
+    sourceKey,
+    liveSet,
+    snapshotFromBusinessContextDoc(doc),
+    { factCheckCompletedAt }
+  );
+  return updated ?? doc;
 }
 
 async function applyOperatorFactCheck(businessId, corrections) {
@@ -224,11 +250,33 @@ async function recordSetupCallConfirmation(businessId, body) {
   }
 
   doc.intakeFieldSources = sources;
-  doc.setupCallConfirmedAt = new Date();
-  await doc.save();
+  const setupCallConfirmedAt = new Date();
+
+  const liveSet = {
+    businessName: doc.businessName,
+    websiteUrl: doc.websiteUrl,
+    services: doc.services,
+    serviceAreas: doc.serviceAreas,
+    whoBuysToday: doc.whoBuysToday,
+    orderValueHint: doc.orderValueHint,
+    howBuyersContact: doc.howBuyersContact,
+    contactMethods: doc.contactMethods,
+    intakeFieldSources: sources,
+    businessCountry: doc.businessCountry,
+  };
+
+  const updated = await appendBusinessFactVersion(
+    { businessId: doc.businessId },
+    'setup_call_confirmed',
+    liveSet,
+    snapshotFromBusinessContextDoc(doc),
+    { setupCallConfirmedAt }
+  );
+
+  const saved = updated ?? doc;
   return {
-    businessId: doc.businessId.toString(),
-    setupCallConfirmedAt: doc.setupCallConfirmedAt,
+    businessId: saved.businessId.toString(),
+    setupCallConfirmedAt: saved.setupCallConfirmedAt ?? setupCallConfirmedAt,
   };
 }
 

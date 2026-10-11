@@ -90,6 +90,19 @@ export interface IntakeSubmissionDto {
   fields: Record<string, unknown> | null
 }
 
+export type FactVersionSource =
+  | 'customer_intake'
+  | 'customer_fact_confirm'
+  | 'operator_fact_check'
+  | 'setup_call_confirmed'
+
+export interface FactVersionDto {
+  version: number
+  savedAt: string | null
+  source: FactVersionSource
+  fields: Record<string, unknown>
+}
+
 export interface BusinessContextDto {
   businessId: string
   userId: string
@@ -108,6 +121,8 @@ export interface BusinessContextDto {
   businessCountry?: string | null
   intakeFieldSources?: Record<string, string> | null
   intakeSubmissions?: IntakeSubmissionDto[]
+  latestFactVersion?: number
+  factVersions?: FactVersionDto[]
   setupCallConfirmedAt?: string | null
   factCheckCompletedAt?: string | null
   thankYouUrls: string[]

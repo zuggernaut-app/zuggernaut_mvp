@@ -33,6 +33,7 @@ const {
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
 const BusinessContext = mongoose.model('BusinessContext');
 const { trackingTestPassedForRun } = require('./businessSetupTrackingTestService');
+const { ensureSlotBuiltFromLatestFacts } = require('./leadCampaignFactRebuildService');
 const logger = createLogger({ name: 'leadCampaignManagementService' });
 
 /**
@@ -226,6 +227,16 @@ async function enableCampaignSlotForBusiness(userId, businessIdRaw, slot) {
 
   const businessId = await assertCampaignAccess(userId, businessIdRaw);
 
+  const isAdmin = await isPlatformAdminUser(userId);
+  if (!isAdmin) {
+    throw new AdsCampaignManagementError(
+      'Only operators can start campaigns.',
+      'ADS_CAMPAIGN_FORBIDDEN'
+    );
+  }
+
+  await ensureSlotBuiltFromLatestFacts(businessId, slot);
+
   const bc = await BusinessContext.findOne({ businessId }).lean();
   if (!bc?.factCheckCompletedAt) {
     throw new AdsCampaignManagementError(
@@ -234,9 +245,13 @@ async function enableCampaignSlotForBusiness(userId, businessIdRaw, slot) {
     );
   }
   await requireSetupReadyConnection(businessId, 'google_ads', AdsCampaignManagementError);
-  await requireSetupReadyConnection(businessId, 'gtm', AdsCampaignManagementError);
 
   const set = await getLeadCampaignSet(businessId);
+  const slotDocForGtm = set?.[slot];
+  const slotAction = slotDocForGtm?.action ?? 'forms';
+  if (slotAction !== 'calls') {
+    await requireSetupReadyConnection(businessId, 'gtm', AdsCampaignManagementError);
+  }
   if (!trackingTestPassedForRun(set?.trackingTestResult, bc.goals)) {
     throw new AdsCampaignManagementError(
       'Complete the live tracking test in Business setup before starting campaigns.',
@@ -277,11 +292,6 @@ async function enableCampaignSlotForBusiness(userId, businessIdRaw, slot) {
       'Budget adjustment is required before starting.',
       'budget_adjustment_needed'
     );
-  }
-
-  const isAdmin = await isPlatformAdminUser(userId);
-  if (!isAdmin) {
-    await assertActivePlanForBusinessOwner(businessId);
   }
 
   if (slotDoc.pauseReason === 'grace_expired') {

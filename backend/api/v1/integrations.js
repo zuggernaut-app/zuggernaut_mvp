@@ -627,14 +627,6 @@ router.post('/google_ads/lead-campaigns/:slot/enable', requireAuth, async (req, 
     if (!bidRaw) {
       return res.status(400).json({ error: 'validation_error', message: 'businessId is required' });
     }
-    try {
-      await assertActivePlanForBusinessOwner(bidRaw);
-    } catch (err) {
-      if (err instanceof SubscriptionGateError) {
-        return res.status(403).json({ error: err.code, message: err.message });
-      }
-      throw err;
-    }
     const result = await enableCampaignSlotForBusiness(req.user.id, bidRaw, slot);
     return res.status(200).json(result);
   } catch (err) {

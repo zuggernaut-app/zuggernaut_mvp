@@ -29,6 +29,10 @@ const slotSchema = new mongoose.Schema(
     pendingProviderChange: { type: mongoose.Schema.Types.Mixed, default: undefined },
     providerResourceNames: { type: mongoose.Schema.Types.Mixed, default: undefined },
     reservedAt: { type: Date },
+    /** BusinessContext.latestFactVersion used when this slot was last built in Google Ads. */
+    builtFactVersion: { type: Number },
+    factRebuildClaimState: { type: String, trim: true },
+    factRebuildClaimLeaseExpiresAt: { type: Date },
   },
   { _id: false }
 );

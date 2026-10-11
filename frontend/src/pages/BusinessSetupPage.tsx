@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useState, type FormEvent, type ReactElement } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { getBusinessContext, updateBusinessContext } from '../api/businessContexts'
@@ -17,10 +17,8 @@ import {
   fetchProvisioningOverview,
 } from '../api/integrations'
 import {
-  enableLeadCampaignSlot,
   getLeadCampaignDashboard,
   type LeadCampaignDashboardResponse,
-  type LeadCampaignSlotName,
 } from '../api/leadCampaigns'
 import { GoogleAdsCustomerSelector } from '../components/integrations/GoogleAdsCustomerSelector'
 import { GtmResourceSelector } from '../components/integrations/GtmResourceSelector'
@@ -34,8 +32,6 @@ import {
   useIntegrationConnections,
 } from '../hooks/useIntegrationConnections'
 import {
-  allTrackingGoalsPass,
-  bothDraftsApproved,
   isStep2Complete,
   isStep3ObjectiveComplete,
   readPrimaryGoal,
@@ -106,7 +102,6 @@ export function BusinessSetupPage(): ReactElement {
   const [trackingStartedAt, setTrackingStartedAt] = useState<string | null>(null)
   const [trackingGoals, setTrackingGoals] = useState<Record<string, string>>({})
   const [trackingBusy, setTrackingBusy] = useState(false)
-  const [runBusy, setRunBusy] = useState<LeadCampaignSlotName | null>(null)
 
   const [factForm, setFactForm] = useState({
     services: '',
@@ -214,27 +209,6 @@ export function BusinessSetupPage(): ReactElement {
   )
   const step2Done = isStep2Complete(context)
   const step3Done = isStep3ObjectiveComplete(context)
-  const draftsApproved = bothDraftsApproved(
-    dashboard?.slots ?? { recommended: null, alternative: null },
-  )
-  const trackingPass = allTrackingGoalsPass(trackingGoals, primaryGoal)
-
-  const canRun =
-    step1Pending.length === 0 &&
-    step2Done &&
-    step3Done &&
-    draftsApproved &&
-    trackingPass &&
-    snippetStatus === 'on_site'
-
-  const runDisabledReason = useMemo(() => {
-    if (!draftsApproved) return 'Campaigns pending review'
-    if (!trackingPass) return 'Complete tracking test'
-    if (snippetStatus !== 'on_site') return 'Install GTM on your site'
-    if (!step2Done || !step3Done) return 'Finish earlier steps'
-    return null
-  }, [draftsApproved, trackingPass, snippetStatus, step2Done, step3Done])
-
   async function onSaveCurrency(): Promise<void> {
     if (!businessId) return
     setCurrencyBusy(true)
@@ -370,20 +344,6 @@ export function BusinessSetupPage(): ReactElement {
       setError(err instanceof ApiError ? err.message : 'Could not check tracking.')
     } finally {
       setTrackingBusy(false)
-    }
-  }
-
-  async function onRunSlot(slot: LeadCampaignSlotName): Promise<void> {
-    if (!businessId || !canRun) return
-    setRunBusy(slot)
-    setError(null)
-    try {
-      await enableLeadCampaignSlot(businessId, slot)
-      await loadDashboard()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start campaign.')
-    } finally {
-      setRunBusy(null)
     }
   }
 
@@ -781,26 +741,10 @@ export function BusinessSetupPage(): ReactElement {
             )}
           </ul>
 
-          <h3 style={{ marginTop: '2rem' }}>Run campaigns</h3>
-          {(['recommended', 'alternative'] as const).map((slot) => (
-            <div key={slot} className="actions" style={{ marginBottom: '0.5rem' }}>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!canRun || runBusy !== null}
-                onClick={() => void onRunSlot(slot)}
-              >
-                {runBusy === slot
-                  ? 'Starting…'
-                  : !draftsApproved
-                    ? 'Campaigns pending review'
-                    : `Run ${slot}`}
-              </button>
-            </div>
-          ))}
-          {runDisabledReason && !canRun ? (
-            <p style={{ fontSize: '0.9rem', color: 'var(--color-muted)' }}>{runDisabledReason}</p>
-          ) : null}
+          <p style={{ marginTop: '2rem', fontSize: '0.95rem', color: 'var(--color-muted)' }}>
+            After tracking passes and an operator approves your campaigns, they will start them for
+            you.
+          </p>
         </section>
       ) : null}
     </PageLayout>

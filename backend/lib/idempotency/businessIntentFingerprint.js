@@ -41,7 +41,18 @@ function extractWebsiteHost(websiteUrl) {
   }
 }
 
+/**
+ * Fingerprint for lead-campaign Google Ads artifacts (includes fact version).
+ *
+ * @param {object} bc
+ */
+function computeLeadCampaignIntentFingerprint(bc) {
+  const factVersion = typeof bc?.latestFactVersion === 'number' ? bc.latestFactVersion : 0;
+  return `${computeBusinessIntentFingerprint(bc)}:fv${factVersion}`;
+}
+
 module.exports = {
   computeBusinessIntentFingerprint,
+  computeLeadCampaignIntentFingerprint,
   extractWebsiteHost,
 };

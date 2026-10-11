@@ -12,7 +12,7 @@ const { encryptToken } = require('../lib/crypto/tokenEncryption');
 const { SETUP_STEP_NAMES } = require('../constants/setupWorkflow');
 const { createLogger } = require('../lib/observability/logger');
 const { businessScopedIdempotencyKey } = require('../constants/idempotency');
-const { computeBusinessIntentFingerprint } = require('../lib/idempotency/businessIntentFingerprint');
+const { computeLeadCampaignIntentFingerprint } = require('../lib/idempotency/businessIntentFingerprint');
 
 describe('adsAutoCampaignService', () => {
   const logger = createLogger({ level: 'silent' });
@@ -158,7 +158,7 @@ describe('adsAutoCampaignService', () => {
       setupRunId: run._id,
       artifactType: 'ads_campaign_budget',
     }).lean();
-    const intentFingerprint = computeBusinessIntentFingerprint(bc);
+    const intentFingerprint = computeLeadCampaignIntentFingerprint(bc);
     expect(budget?.idempotencyKey).toBe(
       businessScopedIdempotencyKey(
         bc.businessId,

@@ -104,6 +104,26 @@ const businessContextSchema = new mongoose.Schema(
         fields: { type: mongoose.Schema.Types.Mixed, required: true },
       },
     ],
+    /** Monotonic counter; each fact save appends to factVersions. */
+    latestFactVersion: { type: Number, default: 0 },
+    /** Append-only fact versions (customer intake, customer confirm, operator fact-check). */
+    factVersions: [
+      {
+        version: { type: Number, required: true },
+        savedAt: { type: Date, required: true },
+        source: {
+          type: String,
+          enum: [
+            'customer_intake',
+            'customer_fact_confirm',
+            'operator_fact_check',
+            'setup_call_confirmed',
+          ],
+          required: true,
+        },
+        fields: { type: mongoose.Schema.Types.Mixed, required: true },
+      },
+    ],
     /** Raw scrape output — never map into confirmed fields without explicit user save */
     rawScrapeOutput: { type: mongoose.Schema.Types.Mixed, select: false },
     confirmedAt: { type: Date },

@@ -3,7 +3,6 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { ApiError } from '../../api/client'
 import {
   confirmLeadCampaignBudget,
-  enableLeadCampaignSlot,
   getLeadCampaignDashboard,
   pauseLeadCampaignSlot,
   type LeadCampaignSlotName,
@@ -168,11 +167,6 @@ export function LeadCampaignDashboard({ businessId }: LeadCampaignDashboardProps
         const blocked = blockedLabel(slot)
         const isRetired = slot.reviewStatus === 'retired'
         const isEnabled = slot.liveStatus === 'ENABLED'
-        const canStart =
-          slot.reviewStatus === 'approved' &&
-          Boolean(slot.budgetConfirmedAt) &&
-          !blocked &&
-          !isRetired
         const budgetMajor = budgetInputs[name]
         const parsedBudgetMicros = Number(budgetMajor) > 0
           ? Math.round(Number(budgetMajor) * 1_000_000)
@@ -254,17 +248,10 @@ export function LeadCampaignDashboard({ businessId }: LeadCampaignDashboardProps
                   Confirm budget
                 </button>
               ) : null}
-              {canStart && !isEnabled ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={busySlot === name}
-                  onClick={() =>
-                    void runSlotAction(name, () => enableLeadCampaignSlot(businessId, name))
-                  }
-                >
-                  Start campaign
-                </button>
+              {!isEnabled && slot.reviewStatus === 'approved' ? (
+                <p style={{ margin: 0, fontSize: '0.9rem', color: 'var(--color-muted)' }}>
+                  An operator will start this campaign after review.
+                </p>
               ) : null}
               {isEnabled ? (
                 <button
