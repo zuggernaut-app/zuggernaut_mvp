@@ -59,6 +59,19 @@ function responsiveSearchAdLogicalKey(setupRunId, slot = 'recommended', regenera
 
 /**
  * @param {string} setupRunId
+ * @param {'recommended' | 'alternative' | undefined | null} [slot]
+ * @param {number | null | undefined} [regenerationNumber]
+ */
+function callAdLogicalKey(setupRunId, slot = 'recommended', regenerationNumber) {
+  const regenSuffix = regenerationNumber != null ? `-regen-${regenerationNumber}` : '';
+  if (!slot || slot === 'recommended') {
+    return `zug-call-ad-${setupRunId}${regenSuffix}`;
+  }
+  return `zug-call-ad-${setupRunId}-${slot}${regenSuffix}`;
+}
+
+/**
+ * @param {string} setupRunId
  * @param {number} keywordIndex
  * @param {'recommended' | 'alternative' | undefined | null} [slot]
  */
@@ -204,6 +217,12 @@ async function createCampaignBudget(ctx) {
   return { resourceName, source: 'google_ads_api' };
 }
 
+const CALL_AD_MIN_HEADLINES = 2;
+const CALL_AD_MAX_HEADLINES = 2;
+const CALL_AD_MIN_DESCRIPTIONS = 2;
+const CALL_AD_MAX_DESCRIPTIONS = 2;
+const CALL_AD_BUSINESS_NAME_MAX_CHARS = 25;
+
 const RSA_MIN_HEADLINES = 3;
 const RSA_MAX_HEADLINES = 15;
 const RSA_MIN_DESCRIPTIONS = 2;
@@ -328,6 +347,105 @@ function buildResponsiveSearchAdCreatePayload(input) {
         descriptions: descriptions.map((text) => ({ text })),
       },
       finalUrls: [finalUrl],
+    },
+  };
+}
+
+/**
+ * Builds a Call Ad create payload for AdGroupAdService (no final URL).
+ *
+ * @param {{
+ *   adGroupResourceName: string,
+ *   phoneNumber: string,
+ *   countryCode: string,
+ *   businessName?: string,
+ *   headlines?: string[],
+ *   descriptions?: string[],
+ *   fallbacks?: { businessName?: string },
+ *   status?: string,
+ *   strict?: boolean,
+ * }} input
+ */
+function buildCallAdCreatePayload(input) {
+  const phoneNumber = String(input.phoneNumber ?? '').replace(/\D/g, '');
+  if (!phoneNumber) {
+    throw new GoogleAdsApiError('Call ad requires a phone number.', 'GOOGLE_ADS_CALL_AD_INVALID');
+  }
+
+  const countryCode = String(input.countryCode ?? '').trim().toUpperCase();
+  if (!countryCode || countryCode.length !== 2) {
+    throw new GoogleAdsApiError('Call ad requires a two-letter country code.', 'GOOGLE_ADS_CALL_AD_INVALID');
+  }
+
+  const businessName = truncateRsaText(
+    input.businessName ?? input.fallbacks?.businessName,
+    CALL_AD_BUSINESS_NAME_MAX_CHARS
+  );
+  if (!businessName) {
+    throw new GoogleAdsApiError('Call ad requires a business name.', 'GOOGLE_ADS_CALL_AD_INVALID');
+  }
+
+  let headlines = collectUniqueRsaTexts(
+    input.headlines ?? [],
+    RSA_HEADLINE_MAX_CHARS,
+    CALL_AD_MAX_HEADLINES
+  );
+  let descriptions = collectUniqueRsaTexts(
+    input.descriptions ?? [],
+    RSA_DESCRIPTION_MAX_CHARS,
+    CALL_AD_MAX_DESCRIPTIONS
+  );
+
+  if (!input.strict) {
+    const headlineFallbacks = [
+      businessName,
+      'Call Us Today',
+      'Contact Us Now',
+      'Get Help Today',
+    ];
+    const descriptionFallbacks = [
+      businessName ? `Call ${businessName} today.` : null,
+      'Speak with our team today.',
+      'We are ready to help.',
+    ].filter(Boolean);
+
+    if (headlines.length < CALL_AD_MIN_HEADLINES) {
+      headlines = collectUniqueRsaTexts(
+        [...headlines, ...headlineFallbacks],
+        RSA_HEADLINE_MAX_CHARS,
+        CALL_AD_MAX_HEADLINES
+      );
+    }
+
+    if (descriptions.length < CALL_AD_MIN_DESCRIPTIONS) {
+      descriptions = collectUniqueRsaTexts(
+        [...descriptions, ...descriptionFallbacks],
+        RSA_DESCRIPTION_MAX_CHARS,
+        CALL_AD_MAX_DESCRIPTIONS
+      );
+    }
+  }
+
+  if (headlines.length < CALL_AD_MIN_HEADLINES || descriptions.length < CALL_AD_MIN_DESCRIPTIONS) {
+    throw new GoogleAdsApiError(
+      `Call ad requires at least ${CALL_AD_MIN_HEADLINES} headlines and ${CALL_AD_MIN_DESCRIPTIONS} descriptions.`,
+      'GOOGLE_ADS_CALL_AD_INVALID'
+    );
+  }
+
+  return {
+    adGroup: input.adGroupResourceName,
+    status: input.status ?? 'PAUSED',
+    ad: {
+      callAd: {
+        businessName,
+        countryCode,
+        phoneNumber,
+        headline1: headlines[0],
+        headline2: headlines[1],
+        description1: descriptions[0],
+        description2: descriptions[1],
+      },
     },
   };
 }
@@ -1144,6 +1262,88 @@ async function createResponsiveSearchAd(ctx) {
 }
 
 /**
+ * @param {object} ctx
+ */
+async function createCallAd(ctx) {
+  const {
+    customerId,
+    setupRunId,
+    intent,
+    adGroupResourceName,
+    phoneNumber,
+    countryCode,
+    regenerationNumber,
+    slot = 'recommended',
+  } = ctx;
+  const logicalKey = callAdLogicalKey(setupRunId, slot, regenerationNumber);
+
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    return {
+      resourceName: mockResourceName(customerId, 'adGroupAds', logicalKey),
+      source: 'google_ads_api_mock',
+    };
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError(
+      'Google Ads API is not enabled (set GOOGLE_ADS_API_ENABLED=true after configuring credentials).',
+      'GOOGLE_ADS_API_NOT_ENABLED'
+    );
+  }
+
+  const { accessToken, headerOpts } = await resolveGoogleAdsCustomerAuth(ctx.businessId, customerId);
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/adGroupAds:mutate`);
+  const res = await googleAdsPost(
+    url,
+    {
+      operations: [
+        {
+          create: buildCallAdCreatePayload({
+            adGroupResourceName,
+            phoneNumber,
+            countryCode,
+            businessName: intent?.businessName,
+            headlines: intent?.ad?.headlines,
+            descriptions: intent?.ad?.descriptions,
+            fallbacks: { businessName: intent?.businessName },
+            strict: true,
+          }),
+        },
+      ],
+    },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    const parsed = parseGoogleAdsApiError(res.status, res.data, {
+      action: 'adGroupAds:mutate',
+      customerIds: [customerId],
+    });
+    googleAdsCampaignClientLogger.error(
+      {
+        operation: 'adGroupAds:mutate',
+        customerId,
+        businessId: ctx.businessId != null ? String(ctx.businessId) : undefined,
+        setupRunId,
+        status: res.status,
+        googleAdsRequestId: parsed.requestId,
+        googleAdsErrors: parsed.googleAdsErrors.slice(0, 5),
+        fieldViolations: parsed.fieldViolations.slice(0, 5),
+        errorMessage: parsed.message,
+      },
+      'Google Ads call ad mutate failed'
+    );
+  }
+
+  const resourceName = extractMutateResourceName(res, 'call ad', customerId);
+  return { resourceName, source: 'google_ads_api' };
+}
+
+/**
  * @param {import('axios').AxiosResponse} res
  * @param {string} label
  */
@@ -1937,6 +2137,7 @@ module.exports = {
   buildAdGroupKeywordCreatePayload,
   buildCampaignGeoTargetCreatePayload,
   buildResponsiveSearchAdCreatePayload,
+  buildCallAdCreatePayload,
   buildSearchCampaignCreatePayload,
   buildCustomConversionGoalCreatePayload,
   buildConversionGoalCampaignConfigUpdateOperation,
@@ -1949,6 +2150,7 @@ module.exports = {
   createAdGroupKeyword: (ctx) => withProviderRateLimit('google_ads', () => createAdGroupKeyword(ctx)),
   createCampaignGeoTarget: (ctx) => withProviderRateLimit('google_ads', () => createCampaignGeoTarget(ctx)),
   createResponsiveSearchAd: (ctx) => withProviderRateLimit('google_ads', () => createResponsiveSearchAd(ctx)),
+  createCallAd: (ctx) => withProviderRateLimit('google_ads', () => createCallAd(ctx)),
   createCustomConversionGoal: (ctx) =>
     withProviderRateLimit('google_ads', () => createCustomConversionGoal(ctx)),
   linkCampaignToCustomConversionGoal: (ctx) =>

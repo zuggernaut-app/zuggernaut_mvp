@@ -82,6 +82,7 @@ const ARTIFACT_TYPES = Object.freeze([
   'ads_campaign',
   'ads_ad_group',
   'ads_ad',
+  'ads_call_ad',
   'ads_keyword',
   'ads_conversion_action',
   'ads_conversion_action_created',

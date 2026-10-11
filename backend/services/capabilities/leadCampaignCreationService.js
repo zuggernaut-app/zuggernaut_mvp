@@ -17,6 +17,7 @@ const {
   createAdGroupKeyword,
   createCustomConversionGoal,
   createResponsiveSearchAd,
+  createCallAd,
   linkCampaignToCustomConversionGoal,
   resolveConversionActionResourceName,
   createCallAssetOnly,
@@ -500,29 +501,36 @@ async function createLeadCampaignsForSetupRun(ctx) {
     const callOnlyNoWebsite =
       slotPlan.action === 'calls' && !String(bc.websiteUrl ?? '').trim();
 
-    if (!callOnlyNoWebsite) {
-      for (let index = 0; index < intent.keywords.length; index += 1) {
-        const keyword = intent.keywords[index];
-        await ensureResource(
-          `keyword_${index}`,
-          'ads_keyword',
-          () =>
-            createAdGroupKeyword({
-              ...clientCtx,
-              adGroupResourceName,
-              keywordText: keyword.text,
-              matchType: keyword.matchType,
-              keywordIndex: index,
-            }),
-          () => ({
-            slot,
+    const canonicalPhone =
+      slotPlan.action === 'calls' ? resolveCanonicalPhone(bc) : null;
+    if (callOnlyNoWebsite && !canonicalPhone) {
+      throw new AdsProviderPreconditionError(
+        'A confirmed phone number is required for call campaigns.',
+        'ADS_MISSING_CALL_PHONE'
+      );
+    }
+
+    for (let index = 0; index < intent.keywords.length; index += 1) {
+      const keyword = intent.keywords[index];
+      await ensureResource(
+        `keyword_${index}`,
+        'ads_keyword',
+        () =>
+          createAdGroupKeyword({
+            ...clientCtx,
             adGroupResourceName,
             keywordText: keyword.text,
             matchType: keyword.matchType,
-            source,
-          })
-        );
-      }
+            keywordIndex: index,
+          }),
+        () => ({
+          slot,
+          adGroupResourceName,
+          keywordText: keyword.text,
+          matchType: keyword.matchType,
+          source,
+        })
+      );
     }
 
     for (let index = 0; index < intent.geoTargets.length; index += 1) {
@@ -542,7 +550,26 @@ async function createLeadCampaignsForSetupRun(ctx) {
     }
 
     let adResourceName = null;
-    if (!callOnlyNoWebsite) {
+    if (callOnlyNoWebsite) {
+      adResourceName = await ensureResource(
+        'call_ad',
+        'ads_call_ad',
+        () =>
+          createCallAd({
+            ...clientCtx,
+            adGroupResourceName,
+            phoneNumber: canonicalPhone.nationalNumber,
+            countryCode: canonicalPhone.countryCode,
+          }),
+        () => ({
+          slot,
+          campaignResourceName,
+          adGroupResourceName,
+          phoneE164: canonicalPhone.e164,
+          source,
+        })
+      );
+    } else {
       adResourceName = await ensureResource(
         'ad',
         'ads_ad',
@@ -595,8 +622,8 @@ async function createLeadCampaignsForSetupRun(ctx) {
     );
 
     if (slotPlan.action === 'calls') {
-      const canonicalPhone = resolveCanonicalPhone(bc);
-      if (!canonicalPhone) {
+      const callPhone = canonicalPhone ?? resolveCanonicalPhone(bc);
+      if (!callPhone) {
         throw new AdsProviderPreconditionError(
           'A confirmed phone number is required for call campaigns.',
           'ADS_MISSING_CALL_PHONE'
@@ -609,8 +636,8 @@ async function createLeadCampaignsForSetupRun(ctx) {
         async () => {
           const created = await createCallAssetOnly({
             ...clientCtx,
-            phoneNumber: canonicalPhone.nationalNumber,
-            countryCode: canonicalPhone.countryCode,
+            phoneNumber: callPhone.nationalNumber,
+            countryCode: callPhone.countryCode,
             conversionActionResourceName: slotConversionResource,
           });
           await linkCallAssetToCampaign({
@@ -627,7 +654,7 @@ async function createLeadCampaignsForSetupRun(ctx) {
           slot,
           campaignResourceName,
           conversionActionResourceName: slotConversionResource,
-          phoneE164: canonicalPhone.e164,
+          phoneE164: callPhone.e164,
           campaignLinked: true,
           source,
         })
