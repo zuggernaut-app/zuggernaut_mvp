@@ -19,6 +19,7 @@ import { WebsiteUrlPage } from '../pages/WebsiteUrlPage'
 import { BusinessReviewPage } from '../pages/BusinessReviewPage'
 import { BusinessContextEditPage } from '../pages/BusinessContextEditPage'
 import { StartSetupPage } from '../pages/StartSetupPage'
+import { BusinessSetupPage } from '../pages/BusinessSetupPage'
 import { SetupProgressPage } from '../pages/SetupProgressPage'
 import { SetupReportPage } from '../pages/SetupReportPage'
 import { DevIntegrationsPage } from '../../../dev-tools/frontend/src/pages/dev/DevIntegrationsPage'
@@ -142,6 +143,14 @@ export function AppRoutes(): ReactElement {
         element={
           <RequireAuth>
             <BusinessContextEditPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/business-setup"
+        element={
+          <RequireAuth>
+            <BusinessSetupPage />
           </RequireAuth>
         }
       />

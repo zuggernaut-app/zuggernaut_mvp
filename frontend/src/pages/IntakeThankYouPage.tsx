@@ -15,14 +15,17 @@ export function IntakeThankYouPage(): ReactElement {
         account is ready.
       </p>
       <div className="actions">
+        <Link className="btn btn-primary" to="/business-setup">
+          Continue to business setup
+        </Link>
         <button
           type="button"
-          className="btn btn-primary"
+          className="btn btn-secondary"
           onClick={() =>
             navigate('/onboarding/accounts', { replace: true, state: { editMode: true } })
           }
         >
-          Edit
+          Edit intake
         </button>
         <Link className="btn btn-secondary" to="/">
           Back to home

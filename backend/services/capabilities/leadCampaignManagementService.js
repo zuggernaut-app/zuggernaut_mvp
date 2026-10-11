@@ -31,6 +31,8 @@ const {
 } = require('./adsCampaignManagementService');
 
 const IntegrationArtifact = mongoose.model('IntegrationArtifact');
+const BusinessContext = mongoose.model('BusinessContext');
+const { trackingTestPassedForRun } = require('./businessSetupTrackingTestService');
 const logger = createLogger({ name: 'leadCampaignManagementService' });
 
 /**
@@ -223,7 +225,25 @@ async function enableCampaignSlotForBusiness(userId, businessIdRaw, slot) {
   }
 
   const businessId = await assertCampaignAccess(userId, businessIdRaw);
+
+  const bc = await BusinessContext.findOne({ businessId }).lean();
+  if (!bc?.factCheckCompletedAt) {
+    throw new AdsCampaignManagementError(
+      'Confirm your business facts in Business setup before starting campaigns.',
+      'business_setup_incomplete'
+    );
+  }
+  await requireSetupReadyConnection(businessId, 'google_ads', AdsCampaignManagementError);
+  await requireSetupReadyConnection(businessId, 'gtm', AdsCampaignManagementError);
+
   const set = await getLeadCampaignSet(businessId);
+  if (!trackingTestPassedForRun(set?.trackingTestResult, bc.goals)) {
+    throw new AdsCampaignManagementError(
+      'Complete the live tracking test in Business setup before starting campaigns.',
+      'tracking_test_not_passed'
+    );
+  }
+
   const slotDoc = set?.[slot];
 
   if (!slotDoc?.reservedAt) {

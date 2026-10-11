@@ -57,6 +57,9 @@ const leadCampaignSetSchema = new mongoose.Schema(
     },
     recommended: { type: slotSchema, default: undefined },
     alternative: { type: slotSchema, default: undefined },
+    trackingTestStartedAt: { type: Date },
+    trackingTestResult: { type: mongoose.Schema.Types.Mixed },
+    gbpSkippedAt: { type: Date },
   },
   { timestamps: true }
 );

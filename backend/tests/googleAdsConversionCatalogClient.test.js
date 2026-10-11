@@ -5,6 +5,7 @@ const mongoose = require('mongoose');
 const {
   fetchGoogleAdsConversionCatalog,
   normalizeConversionAction,
+  normalizeSearchResultRow,
 } = require('../services/integrations/googleAdsConversionCatalogClient');
 const { GoogleAdsApiError } = require('../services/integrations/googleAdsApiConfig');
 const { resetProviderRateLimitsForTests } = require('../lib/providerRateLimit');
@@ -19,6 +20,35 @@ const {
   getFreshGoogleAccessToken,
   getMccGoogleAdsAccessToken,
 } = require('../services/integrations/googleTokenService');
+
+describe('normalizeSearchResultRow', () => {
+  it('maps metrics.conversion_last_conversion_date to mostRecentConversionDate', () => {
+    const row = normalizeSearchResultRow({
+      conversionAction: {
+        id: '1002',
+        resourceName: 'customers/1/conversionActions/1002',
+        name: 'Form',
+        status: 'ENABLED',
+        type: 'WEBPAGE',
+      },
+      metrics: { conversionLastConversionDate: '2026-03-15' },
+    });
+    expect(row.mostRecentConversionDate).toBe('2026-03-15');
+  });
+
+  it('returns null mostRecentConversionDate when metric absent', () => {
+    const row = normalizeSearchResultRow({
+      conversionAction: {
+        id: '1003',
+        resourceName: 'customers/1/conversionActions/1003',
+        name: 'Form',
+        status: 'ENABLED',
+      },
+      metrics: {},
+    });
+    expect(row.mostRecentConversionDate).toBeNull();
+  });
+});
 
 describe('googleAdsConversionCatalogClient', () => {
   const managerId = '2940178860';

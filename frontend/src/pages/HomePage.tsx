@@ -166,9 +166,14 @@ export function HomePage(): ReactElement {
     return (
       <PageLayout title="Thank you" lead="We'll take it from here.">
         <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-          Your details are saved. An expert will complete your setup and call you when your Google
-          Ads account is ready.
+          Your details are saved. Continue business setup to connect accounts and prepare your
+          campaigns.
         </p>
+        <div className="actions" style={{ marginBottom: '1rem' }}>
+          <Link className="btn btn-primary" to="/business-setup">
+            Business setup
+          </Link>
+        </div>
         <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-muted)' }}>
           Signed in as <strong>{user.email}</strong>.
         </p>

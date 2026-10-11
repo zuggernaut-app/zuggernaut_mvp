@@ -109,6 +109,7 @@ export interface BusinessContextDto {
   intakeFieldSources?: Record<string, string> | null
   intakeSubmissions?: IntakeSubmissionDto[]
   setupCallConfirmedAt?: string | null
+  factCheckCompletedAt?: string | null
   thankYouUrls: string[]
   nameKey?: string | null
   uvp: string | null

@@ -86,8 +86,12 @@ async function loadBusinessForOperator(businessId) {
  * @param {import('mongoose').Types.ObjectId | string} businessId
  * @param {object} corrections
  */
-async function applyOperatorFactCheck(businessId, corrections) {
-  const doc = await loadBusinessForOperator(businessId);
+/**
+ * @param {import('mongoose').Document} doc
+ * @param {object} corrections
+ * @param {'operator' | 'customer'} sourceLabel
+ */
+async function applyFactCheckCorrections(doc, corrections, sourceLabel) {
   const sources = { ...(doc.intakeFieldSources ?? {}) };
 
   for (const field of FACT_CHECK_FIELDS) {
@@ -103,7 +107,7 @@ async function applyOperatorFactCheck(businessId, corrections) {
         throw new LeadCampaignOperatorError('Invalid phone format.', 'validation_error');
       }
       doc.contactMethods = setCanonicalContactValue(doc.contactMethods, 'phones', normalized);
-      sources.phone = 'operator';
+      sources.phone = sourceLabel;
       continue;
     }
     if (field === 'email' && value != null && value !== '') {
@@ -115,7 +119,7 @@ async function applyOperatorFactCheck(businessId, corrections) {
         'emails',
         String(value).trim()
       );
-      sources.email = 'operator';
+      sources.email = sourceLabel;
       continue;
     }
     if (field === 'websiteUrl' && value != null && value !== '') {
@@ -124,7 +128,7 @@ async function applyOperatorFactCheck(businessId, corrections) {
         throw new LeadCampaignOperatorError(urlCheck.message, 'validation_error');
       }
       doc.websiteUrl = urlCheck.value;
-      sources.websiteUrl = 'operator';
+      sources.websiteUrl = sourceLabel;
       continue;
     }
 
@@ -137,13 +141,30 @@ async function applyOperatorFactCheck(businessId, corrections) {
       doc[field] = typeof value === 'string' ? value.trim() : value;
     }
 
-    sources[field] = 'operator';
+    sources[field] = sourceLabel;
   }
 
   doc.intakeFieldSources = sources;
   doc.factCheckCompletedAt = new Date();
   await doc.save();
   return doc;
+}
+
+async function applyOperatorFactCheck(businessId, corrections) {
+  const doc = await loadBusinessForOperator(businessId);
+  return applyFactCheckCorrections(doc, corrections, 'operator');
+}
+
+/**
+ * Customer confirms facts for their own business (same fields as operator fact-check).
+ * Caller must enforce membership; platform admins should use applyOperatorFactCheck.
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {object} corrections
+ */
+async function applyCustomerFactCheck(businessId, corrections) {
+  const doc = await loadBusinessForOperator(businessId);
+  return applyFactCheckCorrections(doc, corrections, 'customer');
 }
 
 /**
@@ -338,6 +359,7 @@ module.exports = {
   FACT_CHECK_FIELDS,
   INTAKE_FIELD_SOURCES,
   applyOperatorFactCheck,
+  applyCustomerFactCheck,
   recordSetupCallConfirmation,
   approveCampaignSlot,
   sendBackCampaignSlot,

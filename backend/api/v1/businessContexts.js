@@ -91,6 +91,7 @@ function serializeBusinessContext(doc) {
     susoVersionUpdatedAt: doc.susoVersionUpdatedAt ?? null,
     businessCountry: doc.businessCountry ?? null,
     setupCallConfirmedAt: doc.setupCallConfirmedAt ?? null,
+    factCheckCompletedAt: doc.factCheckCompletedAt ?? null,
     whoBuysToday: doc.whoBuysToday ?? null,
     howBuyersContact: doc.howBuyersContact ?? null,
     intakeFieldSources: doc.intakeFieldSources ?? null,

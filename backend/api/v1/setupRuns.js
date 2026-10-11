@@ -169,13 +169,6 @@ router.post('/', requireAuth, async (req, res) => {
     bc.nameKey = nameKey;
   }
 
-  if (!bc.setupCallConfirmedAt) {
-    return res.status(409).json({
-      error: 'precondition_failed',
-      message: 'Confirmation call must be completed before starting setup.',
-    });
-  }
-
   if (!bc.confirmedAt) {
     return res.status(409).json({
       error: 'precondition_failed',

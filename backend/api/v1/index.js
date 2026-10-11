@@ -32,6 +32,7 @@ router.use('/users', require('./users'));
 router.use('/auth', require('./auth'));
 router.use('/onboarding', require('./onboarding'));
 router.use('/business-contexts', require('./businessContexts'));
+router.use('/business-setup', require('./businessSetup'));
 router.use('/setup-runs', require('./setupRuns'));
 router.use('/integrations', require('./integrations'));
 router.use('/integrations/provisioning', require('./provisioning'));

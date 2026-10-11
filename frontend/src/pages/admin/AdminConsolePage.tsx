@@ -185,9 +185,15 @@ export function AdminConsolePage(): ReactElement {
                   <div className="actions" style={{ marginTop: '0.35rem' }}>
                     <Link
                       className="btn btn-secondary"
+                      to={`/business-setup?businessId=${bc.businessId}`}
+                    >
+                      Business setup (4 steps)
+                    </Link>
+                    <Link
+                      className="btn btn-secondary"
                       to={`/admin/businesses/${bc.businessId}`}
                     >
-                      Business setup
+                      Operator workspace
                     </Link>
                     <button
                       type="button"

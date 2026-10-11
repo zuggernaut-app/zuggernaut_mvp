@@ -23,6 +23,9 @@ const IntegrationConnection = mongoose.model('IntegrationConnection');
 const CONVERSION_ACTION_QUERY =
   "SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric, conversion_action.phone_call_duration_seconds, conversion_action.tag_snippets FROM conversion_action WHERE conversion_action.status != 'REMOVED'";
 
+const CONVERSION_ACTION_QUERY_WITH_RECENT =
+  "SELECT conversion_action.id, conversion_action.name, conversion_action.type, conversion_action.category, conversion_action.status, conversion_action.resource_name, conversion_action.include_in_conversions_metric, conversion_action.phone_call_duration_seconds, conversion_action.tag_snippets, metrics.conversion_last_conversion_date FROM conversion_action WHERE conversion_action.status != 'REMOVED'";
+
 /**
  * @param {object} row — Google Ads conversionAction resource or mock row
  */
@@ -64,6 +67,8 @@ function normalizeConversionAction(row) {
     includeInConversionsMetric: row.includeInConversionsMetric === true,
     phoneCallDurationSeconds:
       row.phoneCallDurationSeconds ?? row.phone_call_duration_seconds ?? null,
+    mostRecentConversionDate:
+      row.mostRecentConversionDate ?? row.most_recent_conversion_date ?? null,
     ...(tagSnippets ? { tagSnippets } : {}),
     ...(measurement
       ? {
@@ -80,6 +85,13 @@ function normalizeConversionAction(row) {
 function normalizeSearchResultRow(resultRow) {
   const ca = resultRow?.conversionAction;
   if (!ca) return null;
+  const metrics = resultRow?.metrics;
+  const lastConversionDate =
+    metrics?.conversionLastConversionDate ??
+    metrics?.conversion_last_conversion_date ??
+    ca.mostRecentConversionDate ??
+    ca.most_recent_conversion_date ??
+    null;
   return normalizeConversionAction({
     id: ca.id,
     resourceName: ca.resourceName,
@@ -89,6 +101,7 @@ function normalizeSearchResultRow(resultRow) {
     type: ca.type,
     includeInConversionsMetric: ca.includeInConversionsMetric,
     tagSnippets: ca.tagSnippets,
+    mostRecentConversionDate: lastConversionDate,
   });
 }
 
@@ -208,6 +221,87 @@ async function searchConversionActions(accessToken, customerId, headerOpts = {})
 }
 
 /**
+ * @param {string} accessToken
+ * @param {string} customerId
+ * @param {{ loginCustomerId?: string | null, includeLoginCustomerId?: boolean }} [headerOpts]
+ */
+async function searchConversionActionsWithRecent(accessToken, customerId, headerOpts = {}) {
+  const url = buildGoogleAdsApiUrl(`customers/${customerId}/googleAds:search`);
+  const res = await googleAdsPost(
+    url,
+    { query: CONVERSION_ACTION_QUERY_WITH_RECENT },
+    {
+      headers: buildGoogleAdsHeaders(accessToken, headerOpts),
+      timeout: getGoogleAdsRequestTimeoutMs(),
+      validateStatus: () => true,
+    }
+  );
+
+  if (res.status < 200 || res.status >= 300) {
+    throw createGoogleAdsApiErrorFromResponse(
+      res.status,
+      res.data,
+      'GOOGLE_ADS_CATALOG_SEARCH_FAILED',
+      {
+        label: 'Google Ads conversion catalog search (recent)',
+        action: 'googleAds:search',
+        customerIds: [customerId],
+      }
+    );
+  }
+
+  const results = Array.isArray(res.data?.results) ? res.data.results : [];
+  return results.map(normalizeSearchResultRow).filter(Boolean);
+}
+
+/**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ */
+async function fetchConversionActionsWithRecentDates(businessId) {
+  if (process.env.GOOGLE_ADS_API_MOCK === 'true') {
+    // Mock: synthetic recent date so poll can pass without live Ads; production uses metrics.conversion_last_conversion_date.
+    const mock = await fetchGoogleAdsConversionCatalogMock(businessId);
+    return mock.conversionActions.map((row) => ({
+      ...row,
+      mostRecentConversionDate: row.mostRecentConversionDate ?? new Date().toISOString(),
+    }));
+  }
+
+  if (process.env.GOOGLE_ADS_API_ENABLED !== 'true') {
+    throw new GoogleAdsApiError(
+      'Google Ads API is not enabled (set GOOGLE_ADS_API_ENABLED=true after configuring credentials).',
+      'GOOGLE_ADS_API_NOT_ENABLED'
+    );
+  }
+
+  const { requireSetupReadyConnection } = require('../capabilities/setupReadyConnectionService');
+  const { AdsCampaignManagementError } = require('../capabilities/adsCampaignManagementService');
+  const { customerId } = await requireSetupReadyConnection(
+    businessId,
+    'google_ads',
+    AdsCampaignManagementError
+  );
+
+  const conn = await IntegrationConnection.findOne({ businessId, provider: 'google_ads' })
+    .select('providerIdentifiers.mccLink')
+    .lean();
+  const loginCustomerId = getGoogleAdsLoginCustomerId();
+  const mccLink = conn?.providerIdentifiers?.mccLink ?? null;
+  const { isMccLinkActiveForSetup } = require('../capabilities/googleAdsMccLinkService');
+  const useMccAuth =
+    loginCustomerId != null && isMccLinkActiveForSetup(mccLink, customerId, loginCustomerId);
+
+  const accessToken = useMccAuth
+    ? await getMccGoogleAdsAccessToken()
+    : await getFreshGoogleAccessToken({ businessId, provider: 'google_ads' });
+  const headerOpts = useMccAuth ? { loginCustomerId } : {};
+
+  return withProviderRateLimit('google_ads', () =>
+    searchConversionActionsWithRecent(accessToken, customerId, headerOpts)
+  );
+}
+
+/**
  * Read-only Google Ads conversion catalog fetch — never mutates Ads.
  *
  * @param {object} ctx
@@ -279,6 +373,8 @@ module.exports = {
   GoogleAdsApiError,
   fetchGoogleAdsConversionCatalog,
   fetchGoogleAdsConversionCatalogMock,
+  fetchConversionActionsWithRecentDates,
   normalizeConversionAction,
+  normalizeSearchResultRow,
   normalizeCustomerId,
 };
