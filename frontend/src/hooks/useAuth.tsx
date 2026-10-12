@@ -34,6 +34,19 @@ export type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
+const PUBLIC_PATHS = new Set([
+  '/',
+  '/register',
+  '/login',
+  '/password-reset',
+  '/password-reset/request',
+])
+
+/** Logged-out visitors may open these routes; a 401 here is not an expired session. */
+export function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.has(pathname)
+}
+
 function reconcileOnboardingDraftsForSession(nextUserId: string): void {
   const prevId = getStoredUserId()
   if (prevId !== null && prevId !== nextUserId) {
@@ -63,7 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
       setSessionExpiredRedirect(false)
     } catch {
       setUser(null)
-      if (hadStoredSession) {
+      if (hadStoredSession && !isPublicPath(window.location.pathname)) {
         setSessionExpiredRedirect(true)
       }
       clearStoredUserId()
@@ -74,14 +87,18 @@ export function AuthProvider({ children }: { children: ReactNode }): ReactElemen
 
   useEffect(() => {
     setOnUnauthorizedHandler(() => {
-      if (window.location.pathname === '/login') return
-      const from = `${window.location.pathname}${window.location.search}`
+      const path = window.location.pathname
       setUser(null)
-      setSessionExpiredRedirect(true)
       clearCsrfToken()
       clearStoredUserId()
       clearOnboardingDrafts()
       notifyOnboardingStorageChanged()
+      if (isPublicPath(path)) {
+        setSessionExpiredRedirect(false)
+        return
+      }
+      const from = `${path}${window.location.search}`
+      setSessionExpiredRedirect(true)
       navigate('/login', { replace: true, state: { from, sessionExpired: true } })
     })
     return () => setOnUnauthorizedHandler(null)

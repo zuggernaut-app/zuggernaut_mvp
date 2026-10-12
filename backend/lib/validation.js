@@ -17,6 +17,26 @@ function isValidEmail(email) {
   return e.length > 0 && e.length <= MAX_EMAIL_LENGTH && EMAIL_REGEX.test(e);
 }
 
+function prependHttps(trimmed) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('//')) return `https:${trimmed}`;
+  return `https://${trimmed}`;
+}
+
+function isWebsiteHost(hostname) {
+  if (!hostname || hostname.startsWith('.') || hostname.endsWith('.')) return false;
+  if (hostname === 'localhost') return true;
+  return hostname.includes('.');
+}
+
+function httpUrlValueFromParsed(candidate, u) {
+  let value = u.href;
+  if (u.pathname === '/' && !u.search && !u.hash && !candidate.endsWith('/')) {
+    value = value.replace(/\/$/, '');
+  }
+  return value;
+}
+
 function validateOptionalHttpUrl(raw) {
   if (typeof raw !== 'string' || !raw.trim()) {
     return { ok: true, value: undefined };
@@ -35,12 +55,19 @@ function validateHttpUrl(raw) {
   if (trimmed.length > MAX_URL_LENGTH) {
     return { ok: false, message: `websiteUrl must be at most ${MAX_URL_LENGTH} characters` };
   }
+  const candidate = prependHttps(trimmed);
+  if (candidate.length > MAX_URL_LENGTH) {
+    return { ok: false, message: `websiteUrl must be at most ${MAX_URL_LENGTH} characters` };
+  }
   try {
-    const u = new URL(trimmed);
+    const u = new URL(candidate);
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
       return { ok: false, message: 'websiteUrl must use http or https' };
     }
-    return { ok: true, value: trimmed };
+    if (!isWebsiteHost(u.hostname)) {
+      return { ok: false, message: 'Invalid websiteUrl' };
+    }
+    return { ok: true, value: httpUrlValueFromParsed(candidate, u) };
   } catch {
     return { ok: false, message: 'Invalid websiteUrl' };
   }

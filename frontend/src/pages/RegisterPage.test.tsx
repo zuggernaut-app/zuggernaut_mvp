@@ -64,6 +64,16 @@ describe('RegisterPage', () => {
     })
   })
 
+  it('stays on register when authMe returns 401 with no stored session', async () => {
+    renderRegister()
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /create your account/i })).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /^log in$/i })).not.toBeInTheDocument()
+  })
+
   it('shows validation error for invalid email', async () => {
     const user = userEvent.setup()
     renderRegister()
@@ -115,6 +125,29 @@ describe('RegisterPage', () => {
       email: 'new@example.com',
       password: 'SecurePass12',
       phone: '555-123-4567',
+    })
+  })
+
+  it('normalizes bare website domain before register', async () => {
+    const user = userEvent.setup()
+    renderRegister()
+
+    await user.type(screen.getByLabelText(/^email$/i), 'bare@example.com')
+    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
+    await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
+    await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
+    await user.type(screen.getByLabelText(/website \(optional\)/i), 'www.medhahari.in')
+    await user.click(screen.getByRole('button', { name: /continue/i }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('accounts-target')).toBeInTheDocument()
+    })
+
+    expect(hoisted.mockAuthRegister).toHaveBeenCalledWith({
+      email: 'bare@example.com',
+      password: 'SecurePass12',
+      phone: '555-123-4567',
+      websiteUrl: 'https://www.medhahari.in',
     })
   })
 

@@ -28,6 +28,26 @@ export type HttpUrlResult =
   | { ok: true; value: string }
   | { ok: false; message: string }
 
+function prependHttps(trimmed: string): string {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed
+  if (trimmed.startsWith('//')) return `https:${trimmed}`
+  return `https://${trimmed}`
+}
+
+function isWebsiteHost(hostname: string): boolean {
+  if (!hostname || hostname.startsWith('.') || hostname.endsWith('.')) return false
+  if (hostname === 'localhost') return true
+  return hostname.includes('.')
+}
+
+function httpUrlValueFromParsed(candidate: string, u: URL): string {
+  let value = u.href
+  if (u.pathname === '/' && !u.search && !u.hash && !candidate.endsWith('/')) {
+    value = value.replace(/\/$/, '')
+  }
+  return value
+}
+
 export function validateHttpUrl(raw: string): HttpUrlResult {
   const trimmed = raw.trim()
   if (!trimmed) {
@@ -39,12 +59,22 @@ export function validateHttpUrl(raw: string): HttpUrlResult {
       message: `websiteUrl must be at most ${MAX_URL_LENGTH} characters`,
     }
   }
+  const candidate = prependHttps(trimmed)
+  if (candidate.length > MAX_URL_LENGTH) {
+    return {
+      ok: false,
+      message: `websiteUrl must be at most ${MAX_URL_LENGTH} characters`,
+    }
+  }
   try {
-    const u = new URL(trimmed)
+    const u = new URL(candidate)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') {
       return { ok: false, message: 'websiteUrl must use http or https' }
     }
-    return { ok: true, value: trimmed }
+    if (!isWebsiteHost(u.hostname)) {
+      return { ok: false, message: 'Invalid websiteUrl' }
+    }
+    return { ok: true, value: httpUrlValueFromParsed(candidate, u) }
   } catch {
     return { ok: false, message: 'Invalid websiteUrl' }
   }

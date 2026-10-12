@@ -84,6 +84,24 @@ describe('validateHttpUrl', () => {
     expect(long.length > MAX_URL_LENGTH).toBe(true)
     expect(validateHttpUrl(long).ok).toBe(false)
   })
+
+  it('accepts bare domain without scheme', () => {
+    expect(validateHttpUrl('www.medhahari.in')).toEqual({
+      ok: true,
+      value: 'https://www.medhahari.in',
+    })
+  })
+
+  it('accepts domain without www', () => {
+    expect(validateHttpUrl('medhahari.in')).toEqual({
+      ok: true,
+      value: 'https://medhahari.in',
+    })
+  })
+
+  it('rejects a bare word with no dot', () => {
+    expect(validateHttpUrl('notadomain').ok).toBe(false)
+  })
 })
 
 describe('validateRegisterForm', () => {

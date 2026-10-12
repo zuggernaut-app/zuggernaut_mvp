@@ -129,8 +129,11 @@ export function RegisterPage(): ReactElement {
           <input
             id="websiteUrl"
             name="websiteUrl"
-            type="url"
-            placeholder="https://example.com"
+            type="text"
+            inputMode="url"
+            autoComplete="url"
+            spellCheck={false}
+            placeholder="www.yoursite.com"
             maxLength={MAX_URL_LENGTH}
             value={websiteUrl}
             onChange={(e) => setWebsiteUrl(e.target.value)}
