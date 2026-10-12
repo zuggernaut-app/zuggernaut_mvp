@@ -165,7 +165,6 @@ export function LeadCampaignDashboard({ businessId }: LeadCampaignDashboardProps
         if (!slot) return null
         const perf = performance[name]
         const blocked = blockedLabel(slot)
-        const isRetired = slot.reviewStatus === 'retired'
         const isEnabled = slot.liveStatus === 'ENABLED'
         const budgetMajor = budgetInputs[name]
         const parsedBudgetMicros = Number(budgetMajor) > 0
