@@ -35,6 +35,9 @@ const { issueCsrfCookie } = require('../../lib/auth/csrf');
 const { requireAuth } = require('./middleware/requireAuth');
 const { createBusinessDraftForUser } = require('../../services/onboarding/businessDraftService');
 const { startSignupScrape } = require('../../services/capabilities/leadCampaignScrapeService');
+const { createLogger } = require('../../lib/observability/logger');
+
+const registrationLogger = createLogger({ name: 'auth.registration' });
 
 const router = express.Router();
 
@@ -128,7 +131,17 @@ async function bootstrapRegistrationBusiness(user) {
   if (websiteUrl) {
     try {
       await startSignupScrape(businessId, user._id, websiteUrl);
-    } catch {
+    } catch (err) {
+      const errMessage = typeof err?.message === 'string' ? err.message.slice(0, 200) : undefined;
+      registrationLogger.warn(
+        {
+          businessId: String(businessId),
+          errName: err?.name,
+          errCode: err?.code,
+          errMessage,
+        },
+        'signup_scrape_start_failed',
+      );
       // Signup scrape is best-effort; registration must still succeed.
     }
   }
