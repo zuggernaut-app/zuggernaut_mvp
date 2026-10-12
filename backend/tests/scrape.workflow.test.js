@@ -6,6 +6,7 @@ const mockScrapeActivities = {
   scrapeHeadlessActivity: jest.fn(),
   normalizeScrapeActivity: jest.fn(),
   persistScrapeResultActivity: jest.fn(),
+  scrapeHintsActivity: jest.fn(),
 };
 
 jest.mock('@temporalio/workflow', () => ({
@@ -58,6 +59,7 @@ describe('scrapeWorkflow', () => {
       },
     });
     mockScrapeActivities.persistScrapeResultActivity.mockResolvedValue({ persisted: true, idempotent: false });
+    mockScrapeActivities.scrapeHintsActivity.mockResolvedValue({ hinted: true, fields: [] });
   });
 
   it('runs static only when headless not recommended', async () => {
@@ -72,6 +74,7 @@ describe('scrapeWorkflow', () => {
     expect(mockScrapeActivities.scrapeStaticActivity).toHaveBeenCalled();
     expect(mockScrapeActivities.scrapeHeadlessActivity).not.toHaveBeenCalled();
     expect(mockScrapeActivities.persistScrapeResultActivity).toHaveBeenCalled();
+    expect(mockScrapeActivities.scrapeHintsActivity).toHaveBeenCalled();
     expect(out.workflow).toBe('scrapeWorkflow');
     expect(out.status).toBe('SUCCEEDED');
   });

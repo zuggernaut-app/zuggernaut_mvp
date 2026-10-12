@@ -156,6 +156,52 @@ function proofLineMatchesScrapeCorpus(proofLine, corpusTexts) {
 /**
  * @param {object} input
  */
+/**
+ * Signup scrape hint pass — reads saved page text only; does not write to DB.
+ *
+ * @param {{ pages: { url: string, text?: string, title?: string }[] }} input
+ */
+async function deriveScrapeHints(input) {
+  const pages = Array.isArray(input?.pages) ? input.pages : [];
+  const pagesForPrompt = pages
+    .filter((p) => p && typeof p.url === 'string' && p.url.trim())
+    .map((p) => ({
+      url: p.url.trim(),
+      title: typeof p.title === 'string' ? p.title.trim() : '',
+      text:
+        typeof p.text === 'string' && p.text.length > MODEL_PAGE_TEXT_CHARS
+          ? p.text.slice(0, MODEL_PAGE_TEXT_CHARS)
+          : typeof p.text === 'string'
+            ? p.text
+            : '',
+    }));
+
+  if (pagesForPrompt.length === 0) {
+    return {};
+  }
+
+  if (!isLlmEnabled()) {
+    if (process.env.NODE_ENV === 'test') {
+      return {};
+    }
+    return {};
+  }
+
+  try {
+    const result = await completeJson({
+      system:
+        'Return strict JSON with optional keys only: businessName, services, whoBuysToday, serviceAreas, contactMethods. Use plain language. Omit any key you cannot support from the page text — do not guess or invent. services and serviceAreas may be strings or string arrays. contactMethods may include phones and emails arrays when clearly present in the text. Never invent phone numbers or emails.',
+      user: JSON.stringify({ scrapePages: pagesForPrompt }),
+    });
+    return result && typeof result === 'object' ? result : {};
+  } catch (err) {
+    if (err instanceof LlmClientError) {
+      return {};
+    }
+    throw err;
+  }
+}
+
 async function generateFiveAnswersFromScrape(input) {
   if (!isLlmEnabled()) {
     if (process.env.NODE_ENV === 'test') {
@@ -244,6 +290,7 @@ module.exports = {
   extractScrapePages,
   selectLandingPage,
   proofLineMatchesScrapeCorpus,
+  deriveScrapeHints,
   generateFiveAnswersFromScrape,
   generateCampaignSlotContent,
 };

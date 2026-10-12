@@ -2,7 +2,7 @@
 
 const mongoose = require('mongoose');
 const { createBareUser } = require('./helpers');
-const { persistScrapeResultActivity } = require('../activities/scrapeActivities');
+const { persistScrapeResultActivity, scrapeHintsActivity } = require('../activities/scrapeActivities');
 
 describe('persistScrapeResultActivity', () => {
   it('appends raw scrape run idempotently', async () => {
@@ -43,8 +43,18 @@ describe('persistScrapeResultActivity', () => {
       .lean();
     expect(doc.rawScrapeOutput.runs.length).toBe(1);
 
+    const afterPersist = await ScrapeRun.findById(scrapeRun._id).lean();
+    expect(afterPersist.status).toBe('RUNNING');
+    expect(afterPersist.persistedAt).toBeTruthy();
+
+    await scrapeHintsActivity({
+      scrapeRunId: scrapeRun._id.toString(),
+      businessId: bid,
+      userId: user._id.toString(),
+      terminalStatus: 'SUCCEEDED',
+    });
+
     const refreshed = await ScrapeRun.findById(scrapeRun._id).lean();
     expect(refreshed.status).toBe('SUCCEEDED');
-    expect(refreshed.persistedAt).toBeTruthy();
   });
 });

@@ -6,6 +6,7 @@ const {
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  scrapeHintsActivity,
   fillFiveAnswersFromScrapeActivity,
 } = require('./scrapeActivities');
 
@@ -60,6 +61,7 @@ module.exports = {
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  scrapeHintsActivity,
   fillFiveAnswersFromScrapeActivity,
   gracePauseExpiredSubscriptionsActivity,
   pollAdsDisapprovalsActivity,

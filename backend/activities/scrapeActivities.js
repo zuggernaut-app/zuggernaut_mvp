@@ -8,6 +8,9 @@ const { runStaticScrape } = require('../services/scraper/staticScraper');
 const { runHeadlessScrape } = require('../services/scraper/headlessScraper');
 const { normalizeScrapeResult } = require('../services/scraper/normalize');
 const { assertUrlAllowed, SsrfError } = require('../lib/ssrf');
+const { SCRAPE_TERMINAL_STATUSES } = require('../constants/onboarding');
+
+const TERMINAL_SCRAPE_STATUS_SET = new Set(SCRAPE_TERMINAL_STATUSES);
 
 const logger = createLogger({ name: 'scrapeActivities' });
 
@@ -141,8 +144,7 @@ async function persistScrapeResultActivity(input) {
   const businessId = new mongoose.Types.ObjectId(businessIdRaw);
   const userId = new mongoose.Types.ObjectId(userIdRaw);
 
-  const status = typeof input?.status === 'string' ? input.status : 'FAILED';
-  const suggested = input?.suggested && typeof input.suggested === 'object' ? input.suggested : {};
+  const terminalStatus = typeof input?.status === 'string' ? input.status : 'FAILED';
   const rawPayload =
     input?.rawPayload && typeof input.rawPayload === 'object' ? input.rawPayload : {};
 
@@ -170,13 +172,12 @@ async function persistScrapeResultActivity(input) {
       { _id: scrapeRunId },
       {
         $set: {
-          status,
-          resultSuggested: suggested,
           persistedAt: run.persistedAt || new Date(),
           lastErrorSummary: null,
           meta: {
             ...(run.meta && typeof run.meta === 'object' ? Object(run.meta) : {}),
             idempotentHit: true,
+            terminalStatus,
           },
         },
       }
@@ -198,25 +199,31 @@ async function persistScrapeResultActivity(input) {
       { _id: scrapeRunId },
       {
         $set: {
-          status,
-          resultSuggested: suggested,
           persistedAt: new Date(),
           lastErrorSummary: null,
           meta: {
             rawAppended: true,
-            terminalStatus: status,
+            terminalStatus,
           },
         },
       }
     );
 
-    logger.info({ scrapeRunId: scrapeRunIdRaw, status }, 'persist_scrape_complete');
+    logger.info({ scrapeRunId: scrapeRunIdRaw, terminalStatus, businessId: businessIdRaw }, 'persist_scrape_complete');
     return { persisted: true, idempotent: false };
   } catch (err) {
     const summary = typeof err?.message === 'string' ? err.message : 'persist_failed';
     await ScrapeRun.updateOne(
       { _id: scrapeRunId },
-      { $set: { status: 'FAILED', lastErrorSummary: summary } }
+      {
+        $set: {
+          lastErrorSummary: summary,
+          meta: {
+            ...(run.meta && typeof run.meta === 'object' ? Object(run.meta) : {}),
+            terminalStatus: 'FAILED',
+          },
+        },
+      }
     ).catch((e) => logger.error({ err: e }, 'ScrapeRun failure status write failed'));
     throw ApplicationFailure.nonRetryable(summary, 'ScrapePersistError');
   }
@@ -235,7 +242,86 @@ const AI_FILL_FIELDS = [
  *
  * @param {{ businessId: string, suggested: object }} input
  */
-const { generateFiveAnswersFromScrape } = require('../services/capabilities/leadCampaignContentService');
+const {
+  deriveScrapeHints,
+  generateFiveAnswersFromScrape,
+} = require('../services/capabilities/leadCampaignContentService');
+
+/**
+ * LLM summary pass for signup grey hints on ScrapeRun.resultSuggested.
+ *
+ * @param {{
+ *   scrapeRunId: string,
+ *   businessId: string,
+ *   userId: string,
+ *   terminalStatus: string,
+ * }} input
+ */
+async function scrapeHintsActivity(input) {
+  const scrapeRunIdRaw = typeof input?.scrapeRunId === 'string' ? input.scrapeRunId.trim() : '';
+  const businessIdRaw = typeof input?.businessId === 'string' ? input.businessId.trim() : '';
+  const userIdRaw = typeof input?.userId === 'string' ? input.userId.trim() : '';
+  const terminalStatus =
+    typeof input?.terminalStatus === 'string' ? input.terminalStatus.trim() : 'FAILED';
+
+  if (
+    !scrapeRunIdRaw ||
+    !mongoose.Types.ObjectId.isValid(scrapeRunIdRaw) ||
+    !businessIdRaw ||
+    !mongoose.Types.ObjectId.isValid(businessIdRaw) ||
+    !userIdRaw ||
+    !mongoose.Types.ObjectId.isValid(userIdRaw)
+  ) {
+    throw ApplicationFailure.nonRetryable('Invalid scrape hints ids', 'ScrapeHintsValidation');
+  }
+
+  const scrapeRunId = new mongoose.Types.ObjectId(scrapeRunIdRaw);
+  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  const userId = new mongoose.Types.ObjectId(userIdRaw);
+
+  const run = await ScrapeRun.findById(scrapeRunId).lean();
+  if (!run) {
+    throw ApplicationFailure.nonRetryable('ScrapeRun not found', 'ScrapeRunNotFoundInWorkerDb');
+  }
+  if (String(run.businessId) !== String(businessId) || String(run.userId) !== String(userId)) {
+    throw ApplicationFailure.nonRetryable('ScrapeRun tenant mismatch', 'ScrapeHintsTenant');
+  }
+
+  if (TERMINAL_SCRAPE_STATUS_SET.has(run.status)) {
+    logger.info({ scrapeRunId: scrapeRunIdRaw, status: run.status }, 'scrape_hints_idempotent_skip');
+    return { hinted: true, idempotent: true, fields: Object.keys(run.resultSuggested || {}) };
+  }
+
+  const doc = await BusinessContext.findOne({ businessId, userId }).select('+rawScrapeOutput');
+  if (!doc) {
+    throw ApplicationFailure.nonRetryable('BusinessContext not found', 'BusinessContextNotFound');
+  }
+
+  const runs =
+    doc.rawScrapeOutput && Array.isArray(doc.rawScrapeOutput.runs) ? doc.rawScrapeOutput.runs : [];
+  const payload = runs.find((r) => r && String(r.scrapeRunId) === scrapeRunIdRaw);
+  const pages = Array.isArray(payload?.pages) ? payload.pages : [];
+
+  const hints = await deriveScrapeHints({ pages });
+
+  await ScrapeRun.updateOne(
+    { _id: scrapeRunId },
+    {
+      $set: {
+        resultSuggested: hints,
+        status: terminalStatus,
+        lastErrorSummary: null,
+      },
+    }
+  );
+
+  logger.info(
+    { scrapeRunId: scrapeRunIdRaw, businessId: businessIdRaw, stepName: 'scrapeHints', provider: 'llm' },
+    'scrape_hints_complete'
+  );
+
+  return { hinted: true, fields: Object.keys(hints) };
+}
 
 async function fillFiveAnswersFromScrapeActivity(input) {
   const businessIdRaw = typeof input?.businessId === 'string' ? input.businessId.trim() : '';
@@ -316,5 +402,6 @@ module.exports = {
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  scrapeHintsActivity,
   fillFiveAnswersFromScrapeActivity,
 };

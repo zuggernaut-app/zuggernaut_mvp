@@ -2,12 +2,19 @@
 
 const { proxyActivities } = require('@temporalio/workflow');
 
+const { scrapeStaticActivity } = proxyActivities({
+  startToCloseTimeout: '4 minutes',
+  retry: {
+    maximumAttempts: 1,
+  },
+});
+
 const {
   checkRobotsActivity,
-  scrapeStaticActivity,
   scrapeHeadlessActivity,
   normalizeScrapeActivity,
   persistScrapeResultActivity,
+  scrapeHintsActivity,
   fillFiveAnswersFromScrapeActivity,
 } = proxyActivities({
   startToCloseTimeout: '4 minutes',
@@ -68,6 +75,13 @@ async function scrapeWorkflow(input) {
     status,
     suggested,
     rawPayload,
+  });
+
+  await scrapeHintsActivity({
+    scrapeRunId,
+    businessId,
+    userId,
+    terminalStatus: status,
   });
 
   if (safe.purpose === 'onboarding' && status === 'SUCCEEDED') {

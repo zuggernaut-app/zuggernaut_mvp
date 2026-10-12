@@ -11,17 +11,19 @@ const { SCRAPE_MAX_PAGES } = require('../../constants/leadCampaign');
 
 /** Homepage counts as one page; additional fetches are capped at SCRAPE_MAX_PAGES - 1. */
 const MAX_ADDITIONAL_PAGES = Math.max(0, SCRAPE_MAX_PAGES - 1);
-const LIKELY_CONTACT_PATHS = [
-  '/contact',
-  '/contact-us',
-  '/about',
-  '/about-us',
-  '/locations',
-  '/location',
-  '/service-area',
-  '/service-areas',
-];
-const PAGE_HINT_PATTERNS = [/contact/i, /about/i, /location/i, /service-area/i];
+
+/** Fetch-priority tiers (higher = fetched earlier). */
+const FETCH_TIER = {
+  CONTACT: 6,
+  LOCATION: 5,
+  SERVICES_PRODUCTS: 4,
+  ABOUT: 3,
+  MAIN_MENU: 2,
+  OTHER: 1,
+};
+
+const MENU_PARENT_SELECTOR =
+  'nav, [role="navigation"], header nav, .main-menu, .menu, #menu, [class*="main-nav"], [class*="primary-nav"]';
 const HIGH_SIGNAL_PHONE_SELECTORS = [
   'header',
   'nav',
@@ -85,28 +87,52 @@ function isSameOrigin(candidate, baseUrl) {
   }
 }
 
-function getPageBoost(pageUrl, baseUrl) {
-  if (pageUrl === baseUrl) return 0;
+/**
+ * @param {string} pageUrl
+ * @param {string} baseUrl
+ * @param {{ inMainMenu?: boolean, href?: string, linkText?: string }} [ctx]
+ */
+function getPageFetchPriority(pageUrl, baseUrl, ctx = {}) {
+  if (pageUrl === baseUrl) return FETCH_TIER.CONTACT + 1;
   const pathName = new URL(pageUrl).pathname.toLowerCase();
-  if (pathName.includes('contact')) return 3;
-  if (pathName.includes('location') || pathName.includes('service-area')) return 2;
-  if (pathName.includes('about')) return 1;
+  const haystack = `${pathName} ${ctx.href || ''} ${ctx.linkText || ''}`.toLowerCase();
+
+  if (pathName.includes('contact') || /\bcontact\b/.test(haystack)) return FETCH_TIER.CONTACT;
+  if (
+    pathName.includes('location') ||
+    pathName.includes('service-area') ||
+    /\blocation\b|\bservice area/.test(haystack)
+  ) {
+    return FETCH_TIER.LOCATION;
+  }
+  if (
+    /service|product|pricing|shop|store/.test(pathName) ||
+    /\bservices\b|\bproducts\b/.test(haystack)
+  ) {
+    return FETCH_TIER.SERVICES_PRODUCTS;
+  }
+  if (pathName.includes('about') || /\babout\b/.test(haystack)) return FETCH_TIER.ABOUT;
+  if (ctx.inMainMenu) return FETCH_TIER.MAIN_MENU;
+  return FETCH_TIER.OTHER;
+}
+
+/** Legacy phone-signal weighting from path (0–3). */
+function getPageBoost(pageUrl, baseUrl) {
+  const tier = getPageFetchPriority(pageUrl, baseUrl);
+  if (tier >= FETCH_TIER.CONTACT) return 3;
+  if (tier >= FETCH_TIER.LOCATION) return 2;
+  if (tier >= FETCH_TIER.ABOUT) return 1;
   return 0;
 }
 
+function linkInMainMenu($, el) {
+  const parents = $(el).parents(MENU_PARENT_SELECTOR);
+  return parents.length > 0;
+}
+
 function getLikelyPageUrls($, baseUrl) {
-  const discovered = new Set();
   const normalizedBaseUrl = normalizePageUrl(baseUrl, baseUrl);
-
-  const addCandidate = (value) => {
-    const normalized = normalizePageUrl(value, baseUrl);
-    if (!normalized || normalized === normalizedBaseUrl || !isSameOrigin(normalized, baseUrl)) {
-      return;
-    }
-    discovered.add(normalized);
-  };
-
-  LIKELY_CONTACT_PATHS.forEach(addCandidate);
+  const priorityByUrl = new Map();
 
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href');
@@ -115,15 +141,18 @@ function getLikelyPageUrls($, baseUrl) {
     if (!normalized || normalized === normalizedBaseUrl || !isSameOrigin(normalized, baseUrl)) {
       return;
     }
-    discovered.add(normalized);
-    const haystack = `${href || ''} ${linkText}`.toLowerCase();
-    if (PAGE_HINT_PATTERNS.some((pattern) => pattern.test(haystack))) {
-      discovered.add(normalized);
-    }
+    const tier = getPageFetchPriority(normalized, baseUrl, {
+      inMainMenu: linkInMainMenu($, el),
+      href: href || '',
+      linkText,
+    });
+    const prev = priorityByUrl.get(normalized) || 0;
+    if (tier > prev) priorityByUrl.set(normalized, tier);
   });
 
-  return [...discovered]
-    .sort((a, b) => getPageBoost(b, baseUrl) - getPageBoost(a, baseUrl))
+  return [...priorityByUrl.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([url]) => url)
     .slice(0, MAX_ADDITIONAL_PAGES);
 }
 
@@ -363,6 +392,8 @@ module.exports = {
   normalizePageUrl,
   isSameOrigin,
   getLikelyPageUrls,
+  getPageFetchPriority,
+  FETCH_TIER,
   appShellLikely,
   MAX_ADDITIONAL_PAGES,
 };
