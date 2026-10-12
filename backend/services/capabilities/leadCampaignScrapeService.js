@@ -64,17 +64,14 @@ async function claimSignupScrape(ctx) {
       {
         $setOnInsert: {
           businessId,
-          userId,
-          websiteUrl,
           purpose: 'signup',
-          status: 'QUEUED',
         },
         $set: {
+          userId,
+          websiteUrl,
+          status: 'QUEUED',
           claimState: 'claiming',
           claimLeaseExpiresAt: leaseUntil,
-          websiteUrl,
-          userId,
-          status: 'QUEUED',
           lastErrorSummary: null,
         },
       },
@@ -221,17 +218,14 @@ async function claimOnboardingScrape(ctx) {
       {
         $setOnInsert: {
           businessId,
-          userId,
-          websiteUrl,
           purpose: 'onboarding',
-          status: 'QUEUED',
         },
         $set: {
+          userId,
+          websiteUrl,
+          status: 'QUEUED',
           claimState: 'claiming',
           claimLeaseExpiresAt: leaseUntil,
-          websiteUrl,
-          userId,
-          status: 'QUEUED',
           lastErrorSummary: null,
         },
       },
