@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactElement } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { getBusinessContext, updateBusinessContext } from '../api/businessContexts'
@@ -9,17 +9,15 @@ import {
   startBusinessSetupTrackingTest,
   type SnippetCheckResult,
 } from '../api/businessSetup'
-import {
-  createProvisioningRequest,
-  fetchIntegrationStatus,
-  fetchProvisioningOverview,
-} from '../api/integrations'
+import { createGtmBusinessSetupContainer, fetchIntegrationStatus } from '../api/integrations'
 import {
   getLeadCampaignDashboard,
   type LeadCampaignDashboardResponse,
 } from '../api/leadCampaigns'
+import { GoogleAdsCreateAccountForm } from '../components/integrations/GoogleAdsCreateAccountForm'
 import { GoogleAdsCustomerSelector } from '../components/integrations/GoogleAdsCustomerSelector'
 import { GtmResourceSelector } from '../components/integrations/GtmResourceSelector'
+import { gtmBodyInstallSnippet, gtmHeadInstallScript } from '../lib/gtmInstallSnippets'
 import { ErrorAlert } from '../components/feedback/ErrorAlert'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
@@ -35,8 +33,6 @@ import {
 import type { BusinessContextDto, BusinessContextUpdateBody } from '../types/api'
 import type { IntegrationProvider } from '../api/integrations'
 
-type AccountCurrency = 'USD' | 'INR'
-
 const STEP_NAV_LABELS = ['Accounts', 'Facts', 'Goal', 'Tracking'] as const
 const STEP_HEADINGS = [
   'Step 1 - Accounts',
@@ -45,7 +41,45 @@ const STEP_HEADINGS = [
   'Step 4 - Tracking',
 ] as const
 
-const ACCOUNTS_STEP_PROVIDERS = ['google_ads', 'gtm'] as const satisfies readonly IntegrationProvider[]
+const ACCOUNTS_STEP_PROVIDERS = ['google_ads', 'gtm', 'gbp'] as const satisfies readonly IntegrationProvider[]
+
+const GTM_ACCOUNT_HELP_URL = 'https://tagmanager.google.com/'
+const GBP_ACCOUNT_HELP_URL = 'https://business.google.com/create'
+
+function CopyableSnippetBlock({ label, text }: { label: string; text: string }): ReactElement {
+  const [copied, setCopied] = useState(false)
+  async function onCopy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setCopied(false)
+    }
+  }
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <div className="actions" style={{ alignItems: 'center', marginBottom: '0.35rem' }}>
+        <strong style={{ fontSize: '0.9rem' }}>{label}</strong>
+        <button type="button" className="btn btn-secondary" style={{ marginLeft: '0.5rem' }} onClick={() => void onCopy()}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre
+        style={{
+          fontSize: '0.8rem',
+          padding: '0.75rem',
+          overflowX: 'auto',
+          border: '1px solid var(--color-border)',
+          borderRadius: '6px',
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {text}
+      </pre>
+    </div>
+  )
+}
 
 function splitLines(value: string): string[] {
   return value
@@ -95,8 +129,10 @@ export function BusinessSetupPage(): ReactElement {
   const [error, setError] = useState<string | null>(null)
   const [context, setContext] = useState<BusinessContextDto | null>(null)
   const [dashboard, setDashboard] = useState<LeadCampaignDashboardResponse | null>(null)
-  const [currencyCode, setCurrencyCode] = useState<AccountCurrency>('USD')
-  const [currencyBusy, setCurrencyBusy] = useState(false)
+  const [adsCreateFormOpen, setAdsCreateFormOpen] = useState(false)
+  const [gtmContainerBusy, setGtmContainerBusy] = useState(false)
+  const [gtmContainerError, setGtmContainerError] = useState<string | null>(null)
+  const gtmContainerAutoAttemptedRef = useRef(false)
   const [snippetBusy, setSnippetBusy] = useState(false)
   const [snippetStatus, setSnippetStatus] = useState<SnippetCheckResult['status'] | null>(null)
   const [snippetErrorMessage, setSnippetErrorMessage] = useState<string | null>(null)
@@ -182,17 +218,8 @@ export function BusinessSetupPage(): ReactElement {
       try {
         await loadContext()
         await loadDashboard()
-        const [statusRes, provisioningRes] = await Promise.all([
-          fetchIntegrationStatus(businessId),
-          fetchProvisioningOverview(businessId),
-        ])
+        const statusRes = await fetchIntegrationStatus(businessId)
         if (cancelled) return
-        const request =
-          provisioningRes.providers.google_ads.activeRequest ??
-          provisioningRes.providers.google_ads.latestRequest
-        if (request?.currencyCode === 'USD' || request?.currencyCode === 'INR') {
-          setCurrencyCode(request.currencyCode)
-        }
         const gbp = statusRes.connections.gbp
         setGbpSkipped(!gbp?.ready)
       } catch (err) {
@@ -211,18 +238,38 @@ export function BusinessSetupPage(): ReactElement {
   const primaryGoal = readPrimaryGoal(context?.goals)
   const step1Pending = step1PendingItems(connections)
   const step2Done = isStep2Complete(context)
-  async function onSaveCurrency(): Promise<void> {
-    if (!businessId) return
-    setCurrencyBusy(true)
-    setError(null)
-    try {
-      await createProvisioningRequest('google_ads', { businessId, currencyCode })
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not save currency.')
-    } finally {
-      setCurrencyBusy(false)
-    }
-  }
+
+  const tryCreateGtmContainer = useCallback(
+    async (manualRetry = false): Promise<void> => {
+      if (!businessId) return
+      const gtm = connections.gtm
+      if (!gtm || gtm.ready) return
+      const ids = gtm.providerIdentifiers ?? {}
+      const accountId = typeof ids.accountId === 'string' ? ids.accountId : null
+      const containerId = typeof ids.containerId === 'string' ? ids.containerId : null
+      if (!accountId || containerId) return
+      if (!manualRetry && gtmContainerAutoAttemptedRef.current) return
+      if (!manualRetry) gtmContainerAutoAttemptedRef.current = true
+      setGtmContainerBusy(true)
+      setGtmContainerError(null)
+      try {
+        await createGtmBusinessSetupContainer(businessId)
+        await refetchConnections()
+      } catch (err) {
+        setGtmContainerError(
+          err instanceof ApiError ? err.message : 'Could not create Tag Manager container.',
+        )
+      } finally {
+        setGtmContainerBusy(false)
+      }
+    },
+    [businessId, connections.gtm, refetchConnections],
+  )
+
+  useEffect(() => {
+    if (step !== 1) return
+    void tryCreateGtmContainer(false)
+  }, [step, tryCreateGtmContainer])
 
   async function onCheckSnippet(): Promise<void> {
     if (!businessId) return
@@ -372,9 +419,21 @@ export function BusinessSetupPage(): ReactElement {
         <section>
           <h2>{STEP_HEADINGS[0]}</h2>
           <p style={{ color: 'var(--color-muted)' }}>
-            Connect Google Ads and Tag Manager, choose account currency, and confirm the GTM snippet is
-            on your website.
+            Connect Google Ads and Tag Manager. Google Business Profile is optional.
           </p>
+          <ErrorAlert message={gtmContainerError} />
+          {gtmContainerBusy ? <InlineLoading label="Setting up Tag Manager container…" /> : null}
+          {gtmContainerError ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ marginBottom: '0.75rem' }}
+              disabled={gtmContainerBusy}
+              onClick={() => void tryCreateGtmContainer(true)}
+            >
+              Retry container setup
+            </button>
+          ) : null}
           {connectionsLoading ? <InlineLoading label="Loading connections…" /> : null}
           <div style={{ marginTop: '1rem' }}>
             {ACCOUNTS_STEP_PROVIDERS.map((provider, index) => {
@@ -397,21 +456,66 @@ export function BusinessSetupPage(): ReactElement {
                     <span style={{ marginLeft: '0.5rem', color: 'var(--color-muted)' }}>
                       {status ? statusLabel(status) : '—'}
                     </span>
-                    {provider === 'gtm' && publicContainerId ? (
-                      <p style={{ fontSize: '0.9rem', margin: '0.35rem 0' }}>
-                        Container ID: <code>{publicContainerId}</code>
-                      </p>
+                    {provider === 'gtm' && status?.ready && publicContainerId ? (
+                      <div style={{ marginTop: '0.5rem' }}>
+                        <CopyableSnippetBlock label="Container ID" text={publicContainerId} />
+                        <CopyableSnippetBlock
+                          label="Head install script"
+                          text={gtmHeadInstallScript(publicContainerId)}
+                        />
+                        <CopyableSnippetBlock
+                          label="Body install snippet"
+                          text={gtmBodyInstallSnippet(publicContainerId)}
+                        />
+                      </div>
                     ) : null}
                     {status && !status.ready && reason !== 'selection_required' ? (
-                      <div className="actions" style={{ marginTop: '0.35rem' }}>
+                      <div style={{ marginTop: '0.35rem' }}>
+                        <div className="actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={() => void connectProvider(provider, returnPath)}
+                          >
+                            Connect
+                          </button>
+                        </div>
+                        {provider === 'gtm' ? (
+                          <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem' }}>
+                            <a href={GTM_ACCOUNT_HELP_URL} target="_blank" rel="noreferrer">
+                              Don&apos;t have an account?
+                            </a>
+                          </p>
+                        ) : null}
+                        {provider === 'gbp' ? (
+                          <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem' }}>
+                            <a href={GBP_ACCOUNT_HELP_URL} target="_blank" rel="noreferrer">
+                              Don&apos;t have an account?
+                            </a>
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {provider === 'google_ads' && status && !status.ready ? (
+                      <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem' }}>
                         <button
                           type="button"
-                          className="btn btn-secondary"
-                          onClick={() => void connectProvider(provider, returnPath)}
+                          className="btn btn-link"
+                          style={{ padding: 0, fontSize: 'inherit' }}
+                          onClick={() => setAdsCreateFormOpen((open) => !open)}
                         >
-                          Connect
+                          Don&apos;t have an account?
                         </button>
-                      </div>
+                      </p>
+                    ) : null}
+                    {provider === 'google_ads' && adsCreateFormOpen && !status?.ready ? (
+                      <GoogleAdsCreateAccountForm
+                        businessId={businessId}
+                        onCreated={() => {
+                          setAdsCreateFormOpen(false)
+                          void refetchConnections()
+                        }}
+                      />
                     ) : null}
                     {provider === 'google_ads' && reason === 'selection_required' ? (
                       <GoogleAdsCustomerSelector
@@ -429,53 +533,6 @@ export function BusinessSetupPage(): ReactElement {
                 </div>
               )
             })}
-            <hr
-              style={{
-                margin: '1.5rem 0',
-                border: 'none',
-                borderTop: '1px solid var(--color-border)',
-              }}
-            />
-            <p style={{ margin: 0, color: 'var(--color-muted)', fontSize: '0.95rem' }}>
-              Google Business Profile is optional. You can add it later.
-            </p>
-          </div>
-
-          <div className="field" style={{ maxWidth: '20rem' }}>
-            <label htmlFor="setup-currency">Google Ads account currency</label>
-            <select
-              id="setup-currency"
-              value={currencyCode}
-              onChange={(e) => setCurrencyCode(e.target.value as AccountCurrency)}
-            >
-              <option value="USD">USD</option>
-              <option value="INR">INR</option>
-            </select>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              style={{ marginTop: '0.5rem' }}
-              disabled={currencyBusy}
-              onClick={() => void onSaveCurrency()}
-            >
-              {currencyBusy ? 'Saving…' : 'Save currency'}
-            </button>
-          </div>
-
-          <div style={{ marginTop: '1.5rem' }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={snippetBusy}
-              onClick={() => void onCheckSnippet()}
-            >
-              {snippetBusy ? 'Checking…' : 'Test: is GTM on my site?'}
-            </button>
-            {snippetStatus ? (
-              <p style={{ marginTop: '0.5rem' }}>
-                <strong>{snippetCheckDisplayLabel(snippetStatus, snippetErrorMessage)}</strong>
-              </p>
-            ) : null}
           </div>
 
           {step1Pending.length > 0 ? (
@@ -690,7 +747,7 @@ export function BusinessSetupPage(): ReactElement {
             Prove conversions reach Google Ads with a real form submit or phone call after you start
             the test.
           </p>
-          <div className="actions" style={{ marginBottom: '1rem' }}>
+          <div className="actions" style={{ marginBottom: '1rem', flexWrap: 'wrap' }}>
             <button
               type="button"
               className="btn btn-secondary"
@@ -707,7 +764,20 @@ export function BusinessSetupPage(): ReactElement {
             >
               Check result
             </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={snippetBusy}
+              onClick={() => void onCheckSnippet()}
+            >
+              {snippetBusy ? 'Checking…' : 'Test: is GTM on my site?'}
+            </button>
           </div>
+          {snippetStatus ? (
+            <p style={{ marginTop: '0.5rem', marginBottom: '1rem' }}>
+              <strong>{snippetCheckDisplayLabel(snippetStatus, snippetErrorMessage)}</strong>
+            </p>
+          ) : null}
           {trackingStartedAt ? (
             <p style={{ fontSize: '0.9rem', color: 'var(--color-muted)' }}>
               Test started {new Date(trackingStartedAt).toLocaleString()}. Submit a real lead form

@@ -108,6 +108,15 @@ function adsProvisioningIdempotencyKey(businessId) {
 }
 
 /**
+ * Step 1 business-setup GTM container create (no setup run).
+ *
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ */
+function gtmStep1ContainerIdempotencyKey(businessId) {
+  return `gtm:step1-container:${businessId}`;
+}
+
+/**
  * Legacy setup-run-scoped key retained for migration lookups.
  *
  * @param {import('mongoose').Types.ObjectId | string} businessId
@@ -189,6 +198,7 @@ module.exports = {
   adsConversionActionCreationIdempotencyKey,
   gtmProvisioningIdempotencyKey,
   adsProvisioningIdempotencyKey,
+  gtmStep1ContainerIdempotencyKey,
   legacyAdsProvisioningIdempotencyKey,
   PROVIDER_MUTATION_CONTRACT,
 };

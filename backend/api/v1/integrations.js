@@ -72,6 +72,15 @@ const IntegrationConnection = mongoose.model('IntegrationConnection');
 const {
   ProviderResourceExclusiveError,
 } = require('../../lib/providerResourceExclusivity');
+const {
+  BusinessSetupGoogleAdsAccountError,
+  createGoogleAdsAccountForBusinessSetup,
+} = require('../../services/capabilities/businessSetupGoogleAdsAccountService');
+const {
+  BusinessSetupGtmContainerError,
+  createGtmContainerForBusinessSetup,
+} = require('../../services/capabilities/businessSetupGtmContainerService');
+const { ProviderResourceClaimError } = require('../../services/capabilities/providerResourceClaim');
 
 const router = express.Router();
 
@@ -93,6 +102,29 @@ function mapSelectionError(err, res) {
       ADS_SELECTION_INVALID: 400,
     };
     const status = statusByCode[err.code] ?? 400;
+    return res.status(status).json({
+      error: err.code,
+      message: err.message,
+    });
+  }
+  return null;
+}
+
+function mapBusinessSetupIntegrationError(err, res) {
+  if (err instanceof BusinessSetupGoogleAdsAccountError || err instanceof BusinessSetupGtmContainerError) {
+    const statusByCode = {
+      ADS_CREATE_INPUT_INVALID: 400,
+      GTM_ACCOUNT_REQUIRED: 409,
+      PROVIDER_RESOURCE_CLAIM_IN_PROGRESS: 409,
+    };
+    const status = statusByCode[err.code] ?? 502;
+    return res.status(status).json({
+      error: err.code,
+      message: err.message,
+    });
+  }
+  if (err instanceof ProviderResourceClaimError) {
+    const status = err.code === 'PROVIDER_RESOURCE_CLAIM_IN_PROGRESS' ? 409 : 502;
     return res.status(status).json({
       error: err.code,
       message: err.message,
@@ -373,6 +405,69 @@ router.put('/google_ads/selection', requireAuth, async (req, res, next) => {
     return res.status(200).json({ result });
   } catch (err) {
     const mapped = mapSelectionError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/google_ads/create-account', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+    const currencyCode =
+      typeof req.body?.currencyCode === 'string' ? req.body.currencyCode.trim() : '';
+    const timeZone = typeof req.body?.timeZone === 'string' ? req.body.timeZone.trim() : '';
+
+    if (!bidRaw || !mongoose.Types.ObjectId.isValid(bidRaw)) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'businessId is required and must be a valid ObjectId',
+      });
+    }
+
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    const result = await createGoogleAdsAccountForBusinessSetup({
+      businessId: access.businessId,
+      currencyCode,
+      timeZone,
+    });
+    return res.status(200).json({ result });
+  } catch (err) {
+    const mapped = mapBusinessSetupIntegrationError(err, res) ?? mapMccLinkError(err, res);
+    if (mapped) return mapped;
+    next(err);
+  }
+});
+
+router.post('/gtm/create-container', requireAuth, async (req, res, next) => {
+  try {
+    const bidRaw = typeof req.body?.businessId === 'string' ? req.body.businessId.trim() : '';
+
+    if (!bidRaw || !mongoose.Types.ObjectId.isValid(bidRaw)) {
+      return res.status(400).json({
+        error: 'validation_error',
+        message: 'businessId is required and must be a valid ObjectId',
+      });
+    }
+
+    const access = await assertBusinessAccessOrPlatformAdmin(req.user.id, bidRaw);
+    if (!access) {
+      return res.status(404).json({
+        error: 'not_found',
+        message: 'Business context not found for this user',
+      });
+    }
+
+    const result = await createGtmContainerForBusinessSetup({ businessId: access.businessId });
+    return res.status(200).json({ result });
+  } catch (err) {
+    const mapped = mapBusinessSetupIntegrationError(err, res);
     if (mapped) return mapped;
     next(err);
   }

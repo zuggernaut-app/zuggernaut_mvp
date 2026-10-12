@@ -17,8 +17,10 @@ const integrationArtifactSchema = new mongoose.Schema(
     setupRunId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'SetupRun',
-      required: true,
+      required: false,
+      default: undefined,
       index: true,
+      sparse: true,
     },
     provider: {
       type: String,
@@ -47,7 +49,10 @@ const integrationArtifactSchema = new mongoose.Schema(
 
 integrationArtifactSchema.index(
   { setupRunId: 1, provider: 1, artifactType: 1, externalId: 1 },
-  { unique: true }
+  {
+    unique: true,
+    partialFilterExpression: { setupRunId: { $exists: true, $ne: null } },
+  }
 );
 integrationArtifactSchema.index({ businessId: 1, setupRunId: 1 });
 

@@ -291,6 +291,26 @@ export async function saveGoogleAdsSelection(
   return apiRequest(`/integrations/google_ads/selection`, { method: 'PUT', body })
 }
 
+export async function createGoogleAdsAccount(body: {
+  businessId: string
+  currencyCode: string
+  timeZone: string
+}): Promise<{ result: { customerId: string; idempotent?: boolean } }> {
+  return apiRequest('/integrations/google_ads/create-account', {
+    method: 'POST',
+    body,
+  })
+}
+
+export async function createGtmBusinessSetupContainer(
+  businessId: string,
+): Promise<{ result: { containerId: string; publicContainerId: string | null; idempotent?: boolean } }> {
+  return apiRequest('/integrations/gtm/create-container', {
+    method: 'POST',
+    body: { businessId },
+  })
+}
+
 export async function saveGoogleAdsProvisioningIntent(
   businessId: string,
 ): Promise<{ result: GoogleAdsProvisioningIntentResult }> {
