@@ -1,3 +1,4 @@
+import type { ScrapePreviewState } from '../types/api'
 import { STORAGE_KEYS } from '../utils/storage'
 
 /** Stable fake Mongo-style ids for tests */
@@ -11,7 +12,7 @@ export function seedSession(opts: {
   userId?: string
   businessId?: string
   setupRunId?: string
-  scrapePreview?: { websiteUrl: string; suggested: Record<string, unknown> }
+  scrapePreview?: ScrapePreviewState
 }): void {
   localStorage.clear()
   if (opts.userId) localStorage.setItem(STORAGE_KEYS.USER_ID, opts.userId)

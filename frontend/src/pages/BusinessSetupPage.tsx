@@ -6,13 +6,11 @@ import {
   checkBusinessSetupSnippet,
   confirmBusinessSetupFacts,
   pollBusinessSetupTrackingTest,
-  skipBusinessSetupGbp,
   startBusinessSetupTrackingTest,
   type SnippetCheckResult,
 } from '../api/businessSetup'
 import {
   createProvisioningRequest,
-  fetchGoogleConnectUrl,
   fetchIntegrationStatus,
   fetchProvisioningOverview,
 } from '../api/integrations'
@@ -27,13 +25,9 @@ import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { useAuth } from '../hooks/useAuth'
 import { useOnboardingState } from '../hooks/useOnboardingState'
-import {
-  INTEGRATION_PROVIDERS,
-  useIntegrationConnections,
-} from '../hooks/useIntegrationConnections'
+import { useIntegrationConnections } from '../hooks/useIntegrationConnections'
 import {
   isStep2Complete,
-  isStep3ObjectiveComplete,
   readPrimaryGoal,
   step1PendingItems,
   trackingGoalLabel,
@@ -42,6 +36,16 @@ import type { BusinessContextDto, BusinessContextUpdateBody } from '../types/api
 import type { IntegrationProvider } from '../api/integrations'
 
 type AccountCurrency = 'USD' | 'INR'
+
+const STEP_NAV_LABELS = ['Accounts', 'Facts', 'Goal', 'Tracking'] as const
+const STEP_HEADINGS = [
+  'Step 1 - Accounts',
+  'Step 2 Business Info',
+  'Step 3 Business Goal',
+  'Step 4 - Tracking',
+] as const
+
+const ACCOUNTS_STEP_PROVIDERS = ['google_ads', 'gtm'] as const satisfies readonly IntegrationProvider[]
 
 function splitLines(value: string): string[] {
   return value
@@ -157,6 +161,7 @@ export function BusinessSetupPage(): ReactElement {
     try {
       const data = await getLeadCampaignDashboard(businessId)
       setDashboard(data)
+      setGbpSkipped(Boolean(data.gbpSkippedAt))
     } catch {
       setDashboard(null)
     }
@@ -204,11 +209,8 @@ export function BusinessSetupPage(): ReactElement {
   }, [businessId, loadContext, loadDashboard, navigate, queryBusinessId, setBusinessId, user?.platformAdmin])
 
   const primaryGoal = readPrimaryGoal(context?.goals)
-  const step1Pending = step1PendingItems(connections).filter(
-    (item) => !gbpSkipped || !item.includes('Google Business Profile'),
-  )
+  const step1Pending = step1PendingItems(connections)
   const step2Done = isStep2Complete(context)
-  const step3Done = isStep3ObjectiveComplete(context)
   async function onSaveCurrency(): Promise<void> {
     if (!businessId) return
     setCurrencyBusy(true)
@@ -219,16 +221,6 @@ export function BusinessSetupPage(): ReactElement {
       setError(err instanceof ApiError ? err.message : 'Could not save currency.')
     } finally {
       setCurrencyBusy(false)
-    }
-  }
-
-  async function onReconnect(provider: IntegrationProvider): Promise<void> {
-    if (!businessId) return
-    try {
-      const res = await fetchGoogleConnectUrl(provider, businessId, returnPath)
-      window.location.assign(res.url)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not start connection.')
     }
   }
 
@@ -244,17 +236,6 @@ export function BusinessSetupPage(): ReactElement {
       setError(err instanceof ApiError ? err.message : 'Snippet check failed.')
     } finally {
       setSnippetBusy(false)
-    }
-  }
-
-  async function onSkipGbp(): Promise<void> {
-    if (!businessId) return
-    setError(null)
-    try {
-      await skipBusinessSetupGbp(businessId)
-      setGbpSkipped(true)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not record GBP skip.')
     }
   }
 
@@ -366,97 +347,98 @@ export function BusinessSetupPage(): ReactElement {
       title="Business setup"
       lead="Four steps before your campaigns can run."
     >
-      <div className="actions" style={{ marginBottom: '1rem' }}>
-        <Link className="btn btn-secondary" to="/">
-          Back to home
-        </Link>
-      </div>
+      <p style={{ margin: '0 0 1rem', fontSize: '0.95rem' }}>
+        <Link to="/">Back to home</Link>
+      </p>
       <ErrorAlert message={error ?? connectionsError} />
 
       <nav className="actions" style={{ marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        {[1, 2, 3, 4].map((n) => (
-          <button
-            key={n}
-            type="button"
-            className={step === n ? 'btn btn-primary' : 'btn btn-secondary'}
-            onClick={() => setStep(n)}
-          >
-            Step {n}
-          </button>
-        ))}
+        {STEP_NAV_LABELS.map((label, index) => {
+          const n = index + 1
+          return (
+            <button
+              key={label}
+              type="button"
+              className={step === n ? 'btn btn-primary' : 'btn btn-secondary'}
+              onClick={() => setStep(n)}
+            >
+              {label}
+            </button>
+          )
+        })}
       </nav>
 
       {step === 1 ? (
         <section>
-          <h2>Step 1 — Accounts &amp; site</h2>
+          <h2>{STEP_HEADINGS[0]}</h2>
           <p style={{ color: 'var(--color-muted)' }}>
             Connect Google Ads and Tag Manager, choose account currency, and confirm the GTM snippet is
             on your website.
           </p>
           {connectionsLoading ? <InlineLoading label="Loading connections…" /> : null}
           <div style={{ marginTop: '1rem' }}>
-            {INTEGRATION_PROVIDERS.map((provider) => {
+            {ACCOUNTS_STEP_PROVIDERS.map((provider, index) => {
               const status = connections[provider]
               const label = providerLabels[provider]
               const reason = status?.reason
               return (
-                <div key={provider} style={{ marginBottom: '1rem' }}>
-                  <strong>{label}</strong>
-                  <span style={{ marginLeft: '0.5rem', color: 'var(--color-muted)' }}>
-                    {status ? statusLabel(status) : '—'}
-                  </span>
-                  {provider === 'gtm' && publicContainerId ? (
-                    <p style={{ fontSize: '0.9rem', margin: '0.35rem 0' }}>
-                      Container ID: <code>{publicContainerId}</code>
-                    </p>
-                  ) : null}
-                  {status && !status.ready ? (
-                    <div className="actions" style={{ marginTop: '0.35rem' }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() =>
-                          void (reason === 'selection_required'
-                            ? undefined
-                            : connectProvider(provider, returnPath))
-                        }
-                      >
-                        Connect
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary"
-                        onClick={() => void onReconnect(provider)}
-                      >
-                        Reconnect
-                      </button>
-                    </div>
-                  ) : null}
-                  {provider === 'google_ads' && reason === 'selection_required' ? (
-                    <GoogleAdsCustomerSelector
-                      businessId={businessId}
-                      onSaved={() => void refetchConnections()}
+                <div key={provider}>
+                  {index > 0 ? (
+                    <hr
+                      style={{
+                        margin: '1.5rem 0',
+                        border: 'none',
+                        borderTop: '1px solid var(--color-border)',
+                      }}
                     />
                   ) : null}
-                  {provider === 'gtm' && reason === 'selection_required' ? (
-                    <GtmResourceSelector
-                      businessId={businessId}
-                      onSaved={() => void refetchConnections()}
-                    />
-                  ) : null}
-                  {provider === 'gbp' && !status?.ready ? (
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      style={{ marginTop: '0.35rem' }}
-                      onClick={() => void onSkipGbp()}
-                    >
-                      Skip GBP for now
-                    </button>
-                  ) : null}
+                  <div style={{ marginBottom: '0.5rem' }}>
+                    <strong>{label}</strong>
+                    <span style={{ marginLeft: '0.5rem', color: 'var(--color-muted)' }}>
+                      {status ? statusLabel(status) : '—'}
+                    </span>
+                    {provider === 'gtm' && publicContainerId ? (
+                      <p style={{ fontSize: '0.9rem', margin: '0.35rem 0' }}>
+                        Container ID: <code>{publicContainerId}</code>
+                      </p>
+                    ) : null}
+                    {status && !status.ready && reason !== 'selection_required' ? (
+                      <div className="actions" style={{ marginTop: '0.35rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => void connectProvider(provider, returnPath)}
+                        >
+                          Connect
+                        </button>
+                      </div>
+                    ) : null}
+                    {provider === 'google_ads' && reason === 'selection_required' ? (
+                      <GoogleAdsCustomerSelector
+                        businessId={businessId}
+                        onSaved={() => void refetchConnections()}
+                      />
+                    ) : null}
+                    {provider === 'gtm' && reason === 'selection_required' ? (
+                      <GtmResourceSelector
+                        businessId={businessId}
+                        onSaved={() => void refetchConnections()}
+                      />
+                    ) : null}
+                  </div>
                 </div>
               )
             })}
+            <hr
+              style={{
+                margin: '1.5rem 0',
+                border: 'none',
+                borderTop: '1px solid var(--color-border)',
+              }}
+            />
+            <p style={{ margin: 0, color: 'var(--color-muted)', fontSize: '0.95rem' }}>
+              Google Business Profile is optional. You can add it later.
+            </p>
           </div>
 
           <div className="field" style={{ maxWidth: '20rem' }}>
@@ -506,7 +488,7 @@ export function BusinessSetupPage(): ReactElement {
 
       {step === 2 ? (
         <section>
-          <h2>Step 2 — Confirm your facts</h2>
+          <h2>{STEP_HEADINGS[1]}</h2>
           <p style={{ color: 'var(--color-muted)' }}>
             Review what we know about your business. Fix anything that is wrong, then confirm.
           </p>
@@ -580,7 +562,7 @@ export function BusinessSetupPage(): ReactElement {
 
       {step === 3 ? (
         <section>
-          <h2>Step 3 — Campaign objectives</h2>
+          <h2>{STEP_HEADINGS[2]}</h2>
           <p style={{ color: 'var(--color-muted)' }}>
             Set strategy fields your campaigns will use. Campaign drafts below are read-only until an
             expert approves them.
@@ -598,7 +580,7 @@ export function BusinessSetupPage(): ReactElement {
               <label htmlFor="str-scope">Business scope</label>
               <select
                 id="str-scope"
-                value={strategyForm.businessScope}
+                value={strategyForm.businessScope ?? ''}
                 onChange={(e) =>
                   setStrategyForm((f) => ({
                     ...f,
@@ -616,7 +598,7 @@ export function BusinessSetupPage(): ReactElement {
               <label htmlFor="str-vc">Value × complexity</label>
               <select
                 id="str-vc"
-                value={strategyForm.valueComplexity}
+                value={strategyForm.valueComplexity ?? ''}
                 onChange={(e) =>
                   setStrategyForm((f) => ({
                     ...f,
@@ -635,7 +617,7 @@ export function BusinessSetupPage(): ReactElement {
               <label htmlFor="str-budget">Budget tier</label>
               <select
                 id="str-budget"
-                value={strategyForm.budgetTier}
+                value={strategyForm.budgetTier ?? ''}
                 onChange={(e) =>
                   setStrategyForm((f) => ({
                     ...f,
@@ -697,7 +679,7 @@ export function BusinessSetupPage(): ReactElement {
 
       {step === 4 ? (
         <section>
-          <h2>Step 4 — Tracking test &amp; run</h2>
+          <h2>{STEP_HEADINGS[3]}</h2>
           {gbpSkipped ? (
             <div className="alert alert-info" style={{ marginBottom: '1rem' }}>
               You skipped Google Business Profile. Local visibility may be limited until GBP is

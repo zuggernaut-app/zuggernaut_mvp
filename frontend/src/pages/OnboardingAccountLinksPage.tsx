@@ -109,7 +109,7 @@ export function OnboardingAccountLinksPage(): ReactElement {
         const res = await getBusinessContext(businessId)
         if (!cancelled) {
           if (!editMode && isQuestionsComplete(res.businessContext)) {
-            navigate('/onboarding/thank-you', { replace: true })
+            navigate('/', { replace: true })
             return
           }
           if (!editMode && res.businessContext.accountLinksCompletedAt) {

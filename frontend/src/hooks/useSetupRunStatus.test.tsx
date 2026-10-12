@@ -27,6 +27,7 @@ function makeRun(status: string): SetupRunDetailResponse {
       guidance: null,
     },
     steps: [],
+    recovery: null,
   }
 }
 

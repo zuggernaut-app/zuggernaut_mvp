@@ -41,7 +41,7 @@ describe('AdminBusinessSetupSection', () => {
     mockedUpdate.mockResolvedValue({
       businessContext: initial,
       adsReadiness: { ok: true },
-      susoMatrix: null,
+      susoMatrix: { cells: [], gates: [], ctaStyle: null },
     })
   })
 

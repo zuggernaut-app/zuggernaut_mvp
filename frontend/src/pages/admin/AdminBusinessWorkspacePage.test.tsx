@@ -14,6 +14,7 @@ import { OnboardingProvider } from '../../hooks/useOnboardingState'
 
 import { TEST_IDS } from '../../test/pageTestUtils'
 
+import type { BusinessContextDto } from '../../types/api'
 import { AdminBusinessWorkspacePage } from './AdminBusinessWorkspacePage'
 
 
@@ -56,7 +57,7 @@ const mockedGet = vi.mocked(getBusinessContext)
 
 
 
-const mockBusinessContext = {
+const mockBusinessContext: BusinessContextDto = {
 
   businessId: TEST_IDS.business,
 

@@ -496,7 +496,7 @@ export interface CreateSetupRunSuccessResponse {
   status: string
 }
 
-export interface TemporalUnavailableResponse extends ApiErrorBody {
+export interface TemporalUnavailableResponse extends Omit<ApiErrorBody, 'workflowId'> {
   setupRunId: string
   workflowId: null
   status: string

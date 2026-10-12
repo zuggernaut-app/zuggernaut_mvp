@@ -12,6 +12,8 @@ const hoisted = vi.hoisted(() => ({
   mockListBusinessContexts: vi.fn(),
   mockGetLeadCampaignDashboard: vi.fn(),
   mockGetAdsCampaignPerformance: vi.fn(),
+  mockFetchIntegrationStatus: vi.fn(),
+  mockPollBusinessSetupTrackingTest: vi.fn(),
 }))
 
 vi.mock('../api/businessContexts', () => ({
@@ -24,6 +26,14 @@ vi.mock('../api/leadCampaigns', () => ({
 
 vi.mock('../api/adsPerformance', () => ({
   getAdsCampaignPerformance: hoisted.mockGetAdsCampaignPerformance,
+}))
+
+vi.mock('../api/integrations', () => ({
+  fetchIntegrationStatus: hoisted.mockFetchIntegrationStatus,
+}))
+
+vi.mock('../api/businessSetup', () => ({
+  pollBusinessSetupTrackingTest: hoisted.mockPollBusinessSetupTrackingTest,
 }))
 
 vi.mock('../api/auth', () => ({
@@ -75,6 +85,8 @@ describe('HomePage', () => {
     hoisted.mockGetAdsCampaignPerformance.mockResolvedValue({
       performance: { businessId: TEST_IDS.business, slots: { recommended: null, alternative: null } },
     })
+    hoisted.mockFetchIntegrationStatus.mockResolvedValue({ businessId: TEST_IDS.business, connections: {} })
+    hoisted.mockPollBusinessSetupTrackingTest.mockResolvedValue({ goals: {} })
   })
 
   it('shows Get started when signed in with no businesses', async () => {
@@ -240,9 +252,9 @@ describe('HomePage', () => {
     renderHome()
 
     expect(await screen.findByRole('heading', { name: /^thank you$/i })).toBeInTheDocument()
-    expect(screen.getByText(/we'll take it from here/i)).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /get started/i })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /^continue$/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/we'll call you to take this forward/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /continue setup/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /change your answers/i })).toBeInTheDocument()
   })
 
   it('prefers confirmed business over stale stored unconfirmed draft', async () => {

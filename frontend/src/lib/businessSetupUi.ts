@@ -15,12 +15,8 @@ export function step1PendingItems(
   const pending: string[] = []
   const ads = connections.google_ads
   const gtm = connections.gtm
-  const gbp = connections.gbp
-
   if (!ads?.ready) pending.push('Connect Google Ads')
   if (!gtm?.ready) pending.push('Connect Google Tag Manager')
-  if (!gbp?.ready) pending.push('Connect Google Business Profile (optional — you can skip)')
-
   return pending
 }
 

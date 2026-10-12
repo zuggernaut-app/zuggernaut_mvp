@@ -1,10 +1,10 @@
 import type { AdsReadinessIssue, AdsReadinessResult } from '../types/api'
 
-export function isAdsReadinessOk(result: AdsReadinessResult | undefined): boolean {
+export function isAdsReadinessOk(result: AdsReadinessResult | null | undefined): boolean {
   return result?.ok === true
 }
 
-export function adsReadinessIssueMessages(result: AdsReadinessResult | undefined): string[] {
+export function adsReadinessIssueMessages(result: AdsReadinessResult | null | undefined): string[] {
   if (!result || result.ok || !Array.isArray(result.issues)) {
     return []
   }

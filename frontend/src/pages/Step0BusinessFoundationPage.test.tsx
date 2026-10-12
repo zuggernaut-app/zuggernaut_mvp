@@ -6,7 +6,32 @@ import { getBusinessContext, updateBusinessContext } from '../api/businessContex
 import { AuthProvider } from '../hooks/useAuth'
 import { OnboardingProvider } from '../hooks/useOnboardingState'
 import { TEST_IDS, seedSession } from '../test/pageTestUtils'
+import type { BusinessContextDto, GetBusinessContextResponse, PutBusinessContextResponse } from '../types/api'
 import { Step0BusinessFoundationPage } from './Step0BusinessFoundationPage'
+
+const step0BusinessContext: BusinessContextDto = {
+  businessId: TEST_IDS.business,
+  userId: TEST_IDS.user,
+  websiteUrl: null,
+  businessName: null,
+  industry: null,
+  services: [],
+  serviceAreas: [],
+  contactMethods: null,
+  audienceSignals: null,
+  goals: null,
+  differentiators: null,
+  orderValueHint: null,
+  thankYouUrls: [],
+  uvp: '',
+  competitorLandscape: { competitors: [] },
+  businessScope: null,
+  valueComplexity: null,
+  budgetTier: null,
+  susoVersion: 0,
+  susoVersionUpdatedAt: null,
+  confirmedAt: null,
+}
 
 vi.mock('../api/businessContexts', () => ({
   getBusinessContext: vi.fn(),
@@ -61,31 +86,25 @@ describe('Step0BusinessFoundationPage', () => {
     vi.clearAllMocks()
     seedSession({})
     mockedGet.mockResolvedValue({
-      businessContext: {
-        businessId: TEST_IDS.business,
-        uvp: '',
-        competitorLandscape: { competitors: [] },
-        businessScope: null,
-        valueComplexity: null,
-        budgetTier: null,
-      },
+      businessContext: step0BusinessContext,
       adsReadiness: { ok: true },
-      susoMatrix: null,
-    })
+      susoMatrix: { cells: [], gates: [], ctaStyle: null },
+    } satisfies GetBusinessContextResponse)
     mockedUpdate.mockResolvedValue({
       businessContext: {
-        businessId: TEST_IDS.business,
+        ...step0BusinessContext,
         uvp: 'Fast local plumbing',
         businessScope: 'local_service',
         valueComplexity: 'low_value_low_complexity',
         budgetTier: 'growth',
       },
+      adsReadiness: { ok: true },
       susoMatrix: {
         cells: [],
         gates: [],
         ctaStyle: 'buy_now',
       },
-    })
+    } satisfies PutBusinessContextResponse)
   })
 
   it('renders UVP textarea after load', async () => {

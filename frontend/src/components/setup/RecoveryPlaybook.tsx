@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react'
 import { Link } from 'react-router-dom'
-import type { SetupRunReportRecovery, SetupRunReportRecoveryStep } from '../types/api'
+import type { SetupRunReportRecovery, SetupRunReportRecoveryStep } from '../../types/api'
 
 function RecoveryStepItem({ step }: { step: SetupRunReportRecoveryStep }): ReactElement {
   if (step.href) {

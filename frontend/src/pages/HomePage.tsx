@@ -203,9 +203,14 @@ export function HomePage(): ReactElement {
         </ul>
         <div className="actions" style={{ marginBottom: '1rem' }}>
           <Link className="btn btn-primary" to="/business-setup">
-            Continue business setup
+            Continue setup
           </Link>
         </div>
+        <p style={{ margin: '0 0 1rem', fontSize: '0.95rem' }}>
+          <Link to="/onboarding/business" state={{ editMode: true }}>
+            Change your answers
+          </Link>
+        </p>
         <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-muted)' }}>
           Signed in as <strong>{user.email}</strong>.
         </p>

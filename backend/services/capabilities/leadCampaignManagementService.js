@@ -205,6 +205,8 @@ async function getLeadCampaignDashboard(userId, businessIdRaw) {
     };
   }
 
+  const gbpSkippedAt = set?.gbpSkippedAt ?? null;
+
   return {
     businessId: businessId.toString(),
     currency,
@@ -213,6 +215,7 @@ async function getLeadCampaignDashboard(userId, businessIdRaw) {
     recommendedBudgetLabel,
     recommendedBudgetMicros,
     subscriptionActive: subscriptionStatus.active,
+    gbpSkippedAt: gbpSkippedAt ? gbpSkippedAt.toISOString() : null,
     slots,
   };
 }

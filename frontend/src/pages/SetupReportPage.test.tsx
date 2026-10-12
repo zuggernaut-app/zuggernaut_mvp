@@ -352,7 +352,7 @@ describe('SetupReportPage', () => {
           summary: 'Install GTM snippet',
           evidence: { missing: ['snippet'], snippetPresent: false, publicContainerId: 'GTM-X' },
         },
-        adsCampaign: { status: 'not_run', summary: null, plan: null },
+        adsCampaign: { status: 'not_run', summary: null, plan: null, failure: null },
       }).report,
       loading: false,
       error: null,
@@ -415,7 +415,7 @@ describe('SetupReportPage', () => {
         structuralVerification: {
           status: 'skipped',
           summary: 'GTM is not configured; structural verification skipped.',
-          evidence: { gtmOptional: true },
+          evidence: { missing: [], snippetPresent: null, publicContainerId: null },
         },
         gtmSetup: { status: 'not_run', summary: null },
         recommendations: [

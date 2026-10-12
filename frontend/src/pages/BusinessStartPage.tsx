@@ -9,6 +9,7 @@ import { InlineLoading } from '../components/feedback/InlineLoading'
 import { PageLayout } from '../components/layout/PageLayout'
 import { isQuestionsComplete } from '../lib/onboardingRouting'
 import { notifyOnboardingStorageChanged, useOnboardingState } from '../hooks/useOnboardingState'
+import type { BusinessContextDto } from '../types/api'
 import {
   clearIntakeDraft,
   clearOnboardingDrafts,
@@ -16,6 +17,17 @@ import {
   setIntakeDraft,
   type IntakeDraftFields,
 } from '../utils/storage'
+
+function intakeFieldsFromContext(ctx: BusinessContextDto): IntakeDraftFields {
+  return {
+    businessName: ctx.businessName ?? '',
+    primaryOffer: (ctx.services ?? []).join(', '),
+    serviceArea: (ctx.serviceAreas ?? []).join(', '),
+    whoBuysToday: ctx.whoBuysToday ?? '',
+    orderValueHint: ctx.orderValueHint ?? '',
+    howBuyersContact: ctx.howBuyersContact ?? '',
+  }
+}
 
 function intakeDraftSnapshot(fields: IntakeDraftFields): IntakeDraftFields {
   return { ...fields }
@@ -78,8 +90,17 @@ export function BusinessStartPage(): ReactElement {
         const res = await getBusinessContext(businessId)
         if (!cancelled) {
           if (!editMode && isQuestionsComplete(res.businessContext)) {
-            navigate('/onboarding/thank-you', { replace: true })
+            navigate('/', { replace: true })
             return
+          }
+          if (editMode && isQuestionsComplete(res.businessContext)) {
+            const fields = intakeFieldsFromContext(res.businessContext)
+            setBusinessName(fields.businessName)
+            setPrimaryOffer(fields.primaryOffer)
+            setServiceArea(fields.serviceArea)
+            setWhoBuysToday(fields.whoBuysToday)
+            setOrderValueHint(fields.orderValueHint)
+            setHowBuyersContact(fields.howBuyersContact)
           }
           if (!res.businessContext.accountLinksCompletedAt) {
             navigate('/onboarding/accounts', { replace: true, state: { editMode: true } })
@@ -105,17 +126,19 @@ export function BusinessStartPage(): ReactElement {
       setIntakeDraftHydrated(false)
       return
     }
-    const draft = getIntakeDraft(businessId)
-    if (draft) {
-      setBusinessName(draft.businessName)
-      setPrimaryOffer(draft.primaryOffer)
-      setServiceArea(draft.serviceArea)
-      setWhoBuysToday(draft.whoBuysToday)
-      setOrderValueHint(draft.orderValueHint)
-      setHowBuyersContact(draft.howBuyersContact)
+    if (!editMode) {
+      const draft = getIntakeDraft(businessId)
+      if (draft) {
+        setBusinessName(draft.businessName)
+        setPrimaryOffer(draft.primaryOffer)
+        setServiceArea(draft.serviceArea)
+        setWhoBuysToday(draft.whoBuysToday)
+        setOrderValueHint(draft.orderValueHint)
+        setHowBuyersContact(draft.howBuyersContact)
+      }
     }
     setIntakeDraftHydrated(true)
-  }, [businessId])
+  }, [businessId, editMode])
 
   useEffect(() => {
     if (!businessId || !intakeDraftHydrated) return
@@ -177,7 +200,7 @@ export function BusinessStartPage(): ReactElement {
       })
 
       clearIntakeDraft(businessId)
-      navigate('/onboarding/thank-you', { replace: true })
+      navigate('/', { replace: true })
     } catch (err) {
       if (err instanceof ApiError) setError(err.message)
       else setError('Could not save your details.')

@@ -57,7 +57,7 @@ function makeReport(status: string): SetupRunReportResponse {
         googleAds: { status: 'not_required', requestId: null },
       },
       structuralVerification: { status: 'not_run', summary: null, evidence: null },
-      adsCampaign: { status: 'not_run', summary: null, plan: null },
+      adsCampaign: { status: 'not_run', summary: null, plan: null, failure: null },
       recommendations: [],
       artifactCounts: {
         gtmTags: 0,
@@ -71,6 +71,8 @@ function makeReport(status: string): SetupRunReportResponse {
         adsConversionLinks: 0,
       },
       steps: [],
+      susoStale: false,
+      susoVersions: { current: 0, artifact: null },
     },
   }
 }

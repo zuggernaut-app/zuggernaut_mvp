@@ -24,12 +24,16 @@ export function GbpWritePanel({ businessId, locationId = 'primary' }: GbpWritePa
     setError(null)
     setMessage(null)
     try {
-      const res = await writeGbpLocation(locationId, {
-        businessId,
-        action: 'post',
-        post: { summary: postText.trim() },
-        consent: true,
-      })
+      const res = await writeGbpLocation(
+        locationId,
+        {
+          businessId,
+          action: 'post',
+          post: { summary: postText.trim() },
+          consent: true,
+        },
+        true,
+      )
       setMessage(`GBP write result: ${String(res.result?.outcome ?? 'ok')}`)
     } catch (err) {
       if (err instanceof ApiError) setError(err.message)

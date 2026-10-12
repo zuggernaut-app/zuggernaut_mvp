@@ -220,7 +220,7 @@ function parseAdsCampaignFailureFromStep(
     | {
         status: string
         stepName?: string
-        provider?: string
+        provider?: string | null
         lastErrorSummary?: string | null
         details?: unknown
       }

@@ -126,7 +126,12 @@ describe('StartSetupPage', () => {
       businessId: TEST_IDS.business,
     })
     mockedLatest.mockResolvedValueOnce({
-      setupRun: { id: TEST_IDS.setupRun, status: 'SUCCEEDED', businessId: TEST_IDS.business },
+      setupRun: {
+        id: TEST_IDS.setupRun,
+        status: 'SUCCEEDED',
+        businessId: TEST_IDS.business,
+        temporalWorkflowId: 'wf-1',
+      },
     })
 
     renderStartSetup()
@@ -145,7 +150,12 @@ describe('StartSetupPage', () => {
       businessId: TEST_IDS.business,
     })
     mockedLatest.mockResolvedValue({
-      setupRun: { id: TEST_IDS.setupRun, status: 'RUNNING', businessId: TEST_IDS.business },
+      setupRun: {
+        id: TEST_IDS.setupRun,
+        status: 'RUNNING',
+        businessId: TEST_IDS.business,
+        temporalWorkflowId: 'wf-1',
+      },
     })
     mockedStart
       .mockRejectedValueOnce(
@@ -190,7 +200,12 @@ describe('StartSetupPage', () => {
       businessId: TEST_IDS.business,
     })
     mockedLatest.mockResolvedValue({
-      setupRun: { id: TEST_IDS.setupRun, status: 'SUCCEEDED', businessId: TEST_IDS.business },
+      setupRun: {
+        id: TEST_IDS.setupRun,
+        status: 'SUCCEEDED',
+        businessId: TEST_IDS.business,
+        temporalWorkflowId: 'wf-1',
+      },
     })
     mockedStart.mockResolvedValueOnce({
       setupRunId: 'new-run-id',

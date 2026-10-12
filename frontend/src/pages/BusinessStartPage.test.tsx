@@ -87,10 +87,7 @@ function renderIntake(): ReturnType<typeof render> {
               path="/onboarding/accounts"
               element={<div data-testid="accounts-target">accounts</div>}
             />
-            <Route
-              path="/onboarding/thank-you"
-              element={<div data-testid="thank-you-target">thank you</div>}
-            />
+            <Route path="/" element={<div data-testid="home-target">home</div>} />
           </Routes>
         </OnboardingProvider>
       </AuthProvider>
@@ -122,7 +119,7 @@ describe('BusinessStartPage intake', () => {
     await user.click(screen.getByRole('button', { name: /^submit$/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('thank-you-target')).toBeInTheDocument()
+      expect(screen.getByTestId('home-target')).toBeInTheDocument()
     })
 
     expect(mockedSubmitIntake).toHaveBeenCalledWith(TEST_IDS.business, {
@@ -146,7 +143,7 @@ describe('BusinessStartPage intake', () => {
     await user.click(screen.getByRole('button', { name: /^submit$/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('thank-you-target')).toBeInTheDocument()
+      expect(screen.getByTestId('home-target')).toBeInTheDocument()
     })
 
     expect(mockedSubmitIntake).toHaveBeenCalledWith(TEST_IDS.business, {
@@ -177,7 +174,7 @@ describe('BusinessStartPage intake', () => {
     expect(screen.getByLabelText(/where you serve/i)).toHaveValue('Denver, CO')
   })
 
-  it('redirects to thank-you when business context is already confirmed', async () => {
+  it('redirects to home when business context is already confirmed', async () => {
     mockedGetBusinessContext.mockResolvedValueOnce({
       businessContext: {
         ...baseContext,
@@ -191,9 +188,51 @@ describe('BusinessStartPage intake', () => {
     renderIntake()
 
     await waitFor(() => {
-      expect(screen.getByTestId('thank-you-target')).toBeInTheDocument()
+      expect(screen.getByTestId('home-target')).toBeInTheDocument()
     })
     expect(mockedSubmitIntake).not.toHaveBeenCalled()
+  })
+
+  it('prefills intake when editMode and questions are complete', async () => {
+    mockedGetBusinessContext.mockResolvedValueOnce({
+      businessContext: {
+        ...baseContext,
+        businessName: 'Medha Hari',
+        services: ['Dancing and Choreography'],
+        serviceAreas: ['Global'],
+        whoBuysToday: 'Dance Enthusiasts',
+        orderValueHint: '$50',
+        howBuyersContact: 'Phone Calls',
+        questionsCompletedAt: '2026-01-02T00:00:00.000Z',
+      },
+      adsReadiness: { ok: true },
+      susoMatrix: { cells: [], gates: [], ctaStyle: null },
+    })
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/onboarding/business', state: { editMode: true } }]}>
+        <AuthProvider>
+          <OnboardingProvider>
+            <Routes>
+              <Route
+                path="/onboarding/business"
+                element={
+                  <RequireAuth>
+                    <BusinessStartPage />
+                  </RequireAuth>
+                }
+              />
+            </Routes>
+          </OnboardingProvider>
+        </AuthProvider>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/business name/i)).toHaveValue('Medha Hari')
+    })
+    expect(screen.getByLabelText(/what you sell/i)).toHaveValue('Dancing and Choreography')
+    expect(screen.getByLabelText(/where you serve/i)).toHaveValue('Global')
   })
 
   it('redirects to accounts when account links are not complete', async () => {

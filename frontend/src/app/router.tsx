@@ -14,7 +14,6 @@ import { AdminBusinessStrategyPage } from '../pages/admin/AdminBusinessStrategyP
 import { AdminBusinessWorkspacePage } from '../pages/admin/AdminBusinessWorkspacePage'
 import { BusinessStartPage } from '../pages/BusinessStartPage'
 import { OnboardingAccountLinksPage } from '../pages/OnboardingAccountLinksPage'
-import { IntakeThankYouPage } from '../pages/IntakeThankYouPage'
 import { WebsiteUrlPage } from '../pages/WebsiteUrlPage'
 import { BusinessReviewPage } from '../pages/BusinessReviewPage'
 import { BusinessContextEditPage } from '../pages/BusinessContextEditPage'
@@ -22,11 +21,6 @@ import { StartSetupPage } from '../pages/StartSetupPage'
 import { BusinessSetupPage } from '../pages/BusinessSetupPage'
 import { SetupProgressPage } from '../pages/SetupProgressPage'
 import { SetupReportPage } from '../pages/SetupReportPage'
-import { DevIntegrationsPage } from '../../../dev-tools/frontend/src/pages/dev/DevIntegrationsPage'
-import { DevGoogleAdsOAuthLabPage } from '../../../dev-tools/frontend/src/pages/dev/DevGoogleAdsOAuthLabPage'
-import { DevGtmOAuthLabPage } from '../../../dev-tools/frontend/src/pages/dev/DevGtmOAuthLabPage'
-import { DevGbpOAuthLabPage } from '../../../dev-tools/frontend/src/pages/dev/DevGbpOAuthLabPage'
-import { isDevIntegrationsEnabled } from '../../../dev-tools/frontend/src/api/dev/devIntegrations'
 
 export function AppRoutes(): ReactElement {
   return (
@@ -110,7 +104,7 @@ export function AppRoutes(): ReactElement {
         path="/onboarding/thank-you"
         element={
           <RequireAuth>
-            <IntakeThankYouPage />
+            <Navigate to="/" replace />
           </RequireAuth>
         }
       />
@@ -178,42 +172,6 @@ export function AppRoutes(): ReactElement {
           </RequireAuth>
         }
       />
-      {isDevIntegrationsEnabled() ? (
-        <>
-          <Route
-            path="/dev/integrations"
-            element={
-              <RequireAuth>
-                <DevIntegrationsPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/dev/integrations/googleads"
-            element={
-              <RequireAuth>
-                <DevGoogleAdsOAuthLabPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/dev/integrations/gtm"
-            element={
-              <RequireAuth>
-                <DevGtmOAuthLabPage />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/dev/integrations/gbp"
-            element={
-              <RequireAuth>
-                <DevGbpOAuthLabPage />
-              </RequireAuth>
-            }
-          />
-        </>
-      ) : null}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
