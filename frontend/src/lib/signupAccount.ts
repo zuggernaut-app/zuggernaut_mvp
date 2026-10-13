@@ -84,6 +84,43 @@ export function listTimeZoneOptions(): string[] {
   }
 }
 
+export type TimeZoneSelectOption = { value: string; label: string }
+
+/**
+ * GMT offset in effect on `at` (default today), e.g. `(GMT+05:30) Asia/Calcutta`.
+ */
+export function formatTimeZoneSelectLabel(timeZoneId: string, at: Date = new Date()): string {
+  const offset = formatGmtOffsetParenthetical(timeZoneId, at)
+  return `${offset} ${timeZoneId}`
+}
+
+function formatGmtOffsetParenthetical(timeZoneId: string, at: Date): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timeZoneId,
+      timeZoneName: 'longOffset',
+    }).formatToParts(at)
+    const raw = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT'
+    const match = raw.match(/^GMT([+-])(\d{1,2})(?::(\d{2}))?$/)
+    if (!match) {
+      return raw.startsWith('(') ? raw : `(${raw})`
+    }
+    const sign = match[1]
+    const hours = match[2].padStart(2, '0')
+    const minutes = (match[3] ?? '00').padStart(2, '0')
+    return `(GMT${sign}${hours}:${minutes})`
+  } catch {
+    return '(GMT+00:00)'
+  }
+}
+
+export function listTimeZoneSelectOptions(at: Date = new Date()): TimeZoneSelectOption[] {
+  return listTimeZoneOptions().map((value) => ({
+    value,
+    label: formatTimeZoneSelectLabel(value, at),
+  }))
+}
+
 export function browserTimeZoneId(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone

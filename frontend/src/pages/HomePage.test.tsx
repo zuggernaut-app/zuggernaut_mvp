@@ -138,6 +138,46 @@ describe('HomePage', () => {
     expect(await screen.findByRole('heading', { name: /^thank you$/i })).toBeInTheDocument()
     expect(screen.queryByTestId('accounts-target')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /change your answers/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/have your website open/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/plan for about 30 minutes/i)).toBeInTheDocument()
+  })
+
+  it('shows website call-prep line on signup thank-you when a website is saved', async () => {
+    hoisted.mockListBusinessContexts.mockResolvedValue({
+      businessContexts: [
+        {
+          businessId: TEST_IDS.business,
+          userId: TEST_IDS.user,
+          websiteUrl: 'https://example.com',
+          businessName: 'Acme',
+          industry: null,
+          services: [],
+          serviceAreas: [],
+          contactMethods: null,
+          audienceSignals: null,
+          goals: null,
+          differentiators: null,
+          orderValueHint: null,
+          thankYouUrls: [],
+          uvp: null,
+          competitorLandscape: null,
+          businessScope: null,
+          valueComplexity: null,
+          budgetTier: null,
+          susoVersion: 0,
+          susoVersionUpdatedAt: null,
+          confirmedAt: null,
+          accountLinksCompletedAt: null,
+          questionsCompletedAt: null,
+          signupCompletedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+    seedSession({ userId: TEST_IDS.user, businessId: TEST_IDS.business })
+
+    renderHome()
+
+    expect(await screen.findByText(/have your website open/i)).toBeInTheDocument()
   })
 
   it('redirects to business details when signup is not complete', async () => {

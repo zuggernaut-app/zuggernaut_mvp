@@ -205,9 +205,16 @@ export function HomePage(): ReactElement {
         {signupThankYou ? (
           <>
             <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-              Plan for about 30 minutes on the call. Have your website open and the person who can
-              change your website code on the call or reachable.
+              Plan for about 30 minutes on the call.
             </p>
+            {typeof activeContext.websiteUrl === 'string' && activeContext.websiteUrl.trim()
+              ? (
+                <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
+                  Have your website open and the person who can change your website code on the call
+                  or reachable.
+                </p>
+                )
+              : null}
             <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
               Have documents ready for reference, such as a company brochure or annual report.
             </p>

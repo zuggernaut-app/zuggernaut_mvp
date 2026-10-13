@@ -229,16 +229,18 @@ export type CustomerSignupDetailsResult =
   | {
       ok: true
       businessName: string
-      websiteUrl: string
+      hasNoWebsite: boolean
+      websiteUrl?: string
       businessCountry?: string
       accountCurrencyCode: string
       accountTimeZone?: string
     }
-  | { ok: false; message: string; field?: 'websiteUrl' }
+  | { ok: false; message: string; field?: 'websiteUrl' | 'terms' }
 
 export function validateCustomerSignupDetailsForm(input: {
   businessName: string
   websiteUrl: string
+  hasNoWebsite: boolean
   termsAccepted: boolean
   businessCountry: string
   accountCurrencyCode: string
@@ -249,6 +251,34 @@ export function validateCustomerSignupDetailsForm(input: {
     return { ok: false, message: 'Business name is required.' }
   }
 
+  if (!input.termsAccepted) {
+    return {
+      ok: false,
+      message: 'You must accept the terms and conditions.',
+      field: 'terms',
+    }
+  }
+
+  if (input.hasNoWebsite) {
+    const country = input.businessCountry.trim().toUpperCase()
+    if (country && !/^[A-Z]{2}$/.test(country)) {
+      return { ok: false, message: 'A valid business country is required.' }
+    }
+    const accountCurrencyCode = input.accountCurrencyCode.trim().toUpperCase()
+    if (!SIGNUP_CURRENCIES.has(accountCurrencyCode)) {
+      return { ok: false, message: 'A valid account currency is required.' }
+    }
+    const accountTimeZone = input.accountTimeZone.trim()
+    return {
+      ok: true,
+      businessName,
+      hasNoWebsite: true,
+      ...(country ? { businessCountry: country } : {}),
+      accountCurrencyCode,
+      ...(accountTimeZone ? { accountTimeZone } : {}),
+    }
+  }
+
   const websiteTrimmed = input.websiteUrl.trim()
   if (!websiteTrimmed) {
     return { ok: false, message: 'Website is required.', field: 'websiteUrl' }
@@ -256,10 +286,6 @@ export function validateCustomerSignupDetailsForm(input: {
   const urlCheck = validateHttpUrl(websiteTrimmed)
   if (!urlCheck.ok) {
     return { ok: false, message: urlCheck.message, field: 'websiteUrl' }
-  }
-
-  if (!input.termsAccepted) {
-    return { ok: false, message: 'You must accept the terms and conditions.' }
   }
 
   const country = input.businessCountry.trim().toUpperCase()
@@ -277,6 +303,7 @@ export function validateCustomerSignupDetailsForm(input: {
   return {
     ok: true,
     businessName,
+    hasNoWebsite: false,
     websiteUrl: urlCheck.value,
     ...(country ? { businessCountry: country } : {}),
     accountCurrencyCode,

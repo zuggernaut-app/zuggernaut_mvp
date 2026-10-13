@@ -133,14 +133,7 @@ async function completeCustomerSignupDetails(doc, userId, body) {
     };
   }
 
-  const websiteRaw = typeof body?.websiteUrl === 'string' ? body.websiteUrl.trim() : '';
-  if (!websiteRaw) {
-    return { ok: false, message: 'websiteUrl is required' };
-  }
-  const urlCheck = validateHttpUrl(websiteRaw);
-  if (!urlCheck.ok) {
-    return { ok: false, message: urlCheck.message };
-  }
+  const hasNoWebsite = body?.hasNoWebsite === true;
 
   if (body?.termsAccepted !== true) {
     return { ok: false, message: 'You must accept the terms and conditions' };
@@ -170,30 +163,43 @@ async function completeCustomerSignupDetails(doc, userId, body) {
   const serveParsed = parseWhereTheyServe(body?.whereTheyServe);
   if (!serveParsed.ok) return serveParsed;
 
-  const normalizedWebsite = normalizeStartUrl(urlCheck.value);
+  let normalizedWebsite;
+  if (!hasNoWebsite) {
+    const websiteRaw = typeof body?.websiteUrl === 'string' ? body.websiteUrl.trim() : '';
+    if (!websiteRaw) {
+      return { ok: false, message: 'websiteUrl is required', field: 'websiteUrl' };
+    }
+    const urlCheck = validateHttpUrl(websiteRaw);
+    if (!urlCheck.ok) {
+      return { ok: false, message: urlCheck.message, field: 'websiteUrl' };
+    }
+
+    normalizedWebsite = normalizeStartUrl(urlCheck.value);
+
+    let scrapeResult;
+    try {
+      scrapeResult = await runStaticScrape(normalizedWebsite);
+    } catch (err) {
+      logger.warn(
+        {
+          businessId: String(doc.businessId),
+          errName: err?.name,
+          errMessage: typeof err?.message === 'string' ? err.message.slice(0, 200) : undefined,
+        },
+        'customer_signup_details_website_probe_failed',
+      );
+      return { ok: false, message: WEBSITE_INVALID_MESSAGE, field: 'websiteUrl' };
+    }
+
+    if (!staticScrapeIndicatesWebsiteOpens(scrapeResult)) {
+      return { ok: false, message: WEBSITE_INVALID_MESSAGE, field: 'websiteUrl' };
+    }
+  }
+
   const previousWebsite =
     typeof doc.websiteUrl === 'string' && doc.websiteUrl.trim()
       ? normalizeStartUrl(doc.websiteUrl)
       : '';
-
-  let scrapeResult;
-  try {
-    scrapeResult = await runStaticScrape(normalizedWebsite);
-  } catch (err) {
-    logger.warn(
-      {
-        businessId: String(doc.businessId),
-        errName: err?.name,
-        errMessage: typeof err?.message === 'string' ? err.message.slice(0, 200) : undefined,
-      },
-      'customer_signup_details_website_probe_failed',
-    );
-    return { ok: false, message: WEBSITE_INVALID_MESSAGE, field: 'websiteUrl' };
-  }
-
-  if (!staticScrapeIndicatesWebsiteOpens(scrapeResult)) {
-    return { ok: false, message: WEBSITE_INVALID_MESSAGE, field: 'websiteUrl' };
-  }
 
   const now = new Date();
   const intakeFieldSources = {
@@ -201,7 +207,6 @@ async function completeCustomerSignupDetails(doc, userId, body) {
       ? doc.intakeFieldSources
       : {}),
     businessName: 'customer',
-    websiteUrl: 'customer',
     termsAcceptedAt: 'customer',
     ...(countryParsed.value ? { businessCountry: 'customer' } : {}),
     accountCurrencyCode: 'customer',
@@ -214,7 +219,6 @@ async function completeCustomerSignupDetails(doc, userId, body) {
   };
 
   doc.businessName = businessName;
-  doc.websiteUrl = normalizedWebsite;
   doc.businessCountry = countryParsed.value;
   doc.accountCurrencyCode = accountCurrencyCode;
   doc.accountTimeZone = timeZoneParsed.value;
@@ -227,28 +231,37 @@ async function completeCustomerSignupDetails(doc, userId, body) {
   doc.signupCompletedAt = now;
   doc.intakeFieldSources = intakeFieldSources;
 
-  await doc.save();
-
-  if (previousWebsite && previousWebsite !== normalizedWebsite) {
-    await prepareSignupScrapeForWebsiteUrlChange({
-      businessId: doc.businessId,
-      previousWebsiteUrl: previousWebsite,
-      nextWebsiteUrl: normalizedWebsite,
-    });
+  if (hasNoWebsite) {
+    doc.websiteUrl = undefined;
+  } else {
+    doc.websiteUrl = normalizedWebsite;
+    intakeFieldSources.websiteUrl = 'customer';
   }
 
-  try {
-    await startSignupScrape(doc.businessId, userId, normalizedWebsite);
-  } catch (err) {
-    logger.warn(
-      {
-        businessId: String(doc.businessId),
-        errName: err?.name,
-        errCode: err?.code,
-        errMessage: typeof err?.message === 'string' ? err.message.slice(0, 200) : undefined,
-      },
-      'customer_signup_details_scrape_start_failed',
-    );
+  await doc.save();
+
+  if (!hasNoWebsite && normalizedWebsite) {
+    if (previousWebsite && previousWebsite !== normalizedWebsite) {
+      await prepareSignupScrapeForWebsiteUrlChange({
+        businessId: doc.businessId,
+        previousWebsiteUrl: previousWebsite,
+        nextWebsiteUrl: normalizedWebsite,
+      });
+    }
+
+    try {
+      await startSignupScrape(doc.businessId, userId, normalizedWebsite);
+    } catch (err) {
+      logger.warn(
+        {
+          businessId: String(doc.businessId),
+          errName: err?.name,
+          errCode: err?.code,
+          errMessage: typeof err?.message === 'string' ? err.message.slice(0, 200) : undefined,
+        },
+        'customer_signup_details_scrape_start_failed',
+      );
+    }
   }
 
   return { ok: true, doc };

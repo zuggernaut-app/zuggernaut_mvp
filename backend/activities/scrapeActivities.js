@@ -186,8 +186,14 @@ async function persistScrapeResultActivity(input) {
     return { persisted: true, idempotent: true };
   }
 
+  const signupScrapeNoWebsiteOnBusiness =
+    run.purpose === 'signup' &&
+    (typeof doc.websiteUrl !== 'string' || !doc.websiteUrl.trim());
+
   try {
-    doc.websiteUrl = websiteUrl || doc.websiteUrl;
+    if (!signupScrapeNoWebsiteOnBusiness) {
+      doc.websiteUrl = websiteUrl || doc.websiteUrl;
+    }
     doc.rawScrapeOutput = mergeRawScrapeOutput(doc.rawScrapeOutput, {
       ...rawPayload,
       scrapeRunId: scrapeRunIdRaw,

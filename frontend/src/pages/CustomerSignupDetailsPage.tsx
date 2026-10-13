@@ -13,7 +13,7 @@ import {
   browserTimeZoneId,
   currencyLabel,
   listCountryOptions,
-  listTimeZoneOptions,
+  listTimeZoneSelectOptions,
   preselectedCurrencyForCountry,
   type SignupAccountCurrency,
 } from '../lib/signupAccount'
@@ -26,11 +26,13 @@ export function CustomerSignupDetailsPage(): ReactElement {
   const businessId = snapshot.businessId ?? user?.primaryBusinessId ?? null
 
   const countryOptions = useMemo(() => listCountryOptions(), [])
-  const timeZoneOptions = useMemo(() => listTimeZoneOptions(), [])
+  const timeZoneOptions = useMemo(() => listTimeZoneSelectOptions(), [])
 
   const [businessName, setBusinessName] = useState('')
   const [websiteUrl, setWebsiteUrl] = useState('')
+  const [hasNoWebsite, setHasNoWebsite] = useState(false)
   const [websiteFieldError, setWebsiteFieldError] = useState<string | null>(null)
+  const [termsFieldError, setTermsFieldError] = useState<string | null>(null)
   const [businessCountry, setBusinessCountry] = useState('')
   const [accountCurrencyCode, setAccountCurrencyCode] = useState<SignupAccountCurrency>('USD')
   const [accountTimeZone, setAccountTimeZone] = useState(() => browserTimeZoneId())
@@ -63,7 +65,18 @@ export function CustomerSignupDetailsPage(): ReactElement {
         const ctx = res.businessContext
         if (cancelled) return
         setBusinessName(ctx.businessName ?? '')
-        setWebsiteUrl(ctx.websiteUrl ?? '')
+        const savedWebsite =
+          typeof ctx.websiteUrl === 'string' && ctx.websiteUrl.trim() ? ctx.websiteUrl : ''
+        if (savedWebsite) {
+          setHasNoWebsite(false)
+          setWebsiteUrl(savedWebsite)
+        } else if (ctx.signupCompletedAt) {
+          setHasNoWebsite(true)
+          setWebsiteUrl('')
+        } else {
+          setHasNoWebsite(false)
+          setWebsiteUrl('')
+        }
         setBusinessCountry(ctx.businessCountry ?? '')
         if (ctx.accountCurrencyCode) {
           setAccountCurrencyCode(ctx.accountCurrencyCode as SignupAccountCurrency)
@@ -94,23 +107,36 @@ export function CustomerSignupDetailsPage(): ReactElement {
     }
   }, [businessId])
 
+  function onHasNoWebsiteChange(checked: boolean): void {
+    setHasNoWebsite(checked)
+    if (checked) {
+      setWebsiteUrl('')
+      setWebsiteFieldError(null)
+    }
+  }
+
   async function onSubmit(e: FormEvent): Promise<void> {
     e.preventDefault()
     setError(null)
     setWebsiteFieldError(null)
+    setTermsFieldError(null)
 
     const form = validateCustomerSignupDetailsForm({
       businessName,
       websiteUrl,
+      hasNoWebsite,
       termsAccepted,
       businessCountry,
       accountCurrencyCode,
       accountTimeZone,
     })
     if (!form.ok) {
-      setError(form.message)
       if (form.field === 'websiteUrl') {
         setWebsiteFieldError(form.message)
+      } else if (form.field === 'terms') {
+        setTermsFieldError(form.message)
+      } else {
+        setError(form.message)
       }
       return
     }
@@ -124,8 +150,11 @@ export function CustomerSignupDetailsPage(): ReactElement {
     try {
       await completeCustomerSignupDetails(businessId, {
         businessName: form.businessName,
-        websiteUrl: form.websiteUrl,
         termsAccepted: true,
+        hasNoWebsite: form.hasNoWebsite,
+        ...(form.hasNoWebsite || form.websiteUrl === undefined
+          ? {}
+          : { websiteUrl: form.websiteUrl }),
         businessCountry: form.businessCountry,
         accountCurrencyCode: form.accountCurrencyCode,
         accountTimeZone: form.accountTimeZone,
@@ -144,7 +173,6 @@ export function CustomerSignupDetailsPage(): ReactElement {
           : undefined
         if (field === 'websiteUrl' || err.message === 'please enter valid website details') {
           setWebsiteFieldError('please enter valid website details')
-          setError(null)
         } else {
           setError(err.message)
         }
@@ -172,7 +200,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
       <form className="form" onSubmit={(e) => void onSubmit(e)}>
         <ErrorAlert message={error} />
         <div className="field">
-          <label htmlFor="businessName">Business name</label>
+          <label htmlFor="businessName">Business name *</label>
           <input
             id="businessName"
             name="businessName"
@@ -184,7 +212,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
           />
         </div>
         <div className="field">
-          <label htmlFor="websiteUrl">Website</label>
+          <label htmlFor="websiteUrl">Website *</label>
           <input
             id="websiteUrl"
             name="websiteUrl"
@@ -192,7 +220,8 @@ export function CustomerSignupDetailsPage(): ReactElement {
             inputMode="url"
             autoComplete="url"
             spellCheck={false}
-            required
+            required={!hasNoWebsite}
+            disabled={hasNoWebsite}
             maxLength={MAX_URL_LENGTH}
             value={websiteUrl}
             onChange={(e) => {
@@ -206,9 +235,21 @@ export function CustomerSignupDetailsPage(): ReactElement {
               {websiteFieldError}
             </p>
           ) : null}
+          <label style={{ display: 'block', marginTop: '0.5rem' }}>
+            <input
+              type="checkbox"
+              checked={hasNoWebsite}
+              onChange={(e) => onHasNoWebsiteChange(e.target.checked)}
+            />
+            {' '}
+            I do not have a website
+          </label>
         </div>
+        <p style={{ margin: '0 0 0.75rem', color: 'var(--color-muted)', fontSize: '0.95rem' }}>
+          The rest can wait until the call.
+        </p>
         <div className="field">
-          <label htmlFor="businessCountry">Business country (optional)</label>
+          <label htmlFor="businessCountry">Business country</label>
           <select
             id="businessCountry"
             name="businessCountry"
@@ -224,7 +265,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
           </select>
         </div>
         <div className="field">
-          <label htmlFor="accountCurrencyCode">Account currency (optional)</label>
+          <label htmlFor="accountCurrencyCode">Account currency</label>
           <select
             id="accountCurrencyCode"
             name="accountCurrencyCode"
@@ -239,7 +280,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
           </select>
         </div>
         <div className="field">
-          <label htmlFor="accountTimeZone">Time zone (optional)</label>
+          <label htmlFor="accountTimeZone">Time zone</label>
           <select
             id="accountTimeZone"
             name="accountTimeZone"
@@ -248,14 +289,14 @@ export function CustomerSignupDetailsPage(): ReactElement {
           >
             <option value="">Select time zone</option>
             {timeZoneOptions.map((tz) => (
-              <option key={tz} value={tz}>
-                {tz}
+              <option key={tz.value} value={tz.value}>
+                {tz.label}
               </option>
             ))}
           </select>
         </div>
         <div className="field">
-          <label htmlFor="whatYouSell">What you sell (optional)</label>
+          <label htmlFor="whatYouSell">What you sell</label>
           <input
             id="whatYouSell"
             name="whatYouSell"
@@ -265,7 +306,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
           />
         </div>
         <div className="field">
-          <label htmlFor="whoBuysToday">Who buys from you today (optional)</label>
+          <label htmlFor="whoBuysToday">Who buys from you today</label>
           <input
             id="whoBuysToday"
             name="whoBuysToday"
@@ -275,7 +316,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
           />
         </div>
         <div className="field">
-          <label htmlFor="whereTheyServe">Where you serve customers (optional)</label>
+          <label htmlFor="whereTheyServe">Where you serve customers</label>
           <input
             id="whereTheyServe"
             name="whereTheyServe"
@@ -285,7 +326,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
           />
         </div>
         <div className="field">
-          <label htmlFor="howBuyersContact">How buyers get in touch (optional)</label>
+          <label htmlFor="howBuyersContact">How buyers get in touch</label>
           <input
             id="howBuyersContact"
             name="howBuyersContact"
@@ -295,7 +336,7 @@ export function CustomerSignupDetailsPage(): ReactElement {
           />
         </div>
         <div className="field">
-          <label htmlFor="orderValueHint">Typical order value (optional)</label>
+          <label htmlFor="orderValueHint">Typical order value</label>
           <input
             id="orderValueHint"
             name="orderValueHint"
@@ -309,7 +350,10 @@ export function CustomerSignupDetailsPage(): ReactElement {
             <input
               type="checkbox"
               checked={termsAccepted}
-              onChange={(e) => setTermsAccepted(e.target.checked)}
+              onChange={(e) => {
+                setTermsAccepted(e.target.checked)
+                setTermsFieldError(null)
+              }}
             />
             {' '}
             I accept the{' '}
@@ -317,6 +361,11 @@ export function CustomerSignupDetailsPage(): ReactElement {
               terms and conditions
             </span>
           </label>
+          {termsFieldError ? (
+            <p role="alert" style={{ color: 'var(--color-danger)', margin: '0.35rem 0 0' }}>
+              {termsFieldError}
+            </p>
+          ) : null}
         </div>
         <div className="actions">
           <button type="submit" className="btn btn-primary" disabled={busy}>

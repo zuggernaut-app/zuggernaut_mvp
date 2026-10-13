@@ -26,7 +26,8 @@ export function updateBusinessContext(
 
 export interface CustomerSignupDetailsBody {
   businessName: string
-  websiteUrl: string
+  hasNoWebsite?: boolean
+  websiteUrl?: string
   termsAccepted: true
   businessCountry?: string
   accountCurrencyCode: string
