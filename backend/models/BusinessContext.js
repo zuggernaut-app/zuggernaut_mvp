@@ -78,8 +78,23 @@ const businessContextSchema = new mongoose.Schema(
     },
     susoVersion: { type: Number, default: 0 },
     susoVersionUpdatedAt: { type: Date },
-    /** ISO 3166-1 alpha-2; operator-recorded; drives call-campaign eligibility. */
+    /** ISO 3166-1 alpha-2; customer at signup or operator later; drives call-campaign eligibility. */
     businessCountry: { type: String, trim: true, uppercase: true },
+    /** Customer-chosen Google Ads account currency at signup (immutable after account create). */
+    accountCurrencyCode: {
+      type: String,
+      enum: ['USD', 'EUR', 'GBP', 'INR', 'AUD', 'CAD'],
+      trim: true,
+      uppercase: true,
+    },
+    /** Customer-proposed Google Ads account time zone at signup; confirmed on operator call. */
+    accountTimeZone: { type: String, trim: true },
+    /** Whether someone can open the business website during the confirmation call. */
+    websiteAccessibleDuringCall: { type: Boolean },
+    /** When the customer agreed to a Zuggernaut-managed Google Ads account under MCC. */
+    managedAdsAccountConsentAt: { type: Date },
+    /** Customer finished the self-serve signup step (distinct from business-questions intake). */
+    signupCompletedAt: { type: Date },
     /** Set when the operator completes the confirmation call (distinct from customer context confirm). */
     setupCallConfirmedAt: { type: Date },
     /** Set when the operator completes at least one fact-check submission. */

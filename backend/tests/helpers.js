@@ -54,6 +54,21 @@ function attachCsrfToAgent(agent) {
   return agent;
 }
 
+function signupRegisterPayload(overrides = {}) {
+  const payload = {
+    businessName: 'Test Business',
+    businessCountry: 'US',
+    accountCurrencyCode: 'USD',
+    accountTimeZone: 'America/New_York',
+    websiteAccessibleDuringCall: true,
+    managedAdsAccountConsent: true,
+  };
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) payload[key] = value;
+  }
+  return payload;
+}
+
 /** Register via `/auth/register`; session cookie is retained on returned `agent`. */
 async function registerAgent(app, email, options = {}) {
   const agent = attachCsrfToAgent(request.agent(app));
@@ -65,6 +80,13 @@ async function registerAgent(app, email, options = {}) {
       email,
       password,
       phone: options.phone ?? TEST_PHONE_DEFAULT,
+      ...signupRegisterPayload({
+        businessName: options.businessName,
+        businessCountry: options.businessCountry,
+        accountCurrencyCode: options.accountCurrencyCode,
+        accountTimeZone: options.accountTimeZone,
+        websiteAccessibleDuringCall: options.websiteAccessibleDuringCall,
+      }),
       ...(name !== undefined ? { name } : {}),
       ...(options.websiteUrl !== undefined ? { websiteUrl: options.websiteUrl } : {}),
     })
@@ -89,6 +111,7 @@ async function createBareUser(email = 'bare@test.com') {
 }
 
 module.exports = {
+  signupRegisterPayload,
   TEST_PASSWORD_DEFAULT,
   TEST_PHONE_DEFAULT,
   registerAgent,

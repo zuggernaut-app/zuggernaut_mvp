@@ -96,6 +96,46 @@ describe('HomePage', () => {
     expect(screen.queryByRole('link', { name: /^continue$/i })).not.toBeInTheDocument()
   })
 
+  it('shows thank you when signup is complete without sending user to account links', async () => {
+    hoisted.mockListBusinessContexts.mockResolvedValue({
+      businessContexts: [
+        {
+          businessId: TEST_IDS.business,
+          userId: TEST_IDS.user,
+          websiteUrl: null,
+          businessName: 'Acme',
+          industry: null,
+          services: [],
+          serviceAreas: [],
+          contactMethods: null,
+          audienceSignals: null,
+          goals: null,
+          differentiators: null,
+          orderValueHint: null,
+          thankYouUrls: [],
+          uvp: null,
+          competitorLandscape: null,
+          businessScope: null,
+          valueComplexity: null,
+          budgetTier: null,
+          susoVersion: 0,
+          susoVersionUpdatedAt: null,
+          confirmedAt: null,
+          accountLinksCompletedAt: null,
+          questionsCompletedAt: null,
+          signupCompletedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    })
+    seedSession({ userId: TEST_IDS.user, businessId: TEST_IDS.business })
+
+    renderHome()
+
+    expect(await screen.findByRole('heading', { name: /^thank you$/i })).toBeInTheDocument()
+    expect(screen.queryByTestId('accounts-target')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /change your answers/i })).not.toBeInTheDocument()
+  })
+
   it('redirects to account links when onboarding is in progress', async () => {
     hoisted.mockListBusinessContexts.mockResolvedValue({
       businessContexts: [

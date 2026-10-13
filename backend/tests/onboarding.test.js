@@ -7,7 +7,12 @@ jest.mock('../lib/temporalClient', () => ({
 const request = require('supertest');
 const mongoose = require('mongoose');
 const { createApp } = require('../app');
-const { registerAgent, TEST_PASSWORD_DEFAULT, TEST_PHONE_DEFAULT } = require('./helpers');
+const {
+  registerAgent,
+  signupRegisterPayload,
+  TEST_PASSWORD_DEFAULT,
+  TEST_PHONE_DEFAULT,
+} = require('./helpers');
 const { getTemporalClient } = require('../lib/temporalClient');
 
 describe('POST /api/v1/onboarding', () => {
@@ -220,7 +225,7 @@ describe('POST /api/v1/onboarding', () => {
           email: 'sl-unlock@test.com',
           password: TEST_PASSWORD_DEFAULT,
           phone: TEST_PHONE_DEFAULT,
-          name: 'Test',
+          ...signupRegisterPayload(),
         })
         .expect(500);
 
@@ -238,7 +243,7 @@ describe('POST /api/v1/onboarding', () => {
           email: 'sl-unlock2@test.com',
           password: TEST_PASSWORD_DEFAULT,
           phone: TEST_PHONE_DEFAULT,
-          name: 'Test',
+          ...signupRegisterPayload(),
         })
         .expect(201);
     });

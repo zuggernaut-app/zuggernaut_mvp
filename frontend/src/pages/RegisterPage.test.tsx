@@ -37,15 +37,27 @@ function renderRegister(): ReturnType<typeof render> {
         <OnboardingProvider>
           <Routes>
             <Route path="/register" element={<RegisterPage />} />
-            <Route
-              path="/onboarding/accounts"
-              element={<div data-testid="accounts-target">accounts ok</div>}
-            />
+            <Route path="/" element={<div data-testid="home-target">home</div>} />
           </Routes>
         </OnboardingProvider>
       </AuthProvider>
     </MemoryRouter>,
   )
+}
+
+async function fillRequiredSignupFields(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.type(screen.getByLabelText(/^email$/i), 'new@example.com')
+  await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
+  await user.type(screen.getByLabelText(/^business name$/i), 'Acme Co')
+  await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
+  await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
+  const tz = screen.getByLabelText(/^account time zone$/i)
+  if (!(tz as HTMLInputElement).value.trim()) {
+    await user.clear(tz)
+    await user.type(tz, 'America/New_York')
+  }
+  await user.click(screen.getByLabelText(/^yes$/i))
+  await user.click(screen.getByRole('checkbox'))
 }
 
 describe('RegisterPage', () => {
@@ -97,83 +109,54 @@ describe('RegisterPage', () => {
     const user = userEvent.setup()
     renderRegister()
 
-    await user.type(screen.getByLabelText(/^email$/i), 'taken@example.com')
-    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
-    await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
-    await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
+    await fillRequiredSignupFields(user)
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Email taken')
   })
 
-  it('persists user id and navigates after successful registration', async () => {
+  it('persists user id and navigates home after successful registration', async () => {
     const user = userEvent.setup()
     renderRegister()
 
-    await user.type(screen.getByLabelText(/^email$/i), 'new@example.com')
-    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
-    await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
-    await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
+    await fillRequiredSignupFields(user)
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('accounts-target')).toBeInTheDocument()
+      expect(screen.getByTestId('home-target')).toBeInTheDocument()
     })
 
     expect(localStorage.getItem('zuggernaut:userId')).toBe(TEST_IDS.user)
-    expect(hoisted.mockAuthRegister).toHaveBeenCalledWith({
-      email: 'new@example.com',
-      password: 'SecurePass12',
-      phone: '555-123-4567',
-    })
+    expect(hoisted.mockAuthRegister).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'new@example.com',
+        password: 'SecurePass12',
+        phone: '555-123-4567',
+        businessName: 'Acme Co',
+        businessCountry: 'US',
+        accountCurrencyCode: 'USD',
+        managedAdsAccountConsent: true,
+      }),
+    )
   })
 
   it('normalizes bare website domain before register', async () => {
     const user = userEvent.setup()
     renderRegister()
 
-    await user.type(screen.getByLabelText(/^email$/i), 'bare@example.com')
-    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
-    await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
-    await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
+    await fillRequiredSignupFields(user)
     await user.type(screen.getByLabelText(/website \(optional\)/i), 'www.medhahari.in')
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('accounts-target')).toBeInTheDocument()
+      expect(screen.getByTestId('home-target')).toBeInTheDocument()
     })
 
-    expect(hoisted.mockAuthRegister).toHaveBeenCalledWith({
-      email: 'bare@example.com',
-      password: 'SecurePass12',
-      phone: '555-123-4567',
-      websiteUrl: 'https://www.medhahari.in',
-    })
-  })
-
-  it('sends optional name and website when provided', async () => {
-    const user = userEvent.setup()
-    renderRegister()
-
-    await user.type(screen.getByLabelText(/^email$/i), 'u@example.com')
-    await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
-    await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
-    await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
-    await user.type(screen.getByLabelText(/name \(optional\)/i), 'Pat')
-    await user.type(screen.getByLabelText(/website \(optional\)/i), 'https://pat.example')
-    await user.click(screen.getByRole('button', { name: /continue/i }))
-
-    await waitFor(() => {
-      expect(screen.getByTestId('accounts-target')).toBeInTheDocument()
-    })
-
-    expect(hoisted.mockAuthRegister).toHaveBeenCalledWith({
-      email: 'u@example.com',
-      password: 'SecurePass12',
-      phone: '555-123-4567',
-      name: 'Pat',
-      websiteUrl: 'https://pat.example',
-    })
+    expect(hoisted.mockAuthRegister).toHaveBeenCalledWith(
+      expect.objectContaining({
+        websiteUrl: 'https://www.medhahari.in',
+      }),
+    )
   })
 
   it('rejects mismatched passwords', async () => {
@@ -182,8 +165,11 @@ describe('RegisterPage', () => {
 
     await user.type(screen.getByLabelText(/^email$/i), 'pw@example.com')
     await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
+    await user.type(screen.getByLabelText(/^business name$/i), 'Acme')
     await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/confirm password/i), 'OtherPass999')
+    await user.click(screen.getByLabelText(/^yes$/i))
+    await user.click(screen.getByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/match/i)

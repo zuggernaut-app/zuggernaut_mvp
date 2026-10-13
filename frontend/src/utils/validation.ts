@@ -187,6 +187,96 @@ export function validateRegisterWithPasswordForm(
   }
 }
 
+export type SignupRegisterResult =
+  | {
+      ok: true
+      email: string
+      phone: string
+      websiteUrl?: string
+      password: string
+      businessName: string
+      businessCountry: string
+      accountCurrencyCode: string
+      accountTimeZone: string
+      websiteAccessibleDuringCall: boolean
+      managedAdsAccountConsent: true
+    }
+  | { ok: false; message: string }
+
+const SIGNUP_CURRENCIES = new Set(['USD', 'EUR', 'GBP', 'INR', 'AUD', 'CAD'])
+
+export function validateSignupRegisterForm(input: {
+  email: string
+  phone: string
+  websiteUrl: string
+  password: string
+  confirmPassword: string
+  businessName: string
+  businessCountry: string
+  accountCurrencyCode: string
+  accountTimeZone: string
+  websiteAccessibleDuringCall: '' | 'yes' | 'no'
+  managedAdsAccountConsent: boolean
+}): SignupRegisterResult {
+  const basic = validateRegisterWithPasswordForm(
+    input.email,
+    '',
+    input.phone,
+    input.websiteUrl,
+    input.password,
+    input.confirmPassword,
+  )
+  if (!basic.ok) return basic
+
+  const businessName = input.businessName.trim()
+  if (!businessName) {
+    return { ok: false, message: 'Business name is required.' }
+  }
+
+  const businessCountry = input.businessCountry.trim().toUpperCase()
+  if (!/^[A-Z]{2}$/.test(businessCountry)) {
+    return { ok: false, message: 'A valid business country is required.' }
+  }
+
+  const accountCurrencyCode = input.accountCurrencyCode.trim().toUpperCase()
+  if (!SIGNUP_CURRENCIES.has(accountCurrencyCode)) {
+    return { ok: false, message: 'A valid account currency is required.' }
+  }
+
+  const accountTimeZone = input.accountTimeZone.trim()
+  if (!accountTimeZone) {
+    return { ok: false, message: 'Account time zone is required.' }
+  }
+
+  if (input.websiteAccessibleDuringCall !== 'yes' && input.websiteAccessibleDuringCall !== 'no') {
+    return {
+      ok: false,
+      message: 'Please answer whether your website can be opened during the call.',
+    }
+  }
+
+  if (!input.managedAdsAccountConsent) {
+    return {
+      ok: false,
+      message: 'You must agree to managed Google Ads account setup.',
+    }
+  }
+
+  return {
+    ok: true,
+    email: basic.email,
+    phone: basic.phone,
+    websiteUrl: basic.websiteUrl,
+    password: basic.password,
+    businessName,
+    businessCountry,
+    accountCurrencyCode,
+    accountTimeZone,
+    websiteAccessibleDuringCall: input.websiteAccessibleDuringCall === 'yes',
+    managedAdsAccountConsent: true,
+  }
+}
+
 export type LoginFormValidateResult =
   | { ok: true; email: string; password: string }
   | { ok: false; message: string }

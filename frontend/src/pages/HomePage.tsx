@@ -9,7 +9,7 @@ import { PageLayout } from '../components/layout/PageLayout'
 import { InlineLoading } from '../components/feedback/InlineLoading'
 import { useAuth } from '../hooks/useAuth'
 import { useOnboardingState } from '../hooks/useOnboardingState'
-import { isQuestionsComplete, resolveOnboardingPath } from '../lib/onboardingRouting'
+import { isQuestionsComplete, isSignupComplete, resolveOnboardingPath } from '../lib/onboardingRouting'
 import { buildSetupProgressItems } from '../lib/setupProgressUi'
 import type { BusinessContextDto } from '../types/api'
 import type { IntegrationConnectionStatusDto } from '../api/integrations'
@@ -184,8 +184,14 @@ export function HomePage(): ReactElement {
     )
   }
 
-  if (activeContext && isQuestionsComplete(activeContext)) {
-    const progress = buildSetupProgressItems(activeContext, connections, trackingTestResult)
+  if (
+    activeContext &&
+    (isQuestionsComplete(activeContext) || isSignupComplete(activeContext))
+  ) {
+    const questionsDone = isQuestionsComplete(activeContext)
+    const progress = questionsDone
+      ? buildSetupProgressItems(activeContext, connections, trackingTestResult)
+      : []
     return (
       <PageLayout
         title="Thank you"
@@ -194,23 +200,27 @@ export function HomePage(): ReactElement {
         <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
           An expert will call you to help finish setup. You can keep going on your own anytime.
         </p>
-        <ul style={{ margin: '0 0 1rem', paddingLeft: '1.25rem', color: 'var(--color-muted)' }}>
-          {progress.map((item) => (
-            <li key={item.id}>
-              {item.label}: {item.done ? 'Done' : 'Still open'}
-            </li>
-          ))}
-        </ul>
+        {progress.length > 0 ? (
+          <ul style={{ margin: '0 0 1rem', paddingLeft: '1.25rem', color: 'var(--color-muted)' }}>
+            {progress.map((item) => (
+              <li key={item.id}>
+                {item.label}: {item.done ? 'Done' : 'Still open'}
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <div className="actions" style={{ marginBottom: '1rem' }}>
           <Link className="btn btn-primary" to="/business-setup">
             Continue setup
           </Link>
         </div>
-        <p style={{ margin: '0 0 1rem', fontSize: '0.95rem' }}>
-          <Link to="/onboarding/business" state={{ editMode: true }}>
-            Change your answers
-          </Link>
-        </p>
+        {questionsDone ? (
+          <p style={{ margin: '0 0 1rem', fontSize: '0.95rem' }}>
+            <Link to="/onboarding/business" state={{ editMode: true }}>
+              Change your answers
+            </Link>
+          </p>
+        ) : null}
         <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--color-muted)' }}>
           Signed in as <strong>{user.email}</strong>.
         </p>

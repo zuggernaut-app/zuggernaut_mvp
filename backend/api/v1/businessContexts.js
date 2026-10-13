@@ -92,6 +92,12 @@ function serializeBusinessContext(doc, options = {}) {
     susoVersion: typeof doc.susoVersion === 'number' ? doc.susoVersion : 0,
     susoVersionUpdatedAt: doc.susoVersionUpdatedAt ?? null,
     businessCountry: doc.businessCountry ?? null,
+    accountCurrencyCode: doc.accountCurrencyCode ?? null,
+    accountTimeZone: doc.accountTimeZone ?? null,
+    websiteAccessibleDuringCall:
+      typeof doc.websiteAccessibleDuringCall === 'boolean' ? doc.websiteAccessibleDuringCall : null,
+    managedAdsAccountConsentAt: doc.managedAdsAccountConsentAt ?? null,
+    signupCompletedAt: doc.signupCompletedAt ?? null,
     setupCallConfirmedAt: doc.setupCallConfirmedAt ?? null,
     factCheckCompletedAt: doc.factCheckCompletedAt ?? null,
     whoBuysToday: doc.whoBuysToday ?? null,

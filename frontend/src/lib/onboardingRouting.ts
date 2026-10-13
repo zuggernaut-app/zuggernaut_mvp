@@ -9,6 +9,10 @@ export function isAccountLinksComplete(ctx: BusinessContextDto | null | undefine
   return Boolean(ctx?.accountLinksCompletedAt)
 }
 
+export function isSignupComplete(ctx: BusinessContextDto | null | undefined): boolean {
+  return Boolean(ctx?.signupCompletedAt)
+}
+
 /**
  * Next onboarding step for a signed-in user with an active business context.
  * Returns null when onboarding is finished (home shows thank-you or dashboard).
@@ -16,6 +20,7 @@ export function isAccountLinksComplete(ctx: BusinessContextDto | null | undefine
 export function resolveOnboardingPath(ctx: BusinessContextDto | null | undefined): string | null {
   if (!ctx) return null
   if (isQuestionsComplete(ctx)) return null
+  if (isSignupComplete(ctx)) return null
   if (isAccountLinksComplete(ctx)) return '/onboarding/business'
   return '/onboarding/accounts'
 }

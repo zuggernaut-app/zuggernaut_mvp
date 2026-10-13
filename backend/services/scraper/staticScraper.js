@@ -72,6 +72,16 @@ function emptyExtracted(baseUrl) {
   return aggregateToExtracted(createAggregate(), baseUrl || 'https://example.com');
 }
 
+/**
+ * @param {string} html
+ * @returns {string | undefined}
+ */
+function extractHomepageGtmPublicId(html) {
+  if (typeof html !== 'string' || !html) return undefined;
+  const match = html.match(/\bGTM-[A-Z0-9]+\b/i);
+  return match ? match[0].toUpperCase() : undefined;
+}
+
 function buildFailure(websiteUrl, code, pages, errors) {
   const base = normalizeStartUrl(websiteUrl);
   return {
@@ -100,6 +110,8 @@ function buildPageDraft(pageUrl, status, sig, html, normalizedBase) {
   const text = storedPageText(sig.text);
   const title = sig.title || '';
   const pageSignals = extractPageLevelSignals(html, pageUrl);
+  const isHomepage = pageUrl === normalizedBase;
+  const homepageGtmPublicId = isHomepage ? extractHomepageGtmPublicId(html) : undefined;
   return {
     url: pageUrl,
     status,
@@ -107,6 +119,7 @@ function buildPageDraft(pageUrl, status, sig, html, normalizedBase) {
     text,
     almostEmpty: isPageAlmostEmpty({ text, title }, pageSignals, pageUrl),
     priority: getPageFetchPriority(pageUrl, normalizedBase),
+    ...(homepageGtmPublicId ? { homepageGtmPublicId } : {}),
   };
 }
 
@@ -134,11 +147,12 @@ async function applyFirecrawlFallback(drafts, normalizedBase) {
     }
   }
 
-  return drafts.map(({ url, status, text, title }) => ({
+  return drafts.map(({ url, status, text, title, homepageGtmPublicId }) => ({
     url,
     status,
     text,
     title,
+    ...(homepageGtmPublicId ? { homepageGtmPublicId } : {}),
   }));
 }
 

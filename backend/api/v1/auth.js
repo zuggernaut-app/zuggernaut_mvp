@@ -9,7 +9,6 @@ const {
   isValidEmail,
   isValidPhone,
   MAX_EMAIL_LENGTH,
-  MAX_NAME_LENGTH,
   validateOptionalHttpUrl,
 } = require('../../lib/validation');
 const { hashPassword, verifyPassword } = require('../../lib/auth/passwordHash');
@@ -36,6 +35,11 @@ const { requireAuth } = require('./middleware/requireAuth');
 const { createBusinessDraftForUser } = require('../../services/onboarding/businessDraftService');
 const { startSignupScrape } = require('../../services/capabilities/leadCampaignScrapeService');
 const { createLogger } = require('../../lib/observability/logger');
+const {
+  normalizeSignupAccountCurrency,
+  isIsoCountryCode,
+} = require('../../constants/signupAccount');
+const { MAX_SINGLE_LINE_FIELD } = require('../../lib/validation');
 
 const registrationLogger = createLogger({ name: 'auth.registration' });
 
@@ -107,12 +111,75 @@ function attachSessionCookie(res, user) {
   issueCsrfCookie(res);
 }
 
-async function bootstrapRegistrationBusiness(user) {
+/**
+ * @param {object} signup
+ */
+function parseRegistrationSignupInput(body) {
+  const businessName =
+    typeof body?.businessName === 'string' ? body.businessName.trim() : '';
+  const businessCountry =
+    typeof body?.businessCountry === 'string' ? body.businessCountry.trim().toUpperCase() : '';
+  const accountCurrencyCode = normalizeSignupAccountCurrency(body?.accountCurrencyCode);
+  const accountTimeZone =
+    typeof body?.accountTimeZone === 'string' ? body.accountTimeZone.trim() : '';
+  const websiteAccessibleDuringCall = body?.websiteAccessibleDuringCall;
+  const managedAdsAccountConsent = body?.managedAdsAccountConsent === true;
+
+  if (!businessName) {
+    return { ok: false, message: 'Business name is required' };
+  }
+  if (businessName.length > MAX_SINGLE_LINE_FIELD) {
+    return {
+      ok: false,
+      message: `businessName must be at most ${MAX_SINGLE_LINE_FIELD} characters`,
+    };
+  }
+  if (!isIsoCountryCode(businessCountry)) {
+    return { ok: false, message: 'A valid business country is required' };
+  }
+  if (!accountCurrencyCode) {
+    return { ok: false, message: 'A valid account currency is required' };
+  }
+  if (!accountTimeZone) {
+    return { ok: false, message: 'Account time zone is required' };
+  }
+  if (typeof websiteAccessibleDuringCall !== 'boolean') {
+    return {
+      ok: false,
+      message: 'Please answer whether your website can be opened during the call',
+    };
+  }
+  if (!managedAdsAccountConsent) {
+    return {
+      ok: false,
+      message: 'You must agree to managed Google Ads account setup',
+    };
+  }
+
+  return {
+    ok: true,
+    businessName,
+    businessCountry,
+    accountCurrencyCode,
+    accountTimeZone,
+    websiteAccessibleDuringCall,
+  };
+}
+
+async function bootstrapRegistrationBusiness(user, signup) {
   const { businessId } = await createBusinessDraftForUser(user._id);
   const websiteCheck = validateOptionalHttpUrl(user.websiteUrl ?? '');
   const websiteUrl = websiteCheck.ok ? websiteCheck.value : undefined;
+  const now = new Date();
 
   const update = {
+    businessName: signup.businessName,
+    businessCountry: signup.businessCountry,
+    accountCurrencyCode: signup.accountCurrencyCode,
+    accountTimeZone: signup.accountTimeZone,
+    websiteAccessibleDuringCall: signup.websiteAccessibleDuringCall,
+    managedAdsAccountConsentAt: now,
+    signupCompletedAt: now,
     websiteUrl: websiteUrl ?? undefined,
     contactMethods: {
       emails: [user.email],
@@ -121,6 +188,11 @@ async function bootstrapRegistrationBusiness(user) {
     intakeFieldSources: {
       phone: 'customer',
       email: 'customer',
+      businessName: 'customer',
+      businessCountry: 'customer',
+      accountCurrencyCode: 'customer',
+      accountTimeZone: 'customer',
+      websiteAccessibleDuringCall: 'customer',
       ...(websiteUrl ? { websiteUrl: 'customer' } : {}),
     },
   };
@@ -157,7 +229,6 @@ router.get('/csrf', (_req, res) => {
 router.post('/register', authWriteLimiter, async (req, res, next) => {
   const emailRaw =
     typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  const nameRaw = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   const phoneRaw = typeof req.body?.phone === 'string' ? req.body.phone.trim() : '';
   const websiteRaw = typeof req.body?.websiteUrl === 'string' ? req.body.websiteUrl.trim() : '';
   const pwdRaw = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -195,15 +266,9 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
     return res.status(400).json({ error: 'validation_error', message: pwnedCheck.message });
   }
 
-  let name;
-  if (nameRaw) {
-    if (nameRaw.length > MAX_NAME_LENGTH) {
-      return res.status(400).json({
-        error: 'validation_error',
-        message: `name must be at most ${MAX_NAME_LENGTH} characters`,
-      });
-    }
-    name = nameRaw;
+  const signupInput = parseRegistrationSignupInput(req.body);
+  if (!signupInput.ok) {
+    return res.status(400).json({ error: 'validation_error', message: signupInput.message });
   }
 
   const websiteCheck = validateOptionalHttpUrl(websiteRaw);
@@ -213,13 +278,12 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
     const passwordHash = await hashPassword(pwdRaw);
     const user = await User.create({
       email: emailRaw,
-      name: name || undefined,
       phone: phoneRaw,
       websiteUrl: websiteUrl || undefined,
       passwordHash,
     });
 
-    const primaryBusinessId = await bootstrapRegistrationBusiness(user);
+    const primaryBusinessId = await bootstrapRegistrationBusiness(user, signupInput);
 
     attachSessionCookie(res, user);
 

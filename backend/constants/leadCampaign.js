@@ -6,19 +6,44 @@ const INTAKE_FIELD_SOURCES = Object.freeze(['customer', 'operator', 'ai_guess'])
 /** Managed MVP campaign slots (cap applies to these only). */
 const LEAD_CAMPAIGN_SLOTS = Object.freeze(['recommended', 'alternative']);
 
-const SUPPORTED_ACCOUNT_CURRENCIES = Object.freeze(['USD', 'INR']);
+const SUPPORTED_ACCOUNT_CURRENCIES = Object.freeze(['USD', 'EUR', 'GBP', 'INR', 'AUD', 'CAD']);
 
 /** Daily floor per campaign in account currency minor units (micros for USD; paise-equivalent scale for INR). */
 const FLOOR_DAILY_MICROS = Object.freeze({
   USD: 5_000_000,
+  EUR: 4_500_000,
+  GBP: 4_000_000,
   INR: 400_000_000,
+  AUD: 7_500_000,
+  CAD: 6_500_000,
 });
 
 /** Combined daily ceiling per plan tier in account currency micros. */
 const PLAN_CEILING_DAILY_MICROS = Object.freeze({
-  starter: { USD: 10_000_000, INR: 800_000_000 },
-  middle: { USD: 25_000_000, INR: 2_000_000_000 },
-  top: { USD: 50_000_000, INR: 4_000_000_000 },
+  starter: {
+    USD: 10_000_000,
+    EUR: 9_000_000,
+    GBP: 8_000_000,
+    INR: 800_000_000,
+    AUD: 15_000_000,
+    CAD: 13_000_000,
+  },
+  middle: {
+    USD: 25_000_000,
+    EUR: 22_500_000,
+    GBP: 20_000_000,
+    INR: 2_000_000_000,
+    AUD: 37_000_000,
+    CAD: 33_000_000,
+  },
+  top: {
+    USD: 50_000_000,
+    EUR: 45_000_000,
+    GBP: 40_000_000,
+    INR: 4_000_000_000,
+    AUD: 75_000_000,
+    CAD: 67_000_000,
+  },
 });
 
 /** Operator send-back reason codes for campaign review. */

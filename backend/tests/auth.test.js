@@ -3,7 +3,12 @@
 const request = require('supertest');
 const { createApp } = require('../app');
 const { PASSWORD_MIN_LENGTH } = require('../lib/auth/passwordPolicy');
-const { TEST_PASSWORD_DEFAULT, TEST_PHONE_DEFAULT, registerAgent } = require('./helpers');
+const {
+  TEST_PASSWORD_DEFAULT,
+  TEST_PHONE_DEFAULT,
+  registerAgent,
+  signupRegisterPayload,
+} = require('./helpers');
 
 describe('/api/v1/auth', () => {
   const app = createApp();
@@ -14,7 +19,8 @@ describe('/api/v1/auth', () => {
       .send({
         email: 'short_pw@example.com',
         password: 'a'.repeat(PASSWORD_MIN_LENGTH - 1),
-        name: 'X',
+        phone: TEST_PHONE_DEFAULT,
+        ...signupRegisterPayload(),
       })
       .expect(400);
 
@@ -30,6 +36,27 @@ describe('/api/v1/auth', () => {
     expect(me.body.user.primaryBusinessId).toMatch(/^[a-f0-9]{24}$/);
   });
 
+  it('register persists signup choices on BusinessContext', async () => {
+    const mongoose = require('mongoose');
+    const BusinessContext = mongoose.model('BusinessContext');
+    const { primaryBusinessId } = await registerAgent(app, 'signup_ctx@example.com', {
+      businessName: 'Widget LLC',
+      businessCountry: 'IN',
+      accountCurrencyCode: 'INR',
+      accountTimeZone: 'Asia/Kolkata',
+      websiteAccessibleDuringCall: false,
+    });
+
+    const ctx = await BusinessContext.findOne({ businessId: primaryBusinessId }).lean();
+    expect(ctx.businessName).toBe('Widget LLC');
+    expect(ctx.businessCountry).toBe('IN');
+    expect(ctx.accountCurrencyCode).toBe('INR');
+    expect(ctx.accountTimeZone).toBe('Asia/Kolkata');
+    expect(ctx.websiteAccessibleDuringCall).toBe(false);
+    expect(ctx.signupCompletedAt).toBeTruthy();
+    expect(ctx.managedAdsAccountConsentAt).toBeTruthy();
+  });
+
   it('/me includes primaryBusinessId when set', async () => {
     const { agent, primaryBusinessId } = await registerAgent(app, 'primary_biz@example.com');
 
@@ -41,12 +68,12 @@ describe('/api/v1/auth', () => {
     const email = 'dup_auth@example.com';
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'A' })
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, ...signupRegisterPayload() })
       .expect(201);
 
     const res = await request(app)
       .post('/api/v1/auth/register')
-      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'B' })
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, ...signupRegisterPayload() })
       .expect(409);
 
     expect(res.body.error).toBe('conflict');
@@ -56,7 +83,7 @@ describe('/api/v1/auth', () => {
     const email = 'login_retry@example.com';
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'A' })
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, ...signupRegisterPayload() })
       .expect(201);
 
     await request(app)
@@ -76,7 +103,7 @@ describe('/api/v1/auth', () => {
     const email = 'login_bad_pw@example.com';
     await request(app)
       .post('/api/v1/auth/register')
-      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, name: 'A' })
+      .send({ email, password: TEST_PASSWORD_DEFAULT, phone: TEST_PHONE_DEFAULT, ...signupRegisterPayload() })
       .expect(201);
 
     const res = await request(app)
@@ -125,7 +152,7 @@ describe('/api/v1/auth', () => {
         email: 'samesite_dev@example.com',
         password: TEST_PASSWORD_DEFAULT,
         phone: TEST_PHONE_DEFAULT,
-        name: 'A',
+        ...signupRegisterPayload(),
       })
       .expect(201);
 
@@ -153,7 +180,7 @@ describe('/api/v1/auth', () => {
         email: 'samesite_prod@example.com',
         password: TEST_PASSWORD_DEFAULT,
         phone: TEST_PHONE_DEFAULT,
-        name: 'A',
+        ...signupRegisterPayload(),
       })
       .expect(201);
 

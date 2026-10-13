@@ -119,6 +119,11 @@ export interface BusinessContextDto {
   whoBuysToday?: string | null
   howBuyersContact?: string | null
   businessCountry?: string | null
+  accountCurrencyCode?: string | null
+  accountTimeZone?: string | null
+  websiteAccessibleDuringCall?: boolean | null
+  managedAdsAccountConsentAt?: string | null
+  signupCompletedAt?: string | null
   intakeFieldSources?: Record<string, string> | null
   intakeSubmissions?: IntakeSubmissionDto[]
   latestFactVersion?: number
