@@ -4,6 +4,7 @@ import { RequireAuth } from './RequireAuth'
 import { RequirePlatformAdmin } from './RequirePlatformAdmin'
 import { HomePage } from '../pages/HomePage'
 import { RegisterPage } from '../pages/RegisterPage'
+import { CustomerSignupDetailsPage } from '../pages/CustomerSignupDetailsPage'
 import { LoginPage } from '../pages/LoginPage'
 import { RequestPasswordResetPage } from '../pages/RequestPasswordResetPage'
 import { PasswordResetPage } from '../pages/PasswordResetPage'
@@ -27,6 +28,14 @@ export function AppRoutes(): ReactElement {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route
+        path="/signup/business-details"
+        element={
+          <RequireAuth>
+            <CustomerSignupDetailsPage />
+          </RequireAuth>
+        }
+      />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/password-reset/request" element={<RequestPasswordResetPage />} />
       <Route path="/password-reset" element={<PasswordResetPage />} />

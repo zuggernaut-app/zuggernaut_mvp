@@ -21,6 +21,5 @@ export function resolveOnboardingPath(ctx: BusinessContextDto | null | undefined
   if (!ctx) return null
   if (isQuestionsComplete(ctx)) return null
   if (isSignupComplete(ctx)) return null
-  if (isAccountLinksComplete(ctx)) return '/onboarding/business'
-  return '/onboarding/accounts'
+  return '/signup/business-details'
 }

@@ -51,6 +51,10 @@ function renderHome(): ReturnType<typeof render> {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route
+              path="/signup/business-details"
+              element={<div data-testid="signup-details-target">details</div>}
+            />
+            <Route
               path="/onboarding/accounts"
               element={<div data-testid="accounts-target">accounts</div>}
             />
@@ -136,7 +140,7 @@ describe('HomePage', () => {
     expect(screen.queryByRole('link', { name: /change your answers/i })).not.toBeInTheDocument()
   })
 
-  it('redirects to account links when onboarding is in progress', async () => {
+  it('redirects to business details when signup is not complete', async () => {
     hoisted.mockListBusinessContexts.mockResolvedValue({
       businessContexts: [
         {
@@ -170,10 +174,10 @@ describe('HomePage', () => {
 
     renderHome()
 
-    expect(await screen.findByTestId('accounts-target')).toBeInTheDocument()
+    expect(await screen.findByTestId('signup-details-target')).toBeInTheDocument()
   })
 
-  it('redirects to business questions when account links are complete', async () => {
+  it('redirects to business details when account links are complete but signup is not', async () => {
     hoisted.mockListBusinessContexts.mockResolvedValue({
       businessContexts: [
         {
@@ -207,7 +211,7 @@ describe('HomePage', () => {
 
     renderHome()
 
-    expect(await screen.findByTestId('business-target')).toBeInTheDocument()
+    expect(await screen.findByTestId('signup-details-target')).toBeInTheDocument()
   })
 
   it('shows campaign dashboard when lead campaigns exist', async () => {
@@ -293,7 +297,7 @@ describe('HomePage', () => {
 
     expect(await screen.findByRole('heading', { name: /^thank you$/i })).toBeInTheDocument()
     expect(screen.getByText(/we'll call you to take this forward/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /continue setup/i })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /continue setup/i })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: /change your answers/i })).toBeInTheDocument()
   })
 

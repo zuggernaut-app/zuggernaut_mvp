@@ -93,6 +93,8 @@ const businessContextSchema = new mongoose.Schema(
     websiteAccessibleDuringCall: { type: Boolean },
     /** When the customer agreed to a Zuggernaut-managed Google Ads account under MCC. */
     managedAdsAccountConsentAt: { type: Date },
+    /** When the customer accepted terms and conditions on the business-details step. */
+    termsAcceptedAt: { type: Date },
     /** Customer finished the self-serve signup step (distinct from business-questions intake). */
     signupCompletedAt: { type: Date },
     /** Set when the operator completes the confirmation call (distinct from customer context confirm). */

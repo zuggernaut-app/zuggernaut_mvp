@@ -9,12 +9,6 @@ export interface LoginBody {
 export interface RegisterBody extends LoginBody {
   phone: string
   websiteUrl?: string
-  businessName: string
-  businessCountry: string
-  accountCurrencyCode: string
-  accountTimeZone: string
-  websiteAccessibleDuringCall: boolean
-  managedAdsAccountConsent: true
 }
 
 export type AuthSessionResponse = { user: UserDto }

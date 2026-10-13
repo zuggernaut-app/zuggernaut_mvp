@@ -35,6 +35,7 @@ const {
   VALUE_COMPLEXITY,
   BUDGET_TIER,
 } = require('../../constants/suso');
+const { completeCustomerSignupDetails } = require('../../services/onboarding/customerSignupDetailsService');
 
 const SOFT_LAUNCH_DEFAULT_UVP = 'Soft-launch default — operator to refine';
 
@@ -97,6 +98,7 @@ function serializeBusinessContext(doc, options = {}) {
     websiteAccessibleDuringCall:
       typeof doc.websiteAccessibleDuringCall === 'boolean' ? doc.websiteAccessibleDuringCall : null,
     managedAdsAccountConsentAt: doc.managedAdsAccountConsentAt ?? null,
+    termsAcceptedAt: doc.termsAcceptedAt ?? null,
     signupCompletedAt: doc.signupCompletedAt ?? null,
     setupCallConfirmedAt: doc.setupCallConfirmedAt ?? null,
     factCheckCompletedAt: doc.factCheckCompletedAt ?? null,
@@ -197,6 +199,67 @@ router.get('/:businessId', requireAuth, async (req, res) => {
     adsReadiness: await validateBusinessContextAdsReadiness(doc),
     susoMatrix: buildSusoMatrix(doc),
   });
+});
+
+router.post('/:businessId/customer-signup-details', requireAuth, async (req, res, next) => {
+  const businessIdRaw = req.params.businessId;
+  if (!mongoose.Types.ObjectId.isValid(businessIdRaw)) {
+    return res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
+  }
+
+  try {
+    await assertBusinessMembershipOrPlatformAdmin(req.user.id, businessIdRaw);
+  } catch (err) {
+    if (err instanceof MembershipCheckError) {
+      const status = err.code === 'forbidden' ? 403 : 404;
+      return res.status(status).json({ error: err.code, message: err.message });
+    }
+    throw err;
+  }
+
+  const businessId = new mongoose.Types.ObjectId(businessIdRaw);
+  let doc;
+  try {
+    doc = await BusinessContext.findOne({ businessId });
+  } catch {
+    return res.status(503).json({
+      error: 'service_unavailable',
+      message: 'Database query failed. Check MongoDB and MONGODB_URI.',
+    });
+  }
+
+  if (!doc) {
+    return res.status(404).json({
+      error: 'not_found',
+      message: 'Business context not found for this user',
+    });
+  }
+
+  try {
+    const result = await completeCustomerSignupDetails(doc, req.user.id, req.body);
+    if (!result.ok) {
+      const payload = {
+        error: 'validation_error',
+        message: result.message,
+      };
+      if (result.field) {
+        payload.field = result.field;
+      }
+      return res.status(400).json(payload);
+    }
+
+    return res.status(200).json({
+      businessContext: serializeBusinessContext(result.doc),
+      adsReadiness: await validateBusinessContextAdsReadiness(result.doc.toObject()),
+      susoMatrix: buildSusoMatrix(result.doc.toObject()),
+    });
+  } catch (err) {
+    if (err?.name === 'ValidationError') {
+      const msg = typeof err.message === 'string' ? err.message : 'Validation failed';
+      return res.status(400).json({ error: 'validation_error', message: msg });
+    }
+    return next(err);
+  }
 });
 
 router.put('/:businessId', requireAuth, async (req, res, next) => {

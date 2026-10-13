@@ -194,16 +194,8 @@ export type SignupRegisterResult =
       phone: string
       websiteUrl?: string
       password: string
-      businessName: string
-      businessCountry: string
-      accountCurrencyCode: string
-      accountTimeZone: string
-      websiteAccessibleDuringCall: boolean
-      managedAdsAccountConsent: true
     }
   | { ok: false; message: string }
-
-const SIGNUP_CURRENCIES = new Set(['USD', 'EUR', 'GBP', 'INR', 'AUD', 'CAD'])
 
 export function validateSignupRegisterForm(input: {
   email: string
@@ -211,12 +203,6 @@ export function validateSignupRegisterForm(input: {
   websiteUrl: string
   password: string
   confirmPassword: string
-  businessName: string
-  businessCountry: string
-  accountCurrencyCode: string
-  accountTimeZone: string
-  websiteAccessibleDuringCall: '' | 'yes' | 'no'
-  managedAdsAccountConsent: boolean
 }): SignupRegisterResult {
   const basic = validateRegisterWithPasswordForm(
     input.email,
@@ -228,13 +214,56 @@ export function validateSignupRegisterForm(input: {
   )
   if (!basic.ok) return basic
 
+  return {
+    ok: true,
+    email: basic.email,
+    phone: basic.phone,
+    websiteUrl: basic.websiteUrl,
+    password: basic.password,
+  }
+}
+
+const SIGNUP_CURRENCIES = new Set(['USD', 'EUR', 'GBP', 'INR', 'AUD', 'CAD'])
+
+export type CustomerSignupDetailsResult =
+  | {
+      ok: true
+      businessName: string
+      websiteUrl: string
+      businessCountry?: string
+      accountCurrencyCode: string
+      accountTimeZone?: string
+    }
+  | { ok: false; message: string; field?: 'websiteUrl' }
+
+export function validateCustomerSignupDetailsForm(input: {
+  businessName: string
+  websiteUrl: string
+  termsAccepted: boolean
+  businessCountry: string
+  accountCurrencyCode: string
+  accountTimeZone: string
+}): CustomerSignupDetailsResult {
   const businessName = input.businessName.trim()
   if (!businessName) {
     return { ok: false, message: 'Business name is required.' }
   }
 
-  const businessCountry = input.businessCountry.trim().toUpperCase()
-  if (!/^[A-Z]{2}$/.test(businessCountry)) {
+  const websiteTrimmed = input.websiteUrl.trim()
+  if (!websiteTrimmed) {
+    return { ok: false, message: 'Website is required.', field: 'websiteUrl' }
+  }
+  const urlCheck = validateHttpUrl(websiteTrimmed)
+  if (!urlCheck.ok) {
+    return { ok: false, message: urlCheck.message, field: 'websiteUrl' }
+  }
+
+  if (!input.termsAccepted) {
+    return { ok: false, message: 'You must accept the terms and conditions.' }
+  }
+
+  const country = input.businessCountry.trim().toUpperCase()
+  if (country && !/^[A-Z]{2}$/.test(country)) {
     return { ok: false, message: 'A valid business country is required.' }
   }
 
@@ -244,36 +273,14 @@ export function validateSignupRegisterForm(input: {
   }
 
   const accountTimeZone = input.accountTimeZone.trim()
-  if (!accountTimeZone) {
-    return { ok: false, message: 'Account time zone is required.' }
-  }
-
-  if (input.websiteAccessibleDuringCall !== 'yes' && input.websiteAccessibleDuringCall !== 'no') {
-    return {
-      ok: false,
-      message: 'Please answer whether your website can be opened during the call.',
-    }
-  }
-
-  if (!input.managedAdsAccountConsent) {
-    return {
-      ok: false,
-      message: 'You must agree to managed Google Ads account setup.',
-    }
-  }
 
   return {
     ok: true,
-    email: basic.email,
-    phone: basic.phone,
-    websiteUrl: basic.websiteUrl,
-    password: basic.password,
     businessName,
-    businessCountry,
+    websiteUrl: urlCheck.value,
+    ...(country ? { businessCountry: country } : {}),
     accountCurrencyCode,
-    accountTimeZone,
-    websiteAccessibleDuringCall: input.websiteAccessibleDuringCall === 'yes',
-    managedAdsAccountConsent: true,
+    ...(accountTimeZone ? { accountTimeZone } : {}),
   }
 }
 

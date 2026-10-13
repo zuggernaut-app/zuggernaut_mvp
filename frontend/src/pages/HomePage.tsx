@@ -192,14 +192,34 @@ export function HomePage(): ReactElement {
     const progress = questionsDone
       ? buildSetupProgressItems(activeContext, connections, trackingTestResult)
       : []
+    const signupThankYou = isSignupComplete(activeContext) && !questionsDone
     return (
       <PageLayout
         title="Thank you"
-        lead="We'll call you to take this forward. You can also continue setup yourself."
+        lead={
+          signupThankYou
+            ? 'We will call you to finish setup.'
+            : "We'll call you to take this forward."
+        }
       >
-        <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-          An expert will call you to help finish setup. You can keep going on your own anytime.
-        </p>
+        {signupThankYou ? (
+          <>
+            <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
+              Plan for about 30 minutes on the call. Have your website open and the person who can
+              change your website code on the call or reachable.
+            </p>
+            <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
+              Have documents ready for reference, such as a company brochure or annual report.
+            </p>
+            <p style={{ margin: '0 0 1rem', fontSize: '0.95rem' }}>
+              <Link to="/signup/business-details">Edit your business details</Link>
+            </p>
+          </>
+        ) : (
+          <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
+            An expert will call you to help finish setup.
+          </p>
+        )}
         {progress.length > 0 ? (
           <ul style={{ margin: '0 0 1rem', paddingLeft: '1.25rem', color: 'var(--color-muted)' }}>
             {progress.map((item) => (
@@ -209,11 +229,6 @@ export function HomePage(): ReactElement {
             ))}
           </ul>
         ) : null}
-        <div className="actions" style={{ marginBottom: '1rem' }}>
-          <Link className="btn btn-primary" to="/business-setup">
-            Continue setup
-          </Link>
-        </div>
         {questionsDone ? (
           <p style={{ margin: '0 0 1rem', fontSize: '0.95rem' }}>
             <Link to="/onboarding/business" state={{ editMode: true }}>

@@ -105,6 +105,51 @@ async function claimSignupScrape(ctx) {
 }
 
 /**
+ * Reset the single signup ScrapeRun when the customer changes website URL so `startSignupScrape` can claim again.
+ *
+ * @param {object} params
+ * @param {import('mongoose').Types.ObjectId | string} params.businessId
+ * @param {string} params.previousWebsiteUrl
+ * @param {string} params.nextWebsiteUrl
+ */
+async function prepareSignupScrapeForWebsiteUrlChange({
+  businessId,
+  previousWebsiteUrl,
+  nextWebsiteUrl,
+}) {
+  const biz =
+    businessId instanceof mongoose.Types.ObjectId
+      ? businessId
+      : new mongoose.Types.ObjectId(businessId);
+  const prev = typeof previousWebsiteUrl === 'string' ? previousWebsiteUrl.trim() : '';
+  const next = typeof nextWebsiteUrl === 'string' ? nextWebsiteUrl.trim() : '';
+  if (!prev || !next || prev === next) {
+    return { updated: false };
+  }
+
+  const scrapeRun = await ScrapeRun.findOneAndUpdate(
+    {
+      businessId: biz,
+      purpose: 'signup',
+      websiteUrl: prev,
+    },
+    {
+      $set: {
+        websiteUrl: next,
+        status: 'QUEUED',
+        claimState: 'dispatch_failed',
+        claimLeaseExpiresAt: null,
+        temporalWorkflowId: null,
+        lastErrorSummary: null,
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  return { updated: Boolean(scrapeRun) };
+}
+
+/**
  * Start signup scrape after account creation (no operator fact-check gate).
  *
  * @param {import('mongoose').Types.ObjectId | string} businessId
@@ -370,6 +415,7 @@ module.exports = {
   signupScrapeWorkflowId,
   claimOnboardingScrape,
   claimSignupScrape,
+  prepareSignupScrapeForWebsiteUrlChange,
   startSignupScrape,
   startOperatorOnboardingScrape,
 };

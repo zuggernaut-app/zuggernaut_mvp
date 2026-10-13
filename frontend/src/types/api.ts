@@ -123,6 +123,7 @@ export interface BusinessContextDto {
   accountTimeZone?: string | null
   websiteAccessibleDuringCall?: boolean | null
   managedAdsAccountConsentAt?: string | null
+  termsAcceptedAt?: string | null
   signupCompletedAt?: string | null
   intakeFieldSources?: Record<string, string> | null
   intakeSubmissions?: IntakeSubmissionDto[]

@@ -23,3 +23,30 @@ export function updateBusinessContext(
     body,
   })
 }
+
+export interface CustomerSignupDetailsBody {
+  businessName: string
+  websiteUrl: string
+  termsAccepted: true
+  businessCountry?: string
+  accountCurrencyCode: string
+  accountTimeZone?: string
+  whatYouSell?: string
+  whoBuysToday?: string
+  whereTheyServe?: string
+  howBuyersContact?: string
+  orderValueHint?: string
+}
+
+export function completeCustomerSignupDetails(
+  businessId: string,
+  body: CustomerSignupDetailsBody
+): Promise<PutBusinessContextResponse> {
+  return apiRequest<PutBusinessContextResponse>(
+    `/business-contexts/${businessId}/customer-signup-details`,
+    {
+      method: 'POST',
+      body,
+    }
+  )
+}

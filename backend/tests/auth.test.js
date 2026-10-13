@@ -36,25 +36,18 @@ describe('/api/v1/auth', () => {
     expect(me.body.user.primaryBusinessId).toMatch(/^[a-f0-9]{24}$/);
   });
 
-  it('register persists signup choices on BusinessContext', async () => {
+  it('register creates business draft without marking signup complete', async () => {
     const mongoose = require('mongoose');
     const BusinessContext = mongoose.model('BusinessContext');
     const { primaryBusinessId } = await registerAgent(app, 'signup_ctx@example.com', {
-      businessName: 'Widget LLC',
-      businessCountry: 'IN',
-      accountCurrencyCode: 'INR',
-      accountTimeZone: 'Asia/Kolkata',
-      websiteAccessibleDuringCall: false,
+      websiteUrl: 'https://example.com',
     });
 
     const ctx = await BusinessContext.findOne({ businessId: primaryBusinessId }).lean();
-    expect(ctx.businessName).toBe('Widget LLC');
-    expect(ctx.businessCountry).toBe('IN');
-    expect(ctx.accountCurrencyCode).toBe('INR');
-    expect(ctx.accountTimeZone).toBe('Asia/Kolkata');
-    expect(ctx.websiteAccessibleDuringCall).toBe(false);
-    expect(ctx.signupCompletedAt).toBeTruthy();
-    expect(ctx.managedAdsAccountConsentAt).toBeTruthy();
+    expect(ctx.websiteUrl).toMatch(/^https:\/\/example\.com\/?$/);
+    expect(ctx.signupCompletedAt).toBeFalsy();
+    expect(ctx.managedAdsAccountConsentAt).toBeFalsy();
+    expect(ctx.termsAcceptedAt).toBeFalsy();
   });
 
   it('/me includes primaryBusinessId when set', async () => {

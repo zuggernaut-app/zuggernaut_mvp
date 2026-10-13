@@ -55,14 +55,7 @@ function attachCsrfToAgent(agent) {
 }
 
 function signupRegisterPayload(overrides = {}) {
-  const payload = {
-    businessName: 'Test Business',
-    businessCountry: 'US',
-    accountCurrencyCode: 'USD',
-    accountTimeZone: 'America/New_York',
-    websiteAccessibleDuringCall: true,
-    managedAdsAccountConsent: true,
-  };
+  const payload = {};
   for (const [key, value] of Object.entries(overrides)) {
     if (value !== undefined) payload[key] = value;
   }
@@ -80,13 +73,7 @@ async function registerAgent(app, email, options = {}) {
       email,
       password,
       phone: options.phone ?? TEST_PHONE_DEFAULT,
-      ...signupRegisterPayload({
-        businessName: options.businessName,
-        businessCountry: options.businessCountry,
-        accountCurrencyCode: options.accountCurrencyCode,
-        accountTimeZone: options.accountTimeZone,
-        websiteAccessibleDuringCall: options.websiteAccessibleDuringCall,
-      }),
+      ...signupRegisterPayload(),
       ...(name !== undefined ? { name } : {}),
       ...(options.websiteUrl !== undefined ? { websiteUrl: options.websiteUrl } : {}),
     })

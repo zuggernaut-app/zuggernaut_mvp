@@ -37,6 +37,10 @@ function renderRegister(): ReturnType<typeof render> {
         <OnboardingProvider>
           <Routes>
             <Route path="/register" element={<RegisterPage />} />
+            <Route
+              path="/signup/business-details"
+              element={<div data-testid="signup-details-target">details</div>}
+            />
             <Route path="/" element={<div data-testid="home-target">home</div>} />
           </Routes>
         </OnboardingProvider>
@@ -48,16 +52,8 @@ function renderRegister(): ReturnType<typeof render> {
 async function fillRequiredSignupFields(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.type(screen.getByLabelText(/^email$/i), 'new@example.com')
   await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
-  await user.type(screen.getByLabelText(/^business name$/i), 'Acme Co')
   await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
   await user.type(screen.getByLabelText(/confirm password/i), 'SecurePass12')
-  const tz = screen.getByLabelText(/^account time zone$/i)
-  if (!(tz as HTMLInputElement).value.trim()) {
-    await user.clear(tz)
-    await user.type(tz, 'America/New_York')
-  }
-  await user.click(screen.getByLabelText(/^yes$/i))
-  await user.click(screen.getByRole('checkbox'))
 }
 
 describe('RegisterPage', () => {
@@ -115,7 +111,7 @@ describe('RegisterPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Email taken')
   })
 
-  it('persists user id and navigates home after successful registration', async () => {
+  it('persists user id and navigates to business details after successful registration', async () => {
     const user = userEvent.setup()
     renderRegister()
 
@@ -123,7 +119,7 @@ describe('RegisterPage', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-target')).toBeInTheDocument()
+      expect(screen.getByTestId('signup-details-target')).toBeInTheDocument()
     })
 
     expect(localStorage.getItem('zuggernaut:userId')).toBe(TEST_IDS.user)
@@ -132,10 +128,6 @@ describe('RegisterPage', () => {
         email: 'new@example.com',
         password: 'SecurePass12',
         phone: '555-123-4567',
-        businessName: 'Acme Co',
-        businessCountry: 'US',
-        accountCurrencyCode: 'USD',
-        managedAdsAccountConsent: true,
       }),
     )
   })
@@ -149,7 +141,7 @@ describe('RegisterPage', () => {
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     await waitFor(() => {
-      expect(screen.getByTestId('home-target')).toBeInTheDocument()
+      expect(screen.getByTestId('signup-details-target')).toBeInTheDocument()
     })
 
     expect(hoisted.mockAuthRegister).toHaveBeenCalledWith(
@@ -165,11 +157,8 @@ describe('RegisterPage', () => {
 
     await user.type(screen.getByLabelText(/^email$/i), 'pw@example.com')
     await user.type(screen.getByLabelText(/^phone$/i), '555-123-4567')
-    await user.type(screen.getByLabelText(/^business name$/i), 'Acme')
     await user.type(screen.getByLabelText(/^password$/i), 'SecurePass12')
     await user.type(screen.getByLabelText(/confirm password/i), 'OtherPass999')
-    await user.click(screen.getByLabelText(/^yes$/i))
-    await user.click(screen.getByRole('checkbox'))
     await user.click(screen.getByRole('button', { name: /continue/i }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/match/i)

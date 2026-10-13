@@ -34,13 +34,8 @@ const { issueCsrfCookie } = require('../../lib/auth/csrf');
 const { requireAuth } = require('./middleware/requireAuth');
 const { createBusinessDraftForUser } = require('../../services/onboarding/businessDraftService');
 const { startSignupScrape } = require('../../services/capabilities/leadCampaignScrapeService');
+const { normalizeStartUrl } = require('../../services/scraper/staticScraper');
 const { createLogger } = require('../../lib/observability/logger');
-const {
-  normalizeSignupAccountCurrency,
-  isIsoCountryCode,
-} = require('../../constants/signupAccount');
-const { MAX_SINGLE_LINE_FIELD } = require('../../lib/validation');
-
 const registrationLogger = createLogger({ name: 'auth.registration' });
 
 const router = express.Router();
@@ -111,75 +106,12 @@ function attachSessionCookie(res, user) {
   issueCsrfCookie(res);
 }
 
-/**
- * @param {object} signup
- */
-function parseRegistrationSignupInput(body) {
-  const businessName =
-    typeof body?.businessName === 'string' ? body.businessName.trim() : '';
-  const businessCountry =
-    typeof body?.businessCountry === 'string' ? body.businessCountry.trim().toUpperCase() : '';
-  const accountCurrencyCode = normalizeSignupAccountCurrency(body?.accountCurrencyCode);
-  const accountTimeZone =
-    typeof body?.accountTimeZone === 'string' ? body.accountTimeZone.trim() : '';
-  const websiteAccessibleDuringCall = body?.websiteAccessibleDuringCall;
-  const managedAdsAccountConsent = body?.managedAdsAccountConsent === true;
-
-  if (!businessName) {
-    return { ok: false, message: 'Business name is required' };
-  }
-  if (businessName.length > MAX_SINGLE_LINE_FIELD) {
-    return {
-      ok: false,
-      message: `businessName must be at most ${MAX_SINGLE_LINE_FIELD} characters`,
-    };
-  }
-  if (!isIsoCountryCode(businessCountry)) {
-    return { ok: false, message: 'A valid business country is required' };
-  }
-  if (!accountCurrencyCode) {
-    return { ok: false, message: 'A valid account currency is required' };
-  }
-  if (!accountTimeZone) {
-    return { ok: false, message: 'Account time zone is required' };
-  }
-  if (typeof websiteAccessibleDuringCall !== 'boolean') {
-    return {
-      ok: false,
-      message: 'Please answer whether your website can be opened during the call',
-    };
-  }
-  if (!managedAdsAccountConsent) {
-    return {
-      ok: false,
-      message: 'You must agree to managed Google Ads account setup',
-    };
-  }
-
-  return {
-    ok: true,
-    businessName,
-    businessCountry,
-    accountCurrencyCode,
-    accountTimeZone,
-    websiteAccessibleDuringCall,
-  };
-}
-
-async function bootstrapRegistrationBusiness(user, signup) {
+async function bootstrapRegistrationBusiness(user) {
   const { businessId } = await createBusinessDraftForUser(user._id);
   const websiteCheck = validateOptionalHttpUrl(user.websiteUrl ?? '');
-  const websiteUrl = websiteCheck.ok ? websiteCheck.value : undefined;
-  const now = new Date();
+  const websiteUrl = websiteCheck.ok ? normalizeStartUrl(websiteCheck.value) : undefined;
 
   const update = {
-    businessName: signup.businessName,
-    businessCountry: signup.businessCountry,
-    accountCurrencyCode: signup.accountCurrencyCode,
-    accountTimeZone: signup.accountTimeZone,
-    websiteAccessibleDuringCall: signup.websiteAccessibleDuringCall,
-    managedAdsAccountConsentAt: now,
-    signupCompletedAt: now,
     websiteUrl: websiteUrl ?? undefined,
     contactMethods: {
       emails: [user.email],
@@ -188,11 +120,6 @@ async function bootstrapRegistrationBusiness(user, signup) {
     intakeFieldSources: {
       phone: 'customer',
       email: 'customer',
-      businessName: 'customer',
-      businessCountry: 'customer',
-      accountCurrencyCode: 'customer',
-      accountTimeZone: 'customer',
-      websiteAccessibleDuringCall: 'customer',
       ...(websiteUrl ? { websiteUrl: 'customer' } : {}),
     },
   };
@@ -266,11 +193,6 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
     return res.status(400).json({ error: 'validation_error', message: pwnedCheck.message });
   }
 
-  const signupInput = parseRegistrationSignupInput(req.body);
-  if (!signupInput.ok) {
-    return res.status(400).json({ error: 'validation_error', message: signupInput.message });
-  }
-
   const websiteCheck = validateOptionalHttpUrl(websiteRaw);
   const websiteUrl = websiteCheck.ok ? websiteCheck.value : undefined;
 
@@ -283,7 +205,7 @@ router.post('/register', authWriteLimiter, async (req, res, next) => {
       passwordHash,
     });
 
-    const primaryBusinessId = await bootstrapRegistrationBusiness(user, signupInput);
+    const primaryBusinessId = await bootstrapRegistrationBusiness(user);
 
     attachSessionCookie(res, user);
 
