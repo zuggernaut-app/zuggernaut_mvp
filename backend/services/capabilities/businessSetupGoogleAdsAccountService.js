@@ -2,6 +2,7 @@
 
 const mongoose = require('mongoose');
 const { adsProvisioningIdempotencyKey } = require('../../constants/idempotency');
+const { SUPPORTED_ACCOUNT_CURRENCIES } = require('../../constants/leadCampaign');
 const { createLogger } = require('../../lib/observability/logger');
 const {
   createCustomerClient,
@@ -56,6 +57,12 @@ async function createGoogleAdsAccountForBusinessSetup(input) {
   const normalizedTimeZone = String(timeZone ?? '').trim();
   if (!normalizedCurrency) {
     throw new BusinessSetupGoogleAdsAccountError('currencyCode is required.', 'ADS_CREATE_INPUT_INVALID');
+  }
+  if (!SUPPORTED_ACCOUNT_CURRENCIES.includes(normalizedCurrency)) {
+    throw new BusinessSetupGoogleAdsAccountError(
+      `currencyCode must be one of ${SUPPORTED_ACCOUNT_CURRENCIES.join(', ')}.`,
+      'ADS_UNSUPPORTED_CURRENCY'
+    );
   }
   if (!normalizedTimeZone) {
     throw new BusinessSetupGoogleAdsAccountError('timeZone is required.', 'ADS_CREATE_INPUT_INVALID');

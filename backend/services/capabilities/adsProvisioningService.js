@@ -263,7 +263,7 @@ async function provisionGoogleAdsCustomer(input) {
           .toUpperCase();
         if (!SUPPORTED_ACCOUNT_CURRENCIES.includes(normalizedCurrency)) {
           throw new AdsProvisioningError(
-            `Unsupported account currency ${normalizedCurrency}. Choose USD or INR.`,
+            `Unsupported account currency ${normalizedCurrency}. Choose ${SUPPORTED_ACCOUNT_CURRENCIES.join(', ')}.`,
             'ADS_UNSUPPORTED_CURRENCY'
           );
         }

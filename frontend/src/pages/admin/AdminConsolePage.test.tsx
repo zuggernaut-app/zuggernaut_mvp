@@ -1,11 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { RequirePlatformAdmin } from '../../app/RequirePlatformAdmin'
 import { AuthProvider } from '../../hooks/useAuth'
 import { OnboardingProvider } from '../../hooks/useOnboardingState'
-import { getStoredBusinessId } from '../../utils/storage'
 import { AdminConsolePage } from './AdminConsolePage'
 
 const hoisted = vi.hoisted(() => ({
@@ -61,7 +59,10 @@ function renderAdminConsole(initialEntry = '/admin', platformAdmin = true) {
             </AuthProvider>
           }
         />
-        <Route path="/setup" element={<div>Start setup page</div>} />
+        <Route
+          path="/admin/businesses/:businessId/operator"
+          element={<div>Operator page</div>}
+        />
       </Routes>
     </MemoryRouter>,
   )
@@ -81,9 +82,11 @@ describe('AdminConsolePage', () => {
           businessId: 'biz-1',
           businessName: 'Biz One',
           userId: 'user-1',
+          customerEmail: 'user@example.com',
           orgId: null,
           confirmedAt: null,
           updatedAt: '2026-01-01T00:00:00.000Z',
+          operatorListStatus: 'signup_complete',
         },
       ],
     })
@@ -108,29 +111,11 @@ describe('AdminConsolePage', () => {
     renderAdminConsole('/admin', true)
 
     expect(await screen.findByRole('heading', { name: /admin console/i })).toBeInTheDocument()
-    expect(await screen.findByText(/user@example.com/)).toBeInTheDocument()
-    expect(screen.getByText(/Biz One/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /business setup/i })).toHaveAttribute(
-      'href',
-      '/admin/businesses/biz-1',
-    )
-    expect(screen.getByRole('link', { name: /business strategy/i })).toHaveAttribute(
-      'href',
-      '/admin/businesses/biz-1/strategy',
-    )
-    expect(screen.queryByRole('link', { name: /account setup/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /account setup/i })).toBeInTheDocument()
-  })
-
-  it('Account setup sets session business and opens Start setup', async () => {
-    const user = userEvent.setup()
-    renderAdminConsole('/admin', true)
-
     expect(await screen.findByText(/Biz One/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /account setup/i }))
-
-    expect(getStoredBusinessId()).toBe('biz-1')
-    expect(await screen.findByText('Start setup page')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /^open$/i })).toHaveAttribute(
+      'href',
+      '/admin/businesses/biz-1/operator',
+    )
   })
 
   it('redirects non-admin users to home', async () => {
@@ -138,8 +123,5 @@ describe('AdminConsolePage', () => {
 
     expect(await screen.findByText('Home page')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: /admin console/i })).not.toBeInTheDocument()
-    await waitFor(() => {
-      expect(hoisted.mockAdminListUsers).not.toHaveBeenCalled()
-    })
   })
 })

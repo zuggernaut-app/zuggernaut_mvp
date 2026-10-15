@@ -71,12 +71,14 @@ function serializeProvisioningRequest(doc) {
 /**
  * @param {string | null | undefined} currencyCode
  */
+const { SUPPORTED_ACCOUNT_CURRENCIES } = require('../../constants/leadCampaign');
+
 function normalizeProvisioningCurrencyCode(currencyCode) {
   const normalized = String(currencyCode ?? '').trim().toUpperCase();
   if (!normalized) return null;
-  if (normalized !== 'USD' && normalized !== 'INR') {
+  if (!SUPPORTED_ACCOUNT_CURRENCIES.includes(normalized)) {
     throw new ProvisioningServiceError(
-      'currencyCode must be USD or INR.',
+      `currencyCode must be one of ${SUPPORTED_ACCOUNT_CURRENCIES.join(', ')}.`,
       'PROVISIONING_INVALID_CURRENCY'
     );
   }

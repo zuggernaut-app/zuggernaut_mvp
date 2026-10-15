@@ -13,6 +13,7 @@ import { TeamPage } from '../pages/TeamPage'
 import { AdminConsolePage } from '../pages/admin/AdminConsolePage'
 import { AdminBusinessStrategyPage } from '../pages/admin/AdminBusinessStrategyPage'
 import { AdminBusinessWorkspacePage } from '../pages/admin/AdminBusinessWorkspacePage'
+import { AdminOperatorBusinessPage } from '../pages/admin/AdminOperatorBusinessPage'
 import { BusinessStartPage } from '../pages/BusinessStartPage'
 import { OnboardingAccountLinksPage } from '../pages/OnboardingAccountLinksPage'
 import { WebsiteUrlPage } from '../pages/WebsiteUrlPage'
@@ -79,6 +80,16 @@ export function AppRoutes(): ReactElement {
           <RequireAuth>
             <RequirePlatformAdmin>
               <AdminBusinessWorkspacePage />
+            </RequirePlatformAdmin>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/admin/businesses/:businessId/operator"
+        element={
+          <RequireAuth>
+            <RequirePlatformAdmin>
+              <AdminOperatorBusinessPage />
             </RequirePlatformAdmin>
           </RequireAuth>
         }

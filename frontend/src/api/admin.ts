@@ -13,9 +13,11 @@ export type AdminBusinessDto = {
   businessId: string
   businessName: string | null
   userId: string
+  customerEmail: string | null
   orgId: string | null
   confirmedAt: string | null
   updatedAt: string
+  operatorListStatus: string
 }
 
 export type AdminSetupRunDto = {

@@ -32,8 +32,13 @@ function onboardingScrapeWorkflowId(businessId) {
 /**
  * @param {import('mongoose').Types.ObjectId | string} businessId
  */
-function signupScrapeWorkflowId(businessId) {
-  return `signup-scrape-${businessId.toString()}`;
+function signupScrapeWorkflowId(businessId, websiteUrl) {
+  const urlKey = String(websiteUrl ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gi, '-')
+    .slice(0, 80);
+  return `signup-scrape-${businessId.toString()}-${urlKey || 'unknown'}`;
 }
 
 /**
@@ -169,14 +174,14 @@ async function startSignupScrape(businessId, userId, websiteUrl) {
     return {
       idempotent: true,
       scrapeRunId: claim.scrapeRun._id.toString(),
-      workflowId: claim.scrapeRun.temporalWorkflowId ?? signupScrapeWorkflowId(biz),
+      workflowId: claim.scrapeRun.temporalWorkflowId ?? signupScrapeWorkflowId(biz, websiteUrl),
       status: claim.scrapeRun.status,
       claimState: claim.scrapeRun.claimState,
     };
   }
 
   const scrapeRun = claim.scrapeRun;
-  const workflowId = signupScrapeWorkflowId(biz);
+  const workflowId = signupScrapeWorkflowId(biz, websiteUrl);
   const taskQueue = resolveTemporalTaskQueue();
   const startedAt = new Date().toISOString();
 

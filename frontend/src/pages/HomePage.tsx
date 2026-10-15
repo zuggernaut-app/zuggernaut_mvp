@@ -215,9 +215,6 @@ export function HomePage(): ReactElement {
                 </p>
                 )
               : null}
-            <p style={{ margin: '0 0 1rem', color: 'var(--color-muted)' }}>
-              Have documents ready for reference, such as a company brochure or annual report.
-            </p>
             <p style={{ margin: '0 0 1rem', fontSize: '0.95rem' }}>
               <Link to="/signup/business-details">Edit your business details</Link>
             </p>

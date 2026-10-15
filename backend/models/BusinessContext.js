@@ -143,6 +143,11 @@ const businessContextSchema = new mongoose.Schema(
     ],
     /** Raw scrape output — never map into confirmed fields without explicit user save */
     rawScrapeOutput: { type: mongoose.Schema.Types.Mixed, select: false },
+    /**
+     * Operator confirmation-call workflow (before / during / after call).
+     * List status is derived via resolveOperatorListStatus unless needsOperatorFollowUp is set.
+     */
+    operatorCallWorkflow: { type: mongoose.Schema.Types.Mixed, default: undefined },
     confirmedAt: { type: Date },
   },
   { timestamps: true }

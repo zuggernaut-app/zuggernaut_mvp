@@ -28,8 +28,47 @@ const {
   regenerateCampaignSlotAd,
   LeadCampaignRegenerationError,
 } = require('../../../services/capabilities/leadCampaignRegenerationService');
+const {
+  OperatorCallWorkflowError,
+  resolveOperatorListStatus,
+  getOperatorCallContext,
+  saveBeforePageSource,
+  saveCallAccountSettings,
+  saveCallBusinessAnswers,
+  saveCallWebsite,
+  saveCallGoalChoice,
+  saveCallPermission,
+  saveCallSnippetNew,
+  saveCallSnippetExistingGtm,
+  saveCallSnippetPasted,
+  saveCallClose,
+  saveAfterPageSource,
+  saveAfterFormResult,
+  saveAfterTestLeadPassed,
+  clearOperatorFollowUp,
+} = require('../../../services/capabilities/operatorCallWorkflowService');
 
 router.use(requireAuth, requireAdmin);
+
+function mapOperatorCallError(err, res) {
+  if (err instanceof OperatorCallWorkflowError) {
+    const statusByCode = {
+      not_found: 404,
+      validation_error: 400,
+    };
+    return res.status(statusByCode[err.code] ?? 400).json({ error: err.code, message: err.message });
+  }
+  return null;
+}
+
+function parseBusinessIdParam(req, res) {
+  const businessId = req.params.businessId;
+  if (!mongoose.Types.ObjectId.isValid(businessId)) {
+    res.status(400).json({ error: 'validation_error', message: 'Invalid businessId' });
+    return null;
+  }
+  return businessId;
+}
 
 router.get('/users', async (_req, res) => {
   const users = await User.find().select('email name platformAdmin createdAt').limit(200).lean();
@@ -46,20 +85,226 @@ router.get('/users', async (_req, res) => {
 
 router.get('/businesses', async (_req, res) => {
   const rows = await BusinessContext.find()
-    .select('businessId businessName userId orgId confirmedAt updatedAt')
+    .select(
+      'businessId businessName userId orgId confirmedAt updatedAt signupCompletedAt operatorCallWorkflow'
+    )
     .sort({ updatedAt: -1 })
     .limit(200)
     .lean();
+  const userIds = [...new Set(rows.map((bc) => String(bc.userId)))];
+  const users = await User.find({ _id: { $in: userIds } })
+    .select('email')
+    .lean();
+  const emailByUserId = new Map(users.map((u) => [String(u._id), u.email]));
   res.status(200).json({
     businesses: rows.map((bc) => ({
       businessId: bc.businessId.toString(),
       businessName: bc.businessName ?? null,
       userId: bc.userId.toString(),
+      customerEmail: emailByUserId.get(String(bc.userId)) ?? null,
       orgId: bc.orgId ? bc.orgId.toString() : null,
       confirmedAt: bc.confirmedAt ?? null,
       updatedAt: bc.updatedAt,
+      operatorListStatus: resolveOperatorListStatus(bc),
     })),
   });
+});
+
+router.get('/businesses/:businessId/operator-call', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await getOperatorCallContext(businessId);
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/before-page-source', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveBeforePageSource(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/account-settings', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallAccountSettings(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/business-answers', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallBusinessAnswers(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/website', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const triggerFetch = req.body?.triggerFetch === true;
+    const context = await saveCallWebsite(businessId, req.body ?? {}, triggerFetch);
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res) ?? mapOperatorError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/goal-choice', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallGoalChoice(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/permission', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallPermission(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/snippet-new', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallSnippetNew(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/snippet-existing-gtm', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallSnippetExistingGtm(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/snippet-pasted', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallSnippetPasted(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/close', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallClose(businessId);
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/after/page-source', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveAfterPageSource(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/after/form-result', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveAfterFormResult(businessId, req.body ?? {});
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/after/test-lead-passed', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveAfterTestLeadPassed(businessId);
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/clear-follow-up', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const note = typeof req.body?.note === 'string' ? req.body.note : '';
+    const context = await clearOperatorFollowUp(businessId, note);
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
 });
 
 router.get('/setup-runs/:setupRunId/report', async (req, res) => {
