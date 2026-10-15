@@ -63,6 +63,9 @@ async function patchOperatorCall(
 }
 
 export const adminOperatorCallApi = {
+  startCall: (businessId: string) => patchOperatorCall(businessId, 'start-call', {}),
+  callLiveCheck: (businessId: string, body: Record<string, unknown>) =>
+    patchOperatorCall(businessId, 'call/live-check', body),
   beforePageSource: (businessId: string, body: Record<string, unknown>) =>
     patchOperatorCall(businessId, 'before-page-source', body),
   callAccountSettings: (businessId: string, body: Record<string, unknown>) =>

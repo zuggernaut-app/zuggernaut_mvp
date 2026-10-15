@@ -246,6 +246,47 @@ function markStepSaved(wf, stepKey) {
  * @param {import('mongoose').Types.ObjectId | string} businessId
  * @param {object} body
  */
+async function saveStartCall(businessId) {
+  const doc = await loadBusinessForOperator(businessId);
+  const wf = getWorkflow(doc);
+  markStepSaved(wf, 'start_call');
+  setOperatorCallWorkflow(doc, wf);
+  await doc.save();
+  return getOperatorCallContext(businessId);
+}
+
+const LIVE_CHECK_RESULTS = Object.freeze([
+  'existing_gtm',
+  'no_google_tag',
+  'hard_coded_no_gtm',
+]);
+
+/**
+ * @param {import('mongoose').Types.ObjectId | string} businessId
+ * @param {object} body
+ */
+async function saveCallLiveCheck(businessId, body) {
+  const result = typeof body?.liveCheckResult === 'string' ? body.liveCheckResult.trim() : '';
+  if (!LIVE_CHECK_RESULTS.includes(result)) {
+    throw new OperatorCallWorkflowError(
+      `liveCheckResult must be one of: ${LIVE_CHECK_RESULTS.join(', ')}.`,
+      'validation_error',
+    );
+  }
+  const doc = await loadBusinessForOperator(businessId);
+  const wf = getWorkflow(doc);
+  const previous = wf.call?.liveCheckResult;
+  wf.call = { ...wf.call, liveCheckResult: result };
+  if (previous !== undefined && previous !== result) {
+    wf.snippetPending = false;
+    wf.call.snippetInstalledAt = null;
+    delete wf.call.snippetBranch;
+  }
+  setOperatorCallWorkflow(doc, wf);
+  await doc.save();
+  return getOperatorCallContext(businessId);
+}
+
 async function saveBeforePageSource(businessId, body) {
   const doc = await loadBusinessForOperator(businessId);
   const wf = getWorkflow(doc);
@@ -367,12 +408,12 @@ async function saveCallWebsite(businessId, body, triggerFetch) {
     typeof doc.websiteUrl === 'string' && doc.websiteUrl.trim()
       ? normalizeStartUrl(doc.websiteUrl)
       : '';
-  const changed = previous !== normalized;
+  const changed = Boolean(previous) && previous !== normalized;
   doc.websiteUrl = normalized;
   wf.call = {
     ...wf.call,
     noWebsite: false,
-    websiteChangedOnCall: changed || !previous,
+    websiteChangedOnCall: changed,
     ctaNote: typeof body.ctaNote === 'string' ? body.ctaNote : wf.call?.ctaNote,
   };
   markStepSaved(wf, 'call_website');
@@ -484,7 +525,6 @@ async function saveCallSnippetNew(businessId, body) {
   if (body.snippetPending === true) {
     wf.snippetPending = true;
     wf.call = { ...wf.call, snippetBranch: 'pending', snippetInstalledAt: null };
-    markStepSaved(wf, 'call_snippet_new');
     setOperatorCallWorkflow(doc, wf);
     await doc.save();
     return getOperatorCallContext(businessId);
@@ -675,6 +715,8 @@ module.exports = {
   OperatorCallWorkflowError,
   resolveOperatorListStatus,
   getOperatorCallContext,
+  saveStartCall,
+  saveCallLiveCheck,
   saveBeforePageSource,
   saveCallAccountSettings,
   saveCallBusinessAnswers,

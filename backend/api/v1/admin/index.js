@@ -32,6 +32,8 @@ const {
   OperatorCallWorkflowError,
   resolveOperatorListStatus,
   getOperatorCallContext,
+  saveStartCall,
+  saveCallLiveCheck,
   saveBeforePageSource,
   saveCallAccountSettings,
   saveCallBusinessAnswers,
@@ -115,6 +117,32 @@ router.get('/businesses/:businessId/operator-call', async (req, res, next) => {
     const businessId = parseBusinessIdParam(req, res);
     if (!businessId) return;
     const context = await getOperatorCallContext(businessId);
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/start-call', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveStartCall(businessId);
+    return res.status(200).json({ context });
+  } catch (err) {
+    const mapped = mapOperatorCallError(err, res);
+    if (mapped) return mapped;
+    return next(err);
+  }
+});
+
+router.patch('/businesses/:businessId/operator-call/call/live-check', async (req, res, next) => {
+  try {
+    const businessId = parseBusinessIdParam(req, res);
+    if (!businessId) return;
+    const context = await saveCallLiveCheck(businessId, req.body ?? {});
     return res.status(200).json({ context });
   } catch (err) {
     const mapped = mapOperatorCallError(err, res);
